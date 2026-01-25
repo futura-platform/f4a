@@ -23,9 +23,10 @@ func (s *Set) Stream(ctx context.Context) (
 	err error,
 ) {
 	var initialEpochWatch fdb.FutureNil
+	var initialTail fdb.KeyConvertible
 	_, err = s.t.Transact(func(tx fdb.Transaction) (any, error) {
 		initialEpochWatch = tx.Watch(s.epochKey)
-		initialValues, err = s.Items(tx)
+		initialValues, initialTail, err = s.Items(tx)
 		if err != nil {
 			return nil, err
 		}
@@ -37,8 +38,7 @@ func (s *Set) Stream(ctx context.Context) (
 
 	eventsCh := make(chan []LogEntry)
 	_errCh := make(chan error)
-	begin, _ := s.logSubspace.FDBRangeKeys()
-	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(ctx, s.t, s.epochKey, epochChunk{tailKey: begin}, initialEpochWatch,
+	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(ctx, s.t, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
 		func(tx fdb.ReadTransaction, _ fdb.KeyConvertible, l epochChunk) (epochChunk, error) {
 			logEntries, err := s.readLog(tx, l.tailKey)
 			if err != nil {
@@ -58,10 +58,20 @@ func (s *Set) Stream(ctx context.Context) (
 		defer close(_errCh)
 		for {
 			select {
-			case c := <-onEpochCh:
+			case c, ok := <-onEpochCh:
+				if !ok {
+					return
+				}
+				if len(c.entries) == 0 {
+					continue
+				}
 				eventsCh <- c.entries
-			case err := <-onEpochErrCh:
+			case err, ok := <-onEpochErrCh:
+				if !ok {
+					return
+				}
 				_errCh <- err
+				return
 			}
 		}
 	}()

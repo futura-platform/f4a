@@ -16,15 +16,29 @@ const (
 	LogOperationRemove
 )
 
+const (
+	entrySizeLimit = 1024
+)
+
+var (
+	ErrEntryTooLarge = fmt.Errorf("entry is too large")
+)
+
 // Add adds a value to the set. This is gauranteed to be contention free.
 // (except for rare versionstamp collisions).
 func (s *Set) Add(tx fdb.Transaction, value []byte) error {
+	if len(value) > entrySizeLimit {
+		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
+	}
 	return s.writeLog(tx, LogEntry{op: LogOperationAdd, value: value})
 }
 
 // Remove removes a value from the set. This is gauranteed to be contention free.
 // (except for rare versionstamp collisions).
 func (s *Set) Remove(tx fdb.Transaction, value []byte) error {
+	if len(value) > entrySizeLimit {
+		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
+	}
 	return s.writeLog(tx, LogEntry{op: LogOperationRemove, value: value})
 }
 
@@ -49,7 +63,7 @@ func (e *LogEntry) UnmarshalBinary(data []byte) error {
 // writeLog writes a log entry to the set. It is gauranteed to be contention free
 // (except for rare versionstamp collisions).
 func (s *Set) writeLog(tx fdb.Transaction, entry LogEntry) error {
-	logKey, err := s.snapshotSubspace.PackWithVersionstamp(tuple.Tuple{
+	logKey, err := s.logSubspace.PackWithVersionstamp(tuple.Tuple{
 		tuple.IncompleteVersionstamp(0),
 		atomic.AddUint64(&s.logCounter, 1),
 	})
@@ -70,22 +84,27 @@ type KeyedLogEntry struct {
 	entry LogEntry
 }
 
-// readLog reads the log entries from the log subspace starting at the given key.
+// readLog reads the log entries from the log subspace starting at (but not including) the given key.
 // It returns the log entries in the order they were written.
 func (s *Set) readLog(tx fdb.ReadTransaction, begin fdb.KeyConvertible) ([]KeyedLogEntry, error) {
 	_, end := s.logSubspace.FDBRangeKeys()
-	logEntries, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
+	start := begin
+	key := begin.FDBKey()
+	if len(key) > 0 {
+		start = dbutil.KeyAfter(key)
+	}
+	logEntries, err := tx.GetRange(fdb.KeyRange{Begin: start, End: end}, fdb.RangeOptions{}).GetSliceWithError()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get range: %w", err)
 	}
-	entries := make([]KeyedLogEntry, len(logEntries))
+	entries := make([]KeyedLogEntry, 0, len(logEntries))
 	for i, e := range logEntries {
 		var entry LogEntry
 		err := entry.UnmarshalBinary(e.Value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal log entry[%d]: %w", i, err)
 		}
-		entries[i] = KeyedLogEntry{key: e.Key, entry: entry}
+		entries = append(entries, KeyedLogEntry{key: e.Key, entry: entry})
 	}
 	return entries, nil
 }

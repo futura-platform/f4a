@@ -55,16 +55,17 @@ func CreateOrOpen(t fdb.Transactor, path []string) (*Set, error) {
 	return s, nil
 }
 
-func (s *Set) Items(tx fdb.ReadTransaction) (mapset.Set[string], error) {
+func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
 	snapshot, err := s.snapshot(tx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	begin, _ := s.logSubspace.FDBRangeKeys()
 	logEntries, err := s.readLog(tx, begin)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	tail = begin
 	for _, l := range logEntries {
 		switch l.entry.op {
 		case LogOperationAdd:
@@ -72,6 +73,7 @@ func (s *Set) Items(tx fdb.ReadTransaction) (mapset.Set[string], error) {
 		case LogOperationRemove:
 			snapshot.Remove(string(l.entry.value))
 		}
+		tail = l.key
 	}
-	return snapshot, nil
+	return snapshot, tail, nil
 }
