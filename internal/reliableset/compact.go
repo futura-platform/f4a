@@ -6,6 +6,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 )
 
 const (
@@ -35,22 +36,45 @@ func (s *Set) runCompactionLoop() error {
 // compactLog compacts the current log into the snapshot.
 func (s *Set) compactLog(tx fdb.Transaction) error {
 	begin, end := s.logSubspace.FDBRangeKeys()
-	logEntries, err := s.readLog(tx, begin)
+	clearEnd := end
+	now := time.Now()
+	index, err := s.cursorIndex(tx)
 	if err != nil {
 		return err
 	}
+	if err := cleanDeadCursors(tx, index, now); err != nil {
+		return err
+	}
+	active := activeCursors(index, now)
+
+	if minTail, ok := minActiveTail(active); ok {
+		if len(minTail) == 0 {
+			return fmt.Errorf("expected min active tail to be non-empty, but got empty")
+		}
+		clearEnd = dbutil.KeyAfter(minTail)
+	}
+	compactionRange := fdb.KeyRange{Begin: begin, End: clearEnd}
+	logEntries, err := tx.GetRange(compactionRange, fdb.RangeOptions{}).GetSliceWithError()
+	if err != nil {
+		return err
+	} else if len(logEntries) == 0 {
+		return nil
+	}
 	for _, logEntry := range logEntries {
-		logOperation := logEntry.entry.op
-		value := logEntry.entry.value
-		switch logOperation {
+		var entry LogEntry
+		err := entry.UnmarshalBinary(logEntry.Value)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal log entry: %w", err)
+		}
+		switch entry.op {
 		case LogOperationAdd:
-			tx.Set(s.snapshotSubspace.Pack(tuple.Tuple{value}), value)
+			tx.Set(s.snapshotSubspace.Pack(tuple.Tuple{entry.value}), entry.value)
 		case LogOperationRemove:
-			tx.Clear(s.snapshotSubspace.Pack(tuple.Tuple{value}))
+			tx.Clear(s.snapshotSubspace.Pack(tuple.Tuple{entry.value}))
 		default:
-			return fmt.Errorf("invalid log operation: %d", logOperation)
+			return fmt.Errorf("invalid log operation: %d", entry.op)
 		}
 	}
-	tx.ClearRange(fdb.KeyRange{Begin: begin, End: end})
+	tx.ClearRange(compactionRange)
 	return nil
 }

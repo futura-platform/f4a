@@ -30,6 +30,7 @@ func (s *Set) Stream(ctx context.Context) (
 		if err != nil {
 			return nil, err
 		}
+		s.registerCursor(tx, initialTail)
 		return nil, nil
 	})
 	if err != nil {
@@ -56,6 +57,7 @@ func (s *Set) Stream(ctx context.Context) (
 	go func() {
 		defer close(eventsCh)
 		defer close(_errCh)
+		go s.leaseLoop(ctx)
 		for {
 			select {
 			case c, ok := <-onEpochCh:
@@ -66,6 +68,10 @@ func (s *Set) Stream(ctx context.Context) (
 					continue
 				}
 				eventsCh <- c.entries
+				if err := s.advanceCursor(ctx, c.tailKey); err != nil {
+					_errCh <- err
+					return
+				}
 			case err, ok := <-onEpochErrCh:
 				if !ok {
 					return

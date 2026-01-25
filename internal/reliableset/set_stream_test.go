@@ -202,7 +202,7 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 
 		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 			require.NoError(t, db.Options().SetTransactionRetryLimit(10))
-			set := newSet(t, db, "stream_fuzz_concurrent")
+			writerSet := newSet(t, db, "stream_fuzz_concurrent")
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 
@@ -273,9 +273,9 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 				_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 					switch op.kind {
 					case opAdd:
-						return nil, set.Add(tx, op.item)
+						return nil, writerSet.Add(tx, op.item)
 					case opRemove:
-						return nil, set.Remove(tx, op.item)
+						return nil, writerSet.Remove(tx, op.item)
 					default:
 						return nil, fmt.Errorf("unknown operation kind: %d", op.kind)
 					}
@@ -291,7 +291,9 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 				readerCancels = append(readerCancels, streamCancel)
 				readerCancelMu.Unlock()
 
-				initialValues, events, streamErrCh, err := set.Stream(streamCtx)
+				readerSet, err := CreateOrOpen(db.Database, setPath(db, "stream_fuzz_concurrent"))
+				require.NoError(t, err)
+				initialValues, events, streamErrCh, err := readerSet.Stream(streamCtx)
 				require.NoError(t, err)
 
 				reader := &readerState{
@@ -473,7 +475,7 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 				time.Sleep(25 * time.Millisecond)
 			}
 
-			requireSetMatchesDB(t, db, set, expected)
+			requireSetMatchesDB(t, db, writerSet, expected)
 
 			cancelReaders()
 			readerWG.Wait()
