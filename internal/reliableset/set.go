@@ -1,0 +1,77 @@
+package reliableset
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	mapset "github.com/deckarep/golang-set/v2"
+)
+
+// Set is a log-structured set built on FoundationDB.
+// It is gauranteed to be contention free on write operations
+// (unless versiontimestamp collisions occur across FDB shards).
+type Set struct {
+	t fdb.Transactor
+
+	// this key should be incremented for every new log entry
+	epochKey fdb.Key
+
+	snapshotSubspace directory.DirectorySubspace
+	logSubspace      directory.DirectorySubspace
+
+	// enqueueCounter disambiguates versionstamp keys within a transaction.
+	logCounter uint64
+
+	compactionContext context.Context
+	compactionCancel  context.CancelFunc
+}
+
+func CreateOrOpen(t fdb.Transactor, path []string) (*Set, error) {
+	setSubspace, err := directory.CreateOrOpen(t, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open set: %w", err)
+	}
+	snapshotSubspace, err := setSubspace.CreateOrOpen(t, []string{"snapshot"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	logSubspace, err := setSubspace.CreateOrOpen(t, []string{"log"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	compactionContext, compactionCancel := context.WithCancel(context.Background())
+	s := &Set{
+		t:                 t,
+		epochKey:          setSubspace.Pack(tuple.Tuple{"epoch"}),
+		snapshotSubspace:  snapshotSubspace,
+		logSubspace:       logSubspace,
+		compactionContext: compactionContext,
+		compactionCancel:  compactionCancel,
+	}
+	go s.runCompactionLoop()
+	return s, nil
+}
+
+func (s *Set) Items(tx fdb.ReadTransaction) (mapset.Set[string], error) {
+	snapshot, err := s.snapshot(tx)
+	if err != nil {
+		return nil, err
+	}
+	begin, _ := s.logSubspace.FDBRangeKeys()
+	logEntries, err := s.readLog(tx, begin)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range logEntries {
+		switch l.entry.op {
+		case LogOperationAdd:
+			snapshot.Add(string(l.entry.value))
+		case LogOperationRemove:
+			snapshot.Remove(string(l.entry.value))
+		}
+	}
+	return snapshot, nil
+}

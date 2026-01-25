@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package task.v1;
+
+message TaskParameters {
+  bytes input = 1;
+}
+
+message CreateTaskRequest {
+  string executor_id = 1;
+  string callback_url = 2;
+  TaskParameters parameters = 3;
+  // todo: add the ability to connect this task to a trace
+}
+message CreateTaskResponse {
+  string task_id = 1;
+}
+
+message UpdateTaskRequest {
+  string task_id = 1;
+  TaskParameters parameters = 2;
+}
+message UpdateTaskResponse {}
+
+message ActivateTaskRequest {
+  string task_id = 1;
+}
+message ActivateTaskResponse {}
+
+message SuspendTaskRequest {
+  string task_id = 1;
+}
+message SuspendTaskResponse {}
+
+message DeleteTaskRequest {
+  string task_id = 1;
+}
+message DeleteTaskResponse {}
+
+service ControlService {
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+  rpc ActivateTask(ActivateTaskRequest) returns (ActivateTaskResponse);
+  rpc SuspendTask(SuspendTaskRequest) returns (SuspendTaskResponse);
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+}

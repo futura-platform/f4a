@@ -1,0 +1,11 @@
+{
+	"$schema": "https://json-schema.org/schema#",
+	"type": "object",
+	"properties": {
+		"image": {
+			"type": "string",
+			"description": "The image to use for the f4a runner pods"
+		}
+	},
+	"required": ["image"]
+}

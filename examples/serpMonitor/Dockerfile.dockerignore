@@ -1,0 +1,10 @@
+# Ignore everything
+*
+
+# Allow Go files
+!**/*.go
+!go.mod
+!go.sum
+
+# But ignore test files if you don't need them in the image
+# **/*_test.go
