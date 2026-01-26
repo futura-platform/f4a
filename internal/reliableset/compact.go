@@ -66,13 +66,13 @@ func (s *Set) compactLog(tx fdb.Transaction) error {
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal log entry: %w", err)
 		}
-		switch entry.op {
+		switch entry.Op {
 		case LogOperationAdd:
-			tx.Set(s.snapshotSubspace.Pack(tuple.Tuple{entry.value}), entry.value)
+			tx.Set(s.snapshotSubspace.Pack(tuple.Tuple{entry.Value}), entry.Value)
 		case LogOperationRemove:
-			tx.Clear(s.snapshotSubspace.Pack(tuple.Tuple{entry.value}))
+			tx.Clear(s.snapshotSubspace.Pack(tuple.Tuple{entry.Value}))
 		default:
-			return fmt.Errorf("invalid log operation: %d", entry.op)
+			return fmt.Errorf("invalid log operation: %d", entry.Op)
 		}
 	}
 	tx.ClearRange(compactionRange)

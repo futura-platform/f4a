@@ -30,7 +30,7 @@ func (s *Set) Add(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
 	}
-	return s.writeLog(tx, LogEntry{op: LogOperationAdd, value: value})
+	return s.writeLog(tx, LogEntry{Op: LogOperationAdd, Value: value})
 }
 
 // Remove removes a value from the set. This is gauranteed to be contention free.
@@ -39,24 +39,24 @@ func (s *Set) Remove(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
 	}
-	return s.writeLog(tx, LogEntry{op: LogOperationRemove, value: value})
+	return s.writeLog(tx, LogEntry{Op: LogOperationRemove, Value: value})
 }
 
 type LogEntry struct {
-	op    LogOperation
-	value []byte
+	Op    LogOperation
+	Value []byte
 }
 
 func (e LogEntry) MarshalBinary() ([]byte, error) {
-	return append([]byte{byte(e.op)}, e.value...), nil
+	return append([]byte{byte(e.Op)}, e.Value...), nil
 }
 
 func (e *LogEntry) UnmarshalBinary(data []byte) error {
 	if len(data) < 1 {
 		return fmt.Errorf("log entry is too short")
 	}
-	e.op = LogOperation(data[0])
-	e.value = data[1:]
+	e.Op = LogOperation(data[0])
+	e.Value = data[1:]
 	return nil
 }
 

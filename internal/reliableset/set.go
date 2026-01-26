@@ -83,13 +83,13 @@ func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.
 	}
 	tail = begin
 	for _, l := range logEntries {
-		switch l.entry.op {
+		switch l.entry.Op {
 		case LogOperationAdd:
-			snapshot.Add(string(l.entry.value))
+			snapshot.Add(string(l.entry.Value))
 		case LogOperationRemove:
-			snapshot.Remove(string(l.entry.value))
+			snapshot.Remove(string(l.entry.Value))
 		default:
-			return nil, nil, fmt.Errorf("unknown log operation: %d", l.entry.op)
+			return nil, nil, fmt.Errorf("unknown log operation: %d", l.entry.Op)
 		}
 		tail = l.key
 	}
