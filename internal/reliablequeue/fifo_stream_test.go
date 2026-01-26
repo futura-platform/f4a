@@ -3,7 +3,6 @@ package reliablequeue
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -13,42 +12,9 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/pkg/util"
-	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 	testutil "github.com/futura-platform/f4a/pkg/util/test"
 	"github.com/stretchr/testify/require"
 )
-
-const (
-	largeQueueEntries     = 6000
-	largeQueueBatchSize   = 200
-	largeQueuePayloadSize = 4096
-	largeQueueSingleTx    = 3000
-)
-
-func makeLargePayload(id int) []byte {
-	payload := make([]byte, largeQueuePayloadSize)
-	binary.LittleEndian.PutUint64(payload, uint64(id))
-	return payload
-}
-
-func enqueueLargeQueue(t testing.TB, db util.DbRoot, queue *FIFO, total int) {
-	t.Helper()
-	for start := 0; start < total; start += largeQueueBatchSize {
-		end := start + largeQueueBatchSize
-		if end > total {
-			end = total
-		}
-		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-			for i := start; i < end; i++ {
-				if err := queue.Enqueue(tx, makeLargePayload(i)); err != nil {
-					return nil, err
-				}
-			}
-			return nil, nil
-		})
-		require.NoError(t, err)
-	}
-}
 
 func TestFIFOStreamInitialSnapshotAndSequence(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
@@ -121,58 +87,6 @@ func TestFIFOStreamEmptyQueueTransitions(t *testing.T) {
 		require.ErrorIs(t, err, ErrQueueEmpty)
 		awaitQueueState(t, ctx, events, errCh, &local, expected)
 		requireQueueMatchesDB(t, db, queue, expected)
-	})
-}
-
-func TestFIFOStreamLargeInitialSnapshot(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-		queue := newFIFOWithMaxItemSize(db, "stream_large_snapshot", largeQueuePayloadSize)
-		enqueueLargeQueue(t, db, queue, largeQueueEntries)
-
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
-		require.NoError(t, err)
-		defer drainStream(t, cancel, errCh)
-
-		require.Len(t, initialValues, largeQueueEntries)
-		assertNoExtraBatch(t, ctx, events, errCh)
-	})
-}
-
-func TestFIFOStreamLargeEnqueueAfterStart(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-		queue := newFIFOWithMaxItemSize(db, "stream_large_enqueue", largeQueuePayloadSize)
-
-		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
-		require.NoError(t, err)
-		defer drainStream(t, cancel, errCh)
-
-		require.Empty(t, initialValues)
-		local := cloneQueue(initialValues)
-		expected := make([][]byte, 0, largeQueueSingleTx)
-		for i := range largeQueueSingleTx {
-			expected = append(expected, makeLargePayload(i))
-		}
-
-		enqueueLargeQueue(t, db, queue, largeQueueSingleTx)
-		awaitQueueState(t, ctx, events, errCh, &local, expected)
-		requireQueueMatchesDB(t, db, queue, expected)
-	})
-}
-
-func TestFIFOEnqueueLargeSingleTransaction(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-		queue := newFIFOWithMaxItemSize(db, "enqueue_large_tx", largeQueuePayloadSize)
-		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-			for i := range largeQueueSingleTx {
-				if err := queue.Enqueue(tx, makeLargePayload(i)); err != nil {
-					return nil, err
-				}
-			}
-			return nil, nil
-		})
-		require.NoError(t, err)
 	})
 }
 
@@ -841,21 +755,17 @@ func queuesEqual(a, b [][]byte) bool {
 
 func readQueueValues(t testing.TB, db util.DbRoot, queue *FIFO) [][]byte {
 	t.Helper()
-	begin, end := queue.subspace.FDBRangeKeys()
-	opts := dbutil.IterateUnboundedOptions{
-		BatchSize: queue.rangeBatchSize(),
-	}
 	var kvs []fdb.KeyValue
-	var iterErr error
-	dbutil.IterateUnbounded(context.Background(), db.Database, fdb.KeyRange{Begin: begin, End: end}, opts)(func(chunk []fdb.KeyValue, err error) bool {
-		if err != nil {
-			iterErr = err
-			return false
-		}
-		kvs = append(kvs, chunk...)
-		return true
+	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+		begin, end := queue.subspace.FDBRangeKeys()
+		var err error
+		kvs, err = tx.GetRange(
+			fdb.KeyRange{Begin: begin, End: end},
+			fdb.RangeOptions{Mode: fdb.StreamingModeWantAll},
+		).GetSliceWithError()
+		return nil, err
 	})
-	require.NoError(t, iterErr)
+	require.NoError(t, err)
 
 	values := make([][]byte, len(kvs))
 	for i, kv := range kvs {

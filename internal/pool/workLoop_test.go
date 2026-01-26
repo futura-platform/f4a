@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/futura-platform/f4a/internal/reliablequeue"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -142,10 +143,11 @@ func TestWorkLoop(t *testing.T) {
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
 			runErrCh := make(chan error, 1)
-			taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+			queuePath := append(db.Root.GetPath(), "task_queue")
+			taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 			assert.NoError(t, err)
 			go func() {
-				err := RunWorkLoop(ctx, runnerId, db, taskSet, router)
+				err := RunWorkLoop(ctx, runnerId, db, taskQueue, router)
 				assert.ErrorIs(t, err, context.Canceled)
 				runErrCh <- err
 			}()
@@ -153,7 +155,7 @@ func TestWorkLoop(t *testing.T) {
 			// start 4 or more tasks, then check that they are running
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				for _, id := range taskIds {
-					err := taskSet.Add(tx, id.Bytes())
+					err := taskQueue.Enqueue(tx, id.Bytes())
 					if err != nil {
 						return nil, err
 					}
@@ -164,28 +166,29 @@ func TestWorkLoop(t *testing.T) {
 			waitForTaskEvents(t, startedCh, runErrCh, taskIds)
 
 			removeCount := 2
-			removedTaskIds := taskIds[:removeCount]
-			remainingTaskIds := taskIds[removeCount:]
+			// since this is a FIFO queue, the remaining tasks are all after the first 2 tasks
+			remainingTaskIds := taskIds[:len(taskIds)-removeCount]
 
 			t.Run("when a task is removed, it is stopped", func(t *testing.T) {
 				// remove 2 or more tasks, then check that they are stopped
 				_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-					for _, id := range removedTaskIds {
-						if err := taskSet.Remove(tx, id.Bytes()); err != nil {
+					for range removeCount {
+						_, err := taskQueue.Dequeue(tx)
+						if err != nil {
 							return nil, err
 						}
 					}
 					return nil, nil
 				})
 				require.NoError(t, err)
-				waitForTaskEvents(t, canceledCh, runErrCh, removedTaskIds)
+				waitForTaskEvents(t, canceledCh, runErrCh, remainingTaskIds)
 			})
 
 			t.Run("when a task is unchanged, it continues execution uninterrupted", func(t *testing.T) {
 				// continuing from the removal test, this should assert that the unaffected tasks continue execution uninterrupted
-				remaining := make(map[task.Id]struct{}, len(remainingTaskIds))
-				for _, id := range remainingTaskIds {
-					remaining[id] = struct{}{}
+				remaining := map[task.Id]struct{}{
+					remainingTaskIds[0]: {},
+					remainingTaskIds[1]: {},
 				}
 				assertNoTaskEvents(t, canceledCh, runErrCh, remaining, waitShort)
 			})
@@ -204,14 +207,14 @@ func TestWorkLoop(t *testing.T) {
 			assert.NoError(t, db.Options().SetTransactionRetryLimit(3)) // since we are accessing concurrently we can get conflicts
 
 			runWorkLoopErr := make(chan error)
-			runnerId := "test-runner"
-			taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+			queuePath := append(db.Root.GetPath(), "task_queue")
+			taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 			assert.NoError(t, err)
 			go func() {
-				runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, nil)
+				runWorkLoopErr <- RunWorkLoop(t.Context(), "test-runner", db, taskQueue, nil)
 			}()
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				return nil, taskSet.Add(tx, task.NewId().Bytes())
+				return nil, taskQueue.Enqueue(tx, task.NewId().Bytes())
 			})
 			require.NoError(t, err)
 			select {
@@ -229,11 +232,11 @@ func TestWorkLoop(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			cancelCause := errors.New("run loop canceled")
 			runWorkLoopErr := make(chan error, 1)
-			runnerId := "test-runner"
-			taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+			queuePath := append(db.Root.GetPath(), "task_queue")
+			taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 			assert.NoError(t, err)
 			go func() {
-				runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, nil)
+				runWorkLoopErr <- RunWorkLoop(ctx, "test-runner", db, taskQueue, nil)
 			}()
 			cancel(cancelCause)
 			select {
@@ -250,8 +253,8 @@ func TestWorkLoop(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 			expectedErr := fmt.Errorf("%w: expected error", run.ErrRunFatal)
 			runWorkLoopErr := make(chan error, 1)
-			runnerId := "test-runner"
-			taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+			queuePath := append(db.Root.GetPath(), "task_queue")
+			taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 			assert.NoError(t, err)
 
 			executor := &testutil.MockExecutor{
@@ -263,13 +266,13 @@ func TestWorkLoop(t *testing.T) {
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
 			go func() {
-				runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, router)
+				runWorkLoopErr <- RunWorkLoop(t.Context(), "test-runner", db, taskQueue, router)
 			}()
 
 			id := task.NewId()
 			require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback"))
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				return nil, taskSet.Add(tx, id.Bytes())
+				return nil, taskQueue.Enqueue(tx, id.Bytes())
 			})
 			require.NoError(t, err)
 
@@ -299,8 +302,8 @@ func TestWorkLoop(t *testing.T) {
 				defer server.Close()
 
 				runWorkLoopErr := make(chan error, 1)
-				runnerId := "test-runner"
-				taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+				queuePath := append(db.Root.GetPath(), "task_queue")
+				taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 				assert.NoError(t, err)
 
 				executor := &testutil.MockExecutor{
@@ -312,13 +315,13 @@ func TestWorkLoop(t *testing.T) {
 				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
 				go func() {
-					runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, router)
+					runWorkLoopErr <- RunWorkLoop(t.Context(), "test-runner", db, taskQueue, router)
 				}()
 
 				id := task.NewId()
 				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL)))
 				_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-					return nil, taskSet.Add(tx, id.Bytes())
+					return nil, taskQueue.Enqueue(tx, id.Bytes())
 				})
 				require.NoError(t, err)
 				select {
@@ -358,8 +361,8 @@ func TestWorkLoop(t *testing.T) {
 				defer server.Close()
 
 				runWorkLoopErr := make(chan error, 1)
-				runnerId := "test-runner"
-				taskSet, err := CreateOrOpenTaskQueueForRunner(db, runnerId)
+				queuePath := append(db.Root.GetPath(), "task_queue")
+				taskQueue, err := reliablequeue.CreateOrOpenFIFO(db.Database, queuePath)
 				assert.NoError(t, err)
 
 				executor := &testutil.MockExecutor{
@@ -372,7 +375,7 @@ func TestWorkLoop(t *testing.T) {
 
 				// first we spawn a worker that will fail when the callback is called
 				go func() {
-					runWorkLoopErr <- RunWorkLoop(firstWorkerLoopCtx, runnerId, db, taskSet, router)
+					runWorkLoopErr <- RunWorkLoop(firstWorkerLoopCtx, "test-runner", db, taskQueue, router)
 				}()
 
 				id := task.NewId()
@@ -380,7 +383,7 @@ func TestWorkLoop(t *testing.T) {
 
 				require.NoError(t, err)
 				_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-					return nil, taskSet.Add(tx, id.Bytes())
+					return nil, taskQueue.Enqueue(tx, id.Bytes())
 				})
 				require.NoError(t, err)
 				select {
@@ -394,7 +397,7 @@ func TestWorkLoop(t *testing.T) {
 
 				// now simulate the worker coming back online
 				go func() {
-					runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, router)
+					runWorkLoopErr <- RunWorkLoop(t.Context(), "test-runner", db, taskQueue, router)
 				}()
 				select {
 				case err := <-runWorkLoopErr:

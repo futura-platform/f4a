@@ -6,13 +6,11 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 )
 
 // The cursor is used to communicate which log entries have yet to be processed by read consumers.
@@ -134,34 +132,29 @@ func (s *Set) decodeCursorKey(key fdb.Key) (string, string, bool) {
 }
 
 // cursorIndex gets a snapshot of all current cursor states
-func (s *Set) cursorIndex(ctx context.Context, readVersion *int64) (cursorIndex, error) {
-	opts := dbutil.IterateUnboundedOptions{
-		BatchSize:   s.cursorBatchSize(),
-		ReadVersion: readVersion,
-		Snapshot:    true,
+func (s *Set) cursorIndex(tx fdb.ReadTransaction) (cursorIndex, error) {
+	begin, end := s.cursorSubspace.FDBRangeKeys()
+	kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
+	if err != nil {
+		return cursorIndex{}, err
 	}
 	index := cursorIndex{
 		tails:    map[string]fdb.Key{},
 		leases:   map[string]time.Time{},
 		keysByID: map[string][]fdb.Key{},
 	}
-	for chunk, err := range dbutil.IterateUnbounded(ctx, s.t, s.cursorSubspace, opts) {
-		if err != nil {
-			return cursorIndex{}, err
+	for _, kv := range kvs {
+		id, kind, ok := s.decodeCursorKey(kv.Key)
+		if !ok {
+			continue
 		}
-		for _, kv := range chunk {
-			id, kind, ok := s.decodeCursorKey(kv.Key)
-			if !ok {
-				return cursorIndex{}, fmt.Errorf("invalid cursor key: %v", kv.Key)
-			}
-			index.keysByID[id] = append(index.keysByID[id], kv.Key)
-			switch kind {
-			case cursorKeyTail:
-				index.tails[id] = append([]byte(nil), kv.Value...)
-			case cursorKeyLease:
-				if lease, ok := decodeLease(kv.Value); ok {
-					index.leases[id] = lease
-				}
+		index.keysByID[id] = append(index.keysByID[id], kv.Key)
+		switch kind {
+		case cursorKeyTail:
+			index.tails[id] = append([]byte(nil), kv.Value...)
+		case cursorKeyLease:
+			if lease, ok := decodeLease(kv.Value); ok {
+				index.leases[id] = lease
 			}
 		}
 	}
@@ -197,16 +190,10 @@ func minActiveTail(active map[string]cursorState) (fdb.Key, bool) {
 	return min, true
 }
 
-func (s *Set) cleanDeadCursors(tx fdb.Transaction, index cursorIndex, now time.Time) error {
+func cleanDeadCursors(tx fdb.Transaction, index cursorIndex, now time.Time) error {
 	for id, keys := range index.keysByID {
 		lease, ok := index.leases[id]
 		if ok && lease.After(now) {
-			continue
-		}
-		// Re-read the lease inside this transaction to avoid clearing a cursor that was
-		// refreshed after the index snapshot, and to add a read conflict on the lease key.
-		rawLease := tx.Get(s.cursorKey(id, cursorKeyLease)).MustGet()
-		if lease, ok := decodeLease(rawLease); ok && lease.After(now) {
 			continue
 		}
 		for _, key := range keys {
