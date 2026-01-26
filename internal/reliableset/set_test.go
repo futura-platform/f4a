@@ -23,7 +23,7 @@ func setPath(db util.DbRoot, name string) []string {
 
 func newSet(t testing.TB, db util.DbRoot, name string) *Set {
 	t.Helper()
-	set, err := CreateOrOpen(db.Database, setPath(db, name))
+	set, err := Create(db, setPath(db, name))
 	require.NoError(t, err)
 	return set
 }
@@ -114,12 +114,12 @@ func TestSetAddRemove(t *testing.T) {
 func TestSetCreateOrOpenReusesPath(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 		path := setPath(db, "reopen")
-		set1, err := CreateOrOpen(db.Database, path)
+		set1, err := Create(db, path)
 		require.NoError(t, err)
 
 		addItem(t, db, set1, []byte("payload"))
 
-		set2, err := CreateOrOpen(db.Database, path)
+		set2, err := Open(db, path)
 		require.NoError(t, err)
 
 		items := readSetValues(t, db, set2)

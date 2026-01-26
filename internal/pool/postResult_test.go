@@ -44,7 +44,7 @@ func loadRunnableTask(t *testing.T, db util.DbRoot, callbackURL string) run.Runn
 	require.NoError(t, err)
 
 	id := task.NewId()
-	taskDirectory, err := tasksDirectory.TaskKey(db, id)
+	taskDirectory, err := tasksDirectory.Create(db, id)
 	if err != nil {
 		panic(err)
 	}

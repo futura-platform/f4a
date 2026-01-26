@@ -33,7 +33,7 @@ func TestRun(t *testing.T) {
 
 			expectedOutput := []byte("success output")
 			inputData := []byte("test input")
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, inputData)
 
@@ -79,7 +79,7 @@ func TestRun(t *testing.T) {
 
 			expectedOutput := []byte("success output")
 			inputData := []byte("test input")
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, inputData)
 
@@ -140,7 +140,7 @@ func TestRun(t *testing.T) {
 			assert.NoError(t, err)
 
 			inputData := []byte("test input")
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, inputData)
 
@@ -184,7 +184,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			initialInput := []byte("initial")
 			setInput(t, db, tkey, initialInput)
@@ -281,7 +281,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			initialInput := []byte("initial")
 			setInput(t, db, tkey, initialInput)
@@ -357,7 +357,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			inputData := []byte("test input")
 			setInput(t, db, tkey, inputData)
@@ -425,7 +425,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("test input"))
 
@@ -497,7 +497,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, expectedInput)
 
@@ -533,7 +533,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("initial"))
 
@@ -611,7 +611,7 @@ func TestRun(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("test input"))
 

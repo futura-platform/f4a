@@ -50,9 +50,9 @@ func TestLoadTasks(t *testing.T) {
 			callbackUrlOne := "https://example.com/callback-1"
 			callbackUrlTwo := "https://example.com/callback-2"
 
-			tkeyOne, err := tasksDirectory.TaskKey(db, idOne)
+			tkeyOne, err := tasksDirectory.Create(db, idOne)
 			assert.NoError(t, err)
-			tkeyTwo, err := tasksDirectory.TaskKey(db, idTwo)
+			tkeyTwo, err := tasksDirectory.Create(db, idTwo)
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkeyOne, &executorIdOne, &callbackUrlOne)
 			setTaskMetadata(t, db, tkeyTwo, &executorIdTwo, &callbackUrlTwo)
@@ -100,7 +100,7 @@ func TestLoadTasks(t *testing.T) {
 
 			id := task.NewId()
 			callbackUrl := "https://example.com/callback"
-			tkey, err := tasksDirectory.TaskKey(db, id)
+			tkey, err := tasksDirectory.Create(db, id)
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkey, nil, &callbackUrl)
 
@@ -118,7 +118,7 @@ func TestLoadTasks(t *testing.T) {
 			id := task.NewId()
 			executorId := execute.ExecutorId("missing-executor")
 			callbackUrl := "https://example.com/callback"
-			tkey, err := tasksDirectory.TaskKey(db, id)
+			tkey, err := tasksDirectory.Create(db, id)
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkey, &executorId, &callbackUrl)
 
@@ -136,7 +136,7 @@ func TestLoadTasks(t *testing.T) {
 			id := task.NewId()
 			executorId := execute.ExecutorId("executor-1")
 			callbackUrl := "http://example.com/%zz"
-			tkey, err := tasksDirectory.TaskKey(db, id)
+			tkey, err := tasksDirectory.Create(db, id)
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkey, &executorId, &callbackUrl)
 

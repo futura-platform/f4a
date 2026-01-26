@@ -61,7 +61,7 @@ func (s *Set) advanceCursor(ctx context.Context, tail fdb.KeyConvertible) error 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := s.t.Transact(func(tx fdb.Transaction) (any, error) {
+	_, err := s.db.Transact(func(tx fdb.Transaction) (any, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -86,7 +86,7 @@ func (s *Set) leaseLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = s.t.Transact(func(tx fdb.Transaction) (any, error) {
+			_, _ = s.db.Transact(func(tx fdb.Transaction) (any, error) {
 				s.writeLease(tx, time.Now())
 				return nil, nil
 			})

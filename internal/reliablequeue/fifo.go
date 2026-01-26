@@ -14,7 +14,7 @@ import (
 // It is gauranteed to be contention free on write operations
 // (unless versiontimestamp collisions occur across FDB shards).
 type FIFO struct {
-	t fdb.Transactor
+	db fdb.Database
 	// epochKey changes on Enqueue and Dequeue.
 	// It lives outside the queue subspace so consumers can watch for those events.
 	epochKey fdb.Key
@@ -39,7 +39,7 @@ func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
 		}
 
 		fifo = &FIFO{
-			t:        t,
+			db:       tx.GetDatabase(),
 			epochKey: metaSubspace.Pack(tuple.Tuple{"epoch"}),
 			subspace: subspace,
 		}

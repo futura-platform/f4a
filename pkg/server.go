@@ -64,7 +64,7 @@ func Start(ctx context.Context, address string, executors map[string]execute.Exe
 		return err
 	}
 
-	taskSet, err := pool.CreateOrOpenTaskQueueForRunner(dbr, runnerId)
+	taskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, runnerId)
 	if err != nil {
 		return err
 	}

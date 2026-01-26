@@ -26,7 +26,7 @@ func NewContainer(id task.Id, db util.DbRoot) *ExecutionContainer {
 	if err != nil {
 		panic(err)
 	}
-	tkey, err := tasks.TaskKey(db, id)
+	tkey, err := tasks.Open(db, id)
 	if err != nil {
 		panic(err)
 	}

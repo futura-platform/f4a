@@ -42,7 +42,7 @@ func (q *FIFO) Stream(ctx context.Context) (
 	var currentKvs []fdb.KeyValue
 	var initialHeadKey fdb.Key
 	var initialTailKey fdb.Key
-	_, err = q.t.Transact(func(tx fdb.Transaction) (any, error) {
+	_, err = q.db.Transact(func(tx fdb.Transaction) (any, error) {
 		initialEpochWatch = tx.Watch(q.epochKey)
 		// walk the entire subspace to get the initial values
 		currentKvs, err = tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{Mode: fdb.StreamingModeWantAll}).GetSliceWithError()
@@ -67,7 +67,7 @@ func (q *FIFO) Stream(ctx context.Context) (
 
 	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(
 		ctx,
-		q.t,
+		q.db,
 		q.epochKey,
 		epochChunk{headKey: initialHeadKey, tailKey: initialTailKey},
 		initialEpochWatch,

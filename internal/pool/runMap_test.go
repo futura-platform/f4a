@@ -39,7 +39,7 @@ func TestRunMap(t *testing.T) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
@@ -82,7 +82,7 @@ func TestRunMap(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			id := task.NewId()
-			tkey, err := tasksDirectory.TaskKey(db, id)
+			tkey, err := tasksDirectory.Create(db, id)
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
@@ -128,7 +128,7 @@ func TestRunMap(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			for range runCount {
-				tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+				tkey, err := tasksDirectory.Create(db, task.NewId())
 				assert.NoError(t, err)
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(run.NewRunnable(
@@ -171,7 +171,7 @@ func TestRunMap(t *testing.T) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			for range runCount {
-				tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+				tkey, err := tasksDirectory.Create(db, task.NewId())
 				assert.NoError(t, err)
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(run.NewRunnable(
@@ -213,7 +213,7 @@ func TestRunMap(t *testing.T) {
 			wg.Add(1)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
@@ -251,7 +251,7 @@ func TestRunMap(t *testing.T) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
-			tkey, err := tasksDirectory.TaskKey(db, task.NewId())
+			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(

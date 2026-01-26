@@ -1,6 +1,7 @@
 package reliableset
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -21,7 +22,7 @@ func (s *Set) runCompactionLoop() error {
 		case <-s.compactionContext.Done():
 			return nil
 		case <-ticker.C:
-			_, err := s.t.Transact(func(tx fdb.Transaction) (any, error) {
+			_, err := s.db.Transact(func(tx fdb.Transaction) (any, error) {
 				return nil, s.compactLog(tx)
 			})
 			if err != nil {
@@ -35,6 +36,13 @@ func (s *Set) runCompactionLoop() error {
 
 // compactLog compacts the current log into the snapshot.
 func (s *Set) compactLog(tx fdb.Transaction) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.compactionLock.Acquire(ctx); err != nil {
+		return fmt.Errorf("failed to acquire compaction lock: %w", err)
+	}
+	defer s.compactionLock.Release()
+
 	begin, end := s.logSubspace.FDBRangeKeys()
 	clearEnd := end
 	now := time.Now()

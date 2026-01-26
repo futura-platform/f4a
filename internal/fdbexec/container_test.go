@@ -14,14 +14,23 @@ import (
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/futura-platform/futura/moment"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func createTaskAndContainer(t *testing.T, db util.DbRoot, id task.Id) *fdbexec.ExecutionContainer {
+	tasks, err := task.CreateOrOpenTasksDirectory(db)
+	require.NoError(t, err)
+	_, err = tasks.Create(db, id)
+	require.NoError(t, err)
+	return fdbexec.NewContainer(id, db)
+}
 
 func TestExecutionContainer(t *testing.T) {
 	gob.Register(struct{}{})
 
 	assert.NotPanics(t, func() {
 		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-			assert.NotNil(t, fdbexec.NewContainer(task.NewId(), db))
+			assert.NotNil(t, createTaskAndContainer(t, db, task.NewId()))
 		})
 	})
 
@@ -30,7 +39,7 @@ func TestExecutionContainer(t *testing.T) {
 		txFns ...func(ctx context.Context, tx executiontype.Container) error,
 	) {
 		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-			container := fdbexec.NewContainer(task.NewId(), db)
+			container := createTaskAndContainer(t, db, task.NewId())
 			for _, txFn := range txFns {
 				err := container.Transact(t.Context(), txFn)
 				assert.NoError(t, err)
@@ -45,7 +54,7 @@ func TestExecutionContainer(t *testing.T) {
 	t.Run("Transact", func(t *testing.T) {
 		t.Run("Error rolls back transaction", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-				container := fdbexec.NewContainer(task.NewId(), db)
+				container := createTaskAndContainer(t, db, task.NewId())
 				errSentinel := errors.New("boom")
 
 				err := container.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
@@ -297,8 +306,8 @@ func TestExecutionContainer(t *testing.T) {
 		})
 		t.Run("Isolation per task id", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
-				firstContainer := fdbexec.NewContainer(task.NewId(), db)
-				secondContainer := fdbexec.NewContainer(task.NewId(), db)
+				firstContainer := createTaskAndContainer(t, db, task.NewId())
+				secondContainer := createTaskAndContainer(t, db, task.NewId())
 
 				err := firstContainer.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
 					tx.SetMoment(testIdentity, *testMoment)

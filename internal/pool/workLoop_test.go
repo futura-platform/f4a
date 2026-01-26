@@ -44,7 +44,7 @@ func seedTask(
 		return err
 	}
 
-	taskDirectory, err := tasksDirectory.TaskKey(db, id)
+	taskDirectory, err := tasksDirectory.Create(db, id)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func openTaskSet(t testing.TB, db util.DbRoot, runnerId string) *reliableset.Set
 
 	path := append([]string{}, db.Root.GetPath()...)
 	path = append(path, "task_queue", runnerId)
-	set, err := reliableset.CreateOrOpen(db.Database, path)
+	set, err := reliableset.CreateOrOpen(db, path)
 	require.NoError(t, err)
 	return set
 }

@@ -35,7 +35,7 @@ func LoadTasks(ctx context.Context, db util.DbRoot, router execute.Router, ids [
 	callbackUrlFutures := make([]*dbutil.Future[string], len(ids))
 	taskKeys := make([]task.TaskKey, len(ids))
 	for i, id := range ids {
-		tkey, err := tasksDirectory.TaskKey(db, id)
+		tkey, err := tasksDirectory.Open(db, id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
 		}
@@ -92,13 +92,7 @@ func LoadTasks(ctx context.Context, db util.DbRoot, router execute.Router, ids [
 				return
 			}
 
-			tkey, err := tasksDirectory.TaskKey(db, id)
-			if err != nil {
-				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to get task key %s: %w", id, err))
-				mu.Unlock()
-				return
-			}
+			tkey := taskKeys[i]
 
 			mu.Lock()
 			tasks = append(

@@ -15,7 +15,7 @@ func TestRunnableId(t *testing.T) {
 		tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 		assert.NoError(t, err)
 		id := task.NewId()
-		tkey, err := tasksDirectory.TaskKey(db, id)
+		tkey, err := tasksDirectory.Create(db, id)
 		assert.NoError(t, err)
 		runnable := NewRunnable(nil, db.Database, tkey, executiontype.NewInMemoryContainer())
 		assert.Equal(t, id, runnable.Id())
