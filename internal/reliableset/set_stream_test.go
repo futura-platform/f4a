@@ -100,8 +100,8 @@ func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 		batch := readNextBatch(t, ctx, events, errCh)
 		require.Len(t, batch, batchSize)
 		for i, entry := range batch {
-			require.Equal(t, LogOperationAdd, entry.op)
-			require.Equal(t, items[i], entry.value)
+			require.Equal(t, LogOperationAdd, entry.Op)
+			require.Equal(t, items[i], entry.Value)
 		}
 
 		assertNoExtraBatch(t, ctx, events, errCh)
@@ -130,8 +130,8 @@ func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 		batch := readNextBatch(t, ctx, events, errCh)
 		require.Len(t, batch, len(toRemove))
 		for i, entry := range batch {
-			require.Equal(t, LogOperationRemove, entry.op)
-			require.Equal(t, toRemove[i], entry.value)
+			require.Equal(t, LogOperationRemove, entry.Op)
+			require.Equal(t, toRemove[i], entry.Value)
 		}
 
 		assertNoExtraBatch(t, ctx, events, errCh)
@@ -291,7 +291,7 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 				readerCancels = append(readerCancels, streamCancel)
 				readerCancelMu.Unlock()
 
-				readerSet, err := CreateOrOpen(db.Database, setPath(db, "stream_fuzz_concurrent"))
+				readerSet, err := CreateOrOpen(db.Database, setPath(db, "stream_fuzz_concurrent"), testMaxItemSize)
 				require.NoError(t, err)
 				initialValues, events, streamErrCh, err := readerSet.Stream(streamCtx)
 				require.NoError(t, err)
@@ -494,13 +494,13 @@ func applyStreamBatch(current mapset.Set[string], batch []LogEntry) (mapset.Set[
 		current = mapset.NewSet[string]()
 	}
 	for _, entry := range batch {
-		switch entry.op {
+		switch entry.Op {
 		case LogOperationAdd:
-			current.Add(string(entry.value))
+			current.Add(string(entry.Value))
 		case LogOperationRemove:
-			current.Remove(string(entry.value))
+			current.Remove(string(entry.Value))
 		default:
-			return current, fmt.Errorf("unknown stream operation: %d", entry.op)
+			return current, fmt.Errorf("unknown stream operation: %d", entry.Op)
 		}
 	}
 	return current, nil

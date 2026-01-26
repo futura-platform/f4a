@@ -1,20 +1,30 @@
 package reliableset
 
 import (
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"context"
+
 	mapset "github.com/deckarep/golang-set/v2"
+	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 )
 
 // snapshot returns the current snapshot of the set. (NOT including the log entries)
-func (s *Set) snapshot(tx fdb.ReadTransaction) (mapset.Set[string], error) {
-	begin, end := s.snapshotSubspace.FDBRangeKeys()
-	snapshotEntries, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
-	if err != nil {
+func (s *Set) snapshot(ctx context.Context, readVersion *int64) (mapset.Set[string], error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	snapshot := mapset.NewSetWithSize[string](len(snapshotEntries))
-	for _, snapshotEntry := range snapshotEntries {
-		snapshot.Add(string(snapshotEntry.Value))
+	opts := dbutil.IterateUnboundedOptions{
+		BatchSize:   s.snapshotBatchSize(),
+		ReadVersion: readVersion,
+		Snapshot:    true,
+	}
+	snapshot := mapset.NewSet[string]()
+	for chunk, err := range dbutil.IterateUnbounded(ctx, s.t, s.snapshotSubspace, opts) {
+		if err != nil {
+			return nil, err
+		}
+		for _, snapshotEntry := range chunk {
+			snapshot.Add(string(snapshotEntry.Value))
+		}
 	}
 	return snapshot, nil
 }

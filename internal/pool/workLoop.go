@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
@@ -60,7 +61,7 @@ func RunWorkLoop(
 		return fmt.Errorf("failed to create task set stream: %w", err)
 	}
 
-	if len(initialValues) > 0 {
+	if initialValues.Cardinality() > 0 {
 		err = processAddedBatch(ctx, taskManager, db, router, initialValues)
 		if err != nil {
 			return fmt.Errorf("failed to process initial values: %w", err)
@@ -77,19 +78,35 @@ func RunWorkLoop(
 			}
 			return nil
 		case b := <-eventsCh:
-			switch b.Type {
-			case reliableset.StreamEventTypeAdded:
-				err = processAddedBatch(ctx, taskManager, db, router, b.Items)
+			// record all the changes that happened in this batch
+			// (a key can either be in the added set or the removed set, but NOT both)
+			addedSet := mapset.NewSetWithSize[string](len(b))
+			removedSet := mapset.NewSetWithSize[string](len(b))
+			for _, item := range b {
+				v := string(item.Value)
+				switch item.Op {
+				case reliableset.LogOperationAdd:
+					addedSet.Add(v)
+					removedSet.Remove(v)
+				case reliableset.LogOperationRemove:
+					removedSet.Add(v)
+					addedSet.Remove(v)
+				default:
+					return fmt.Errorf("unknown log operation: %d", item.Op)
+				}
+			}
+			// then apply the changes as a batch
+			if addedSet.Cardinality() > 0 {
+				err = processAddedBatch(ctx, taskManager, db, router, addedSet)
 				if err != nil {
 					return fmt.Errorf("failed to process added batch: %w", err)
 				}
-			case reliableset.StreamEventTypeRemoved:
-				err = processRemovedBatch(taskManager.runMap, b.Items)
+			}
+			if removedSet.Cardinality() > 0 {
+				err = processRemovedBatch(taskManager.runMap, removedSet)
 				if err != nil {
 					return fmt.Errorf("failed to process removed batch: %w", err)
 				}
-			default:
-				return fmt.Errorf("unknown stream event type: %d", b.Type)
 			}
 		}
 	}
@@ -100,19 +117,19 @@ func processAddedBatch(
 	taskManager *taskManager,
 	db util.DbRoot,
 	router execute.Router,
-	items [][]byte,
+	items mapset.Set[string],
 ) error {
 	l := flog.FromContext(ctx)
 	l.LogAttrs(ctx, slog.LevelDebug, "processing added batch",
-		slog.String("item_count", fmt.Sprintf("%d", len(items))))
+		slog.String("item_count", fmt.Sprintf("%d", items.Cardinality())))
 
-	taskIds := make([]task.Id, len(items))
-	for i, item := range items {
-		id, err := task.IdFromBytes(item)
+	taskIds := make([]task.Id, 0, items.Cardinality())
+	for item := range items.Iter() {
+		id, err := task.IdFromBytes([]byte(item))
 		if err != nil {
 			return fmt.Errorf("failed to parse task id: %w", err)
 		}
-		taskIds[i] = id
+		taskIds = append(taskIds, id)
 	}
 	runnables, err := run.LoadTasks(ctx, db, router, taskIds)
 	if err != nil {
@@ -127,9 +144,9 @@ func processAddedBatch(
 	return nil
 }
 
-func processRemovedBatch(taskManager *runMap, items [][]byte) error {
-	for _, item := range items {
-		id, err := task.IdFromBytes(item)
+func processRemovedBatch(taskManager *runMap, items mapset.Set[string]) error {
+	for item := range items.Iter() {
+		id, err := task.IdFromBytes([]byte(item))
 		if err != nil {
 			return fmt.Errorf("failed to parse task id: %w", err)
 		}

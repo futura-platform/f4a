@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testQueueMaxItemSize = 4096
+
 func fifoPath(db util.DbRoot, name string) []string {
 	path := append([]string{}, db.Root.GetPath()...)
 	path = append(path, "fifo", name)
@@ -19,7 +21,15 @@ func fifoPath(db util.DbRoot, name string) []string {
 }
 
 func newFIFO(db util.DbRoot, name string) *FIFO {
-	fifo, err := CreateOrOpenFIFO(db.Database, fifoPath(db, name))
+	fifo, err := CreateOrOpenFIFO(db.Database, fifoPath(db, name), FIFOOptions{MaxItemSize: testQueueMaxItemSize})
+	if err != nil {
+		panic(err)
+	}
+	return fifo
+}
+
+func newFIFOWithMaxItemSize(db util.DbRoot, name string, maxItemSize int) *FIFO {
+	fifo, err := CreateOrOpenFIFO(db.Database, fifoPath(db, name), FIFOOptions{MaxItemSize: maxItemSize})
 	if err != nil {
 		panic(err)
 	}
@@ -131,11 +141,11 @@ func TestFIFOMultipleDequeueSingleTransaction(t *testing.T) {
 func TestFIFOCreateOrOpenReusesPath(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 		path := fifoPath(db, "reopen")
-		queue, err := CreateOrOpenFIFO(db.Database, path)
+		queue, err := CreateOrOpenFIFO(db.Database, path, FIFOOptions{MaxItemSize: testQueueMaxItemSize})
 		require.NoError(t, err)
 		enqueue(t, db, queue, []byte("payload"))
 
-		reopened, err := CreateOrOpenFIFO(db.Database, path)
+		reopened, err := CreateOrOpenFIFO(db.Database, path, FIFOOptions{MaxItemSize: testQueueMaxItemSize})
 		require.NoError(t, err)
 		item, err := dequeue(t, db, reopened)
 		require.NoError(t, err)

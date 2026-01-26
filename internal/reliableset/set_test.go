@@ -3,6 +3,7 @@ package reliableset
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"testing"
 	"time"
@@ -23,9 +24,40 @@ func setPath(db util.DbRoot, name string) []string {
 
 func newSet(t testing.TB, db util.DbRoot, name string) *Set {
 	t.Helper()
-	set, err := CreateOrOpen(db.Database, setPath(db, name))
+	set, err := CreateOrOpen(db.Database, setPath(db, name), testMaxItemSize)
 	require.NoError(t, err)
 	return set
+}
+
+const (
+	testMaxItemSize   = 1024
+	largeLogEntries   = 15000
+	largeLogBatchSize = 200
+)
+
+func makeMaxPayload(id int) []byte {
+	payload := make([]byte, testMaxItemSize)
+	binary.LittleEndian.PutUint64(payload, uint64(id))
+	return payload
+}
+
+func addLargeLog(t testing.TB, db util.DbRoot, set *Set, total int) {
+	t.Helper()
+	for start := 0; start < total; start += largeLogBatchSize {
+		end := start + largeLogBatchSize
+		if end > total {
+			end = total
+		}
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+			for i := start; i < end; i++ {
+				if err := set.Add(tx, makeMaxPayload(i)); err != nil {
+					return nil, err
+				}
+			}
+			return nil, nil
+		})
+		require.NoError(t, err)
+	}
 }
 
 func addItem(t testing.TB, db util.DbRoot, set *Set, item []byte) {
@@ -70,21 +102,18 @@ func removeBatch(t testing.TB, db util.DbRoot, set *Set, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func readSetValues(t testing.TB, db util.DbRoot, set *Set) mapset.Set[string] {
+func readSetValues(t testing.TB, set *Set) mapset.Set[string] {
 	t.Helper()
 	var items mapset.Set[string]
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		var err error
-		items, _, err = set.Items(tx)
-		return nil, err
-	})
+	var err error
+	items, _, err = set.Items(context.Background())
 	require.NoError(t, err)
 	return items
 }
 
 func requireSetMatchesDB(t *testing.T, db util.DbRoot, set *Set, expected mapset.Set[string]) {
 	t.Helper()
-	actual := readSetValues(t, db, set)
+	actual := readSetValues(t, set)
 	require.True(t, stateSetsEqual(actual, expected), "set mismatch: expected %v got %v", expected, actual)
 }
 
@@ -114,15 +143,15 @@ func TestSetAddRemove(t *testing.T) {
 func TestSetCreateOrOpenReusesPath(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 		path := setPath(db, "reopen")
-		set1, err := CreateOrOpen(db.Database, path)
+		set1, err := CreateOrOpen(db.Database, path, testMaxItemSize)
 		require.NoError(t, err)
 
 		addItem(t, db, set1, []byte("payload"))
 
-		set2, err := CreateOrOpen(db.Database, path)
+		set2, err := CreateOrOpen(db.Database, path, testMaxItemSize)
 		require.NoError(t, err)
 
-		items := readSetValues(t, db, set2)
+		items := readSetValues(t, set2)
 		require.True(t, stateSetsEqual(items, mapset.NewSet[string]("payload")))
 	})
 }
@@ -160,7 +189,8 @@ func TestSetEpochKeyChangesOnOperations(t *testing.T) {
 func TestSetItemSizeLimit(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
 		set := newSet(t, db, "size_limit")
-		tooLarge := make([]byte, entrySizeLimit+1)
+		set.maxItemSize = 32
+		tooLarge := make([]byte, set.maxItemSize+1)
 
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			return nil, set.Add(tx, tooLarge)
@@ -182,23 +212,72 @@ func TestSetCompactLog(t *testing.T) {
 		addItem(t, db, set, []byte("c"))
 		removeItem(t, db, set, []byte("b"))
 
-		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-			return nil, set.compactLog(tx)
-		})
+		err := set.compactLog(t.Context())
 		require.NoError(t, err)
 
 		expected := mapset.NewSet[string]("a", "c")
 		requireSetMatchesDB(t, db, set, expected)
 
 		begin, _ := set.logSubspace.FDBRangeKeys()
-		var logEntries []KeyedLogEntry
-		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-			var err error
-			logEntries, err = set.readLog(tx, begin)
-			return nil, err
-		})
+		logEntries, err := set.readLog(t.Context(), begin, nil)
 		require.NoError(t, err)
 		require.Empty(t, logEntries)
+	})
+}
+
+func TestSetItemsLargeLog(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		set := newSet(t, db, "items_large_log")
+		addLargeLog(t, db, set, largeLogEntries)
+
+		var items mapset.Set[string]
+		var err error
+		items, _, err = set.Items(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, largeLogEntries, items.Cardinality())
+	})
+}
+
+func TestSetItemsPinnedReadVersion(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		set := newSet(t, db, "items_pinned")
+		addItem(t, db, set, []byte("first"))
+
+		var readVersion int64
+		_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			readVersion = tx.GetReadVersion().MustGet()
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		addItem(t, db, set, []byte("second"))
+
+		items, _, err := set.itemsAtReadVersion(context.Background(), readVersion)
+		require.NoError(t, err)
+		require.True(t, stateSetsEqual(items, mapset.NewSet[string]("first")))
+	})
+}
+
+func TestSetCompactLargeLog(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		set := newSet(t, db, "compact_large_log")
+		addLargeLog(t, db, set, largeLogEntries)
+
+		err := set.compactLog(t.Context())
+		require.NoError(t, err)
+
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			begin, end := set.logSubspace.FDBRangeKeys()
+			kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{
+				Limit: 1,
+			}).GetSliceWithError()
+			if err != nil {
+				return nil, err
+			}
+			require.Empty(t, kvs)
+			return nil, nil
+		})
+		require.NoError(t, err)
 	})
 }
 
@@ -242,9 +321,7 @@ func TestCompactionRespectsActiveCursor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-			return nil, set.compactLog(tx)
-		})
+		err = set.compactLog(t.Context())
 		require.NoError(t, err)
 
 		remaining := readLogEntries(t, db, set)
@@ -265,10 +342,15 @@ func TestCleanDeadCursors(t *testing.T) {
 			tx.Set(set.cursorKey(expiredID, cursorKeyLease), encodeLease(now.Add(-time.Minute)))
 			tx.Set(set.cursorKey(activeID, cursorKeyTail), []byte("live-tail"))
 			tx.Set(set.cursorKey(activeID, cursorKeyLease), encodeLease(now.Add(time.Minute)))
+			return nil, nil
+		})
+		require.NoError(t, err)
 
-			index, err := set.cursorIndex(tx)
-			require.NoError(t, err)
-			return nil, cleanDeadCursors(tx, index, now)
+		index, err := set.cursorIndex(t.Context(), nil)
+		require.NoError(t, err)
+
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			return nil, set.cleanDeadCursors(tx, index, now)
 		})
 		require.NoError(t, err)
 
@@ -384,13 +466,8 @@ func readCursor(t testing.TB, db util.DbRoot, set *Set, id string) (fdb.Key, tim
 
 func readLogEntries(t testing.TB, db util.DbRoot, set *Set) []KeyedLogEntry {
 	t.Helper()
-	var entries []KeyedLogEntry
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		begin, _ := set.logSubspace.FDBRangeKeys()
-		var err error
-		entries, err = set.readLog(tx, begin)
-		return nil, err
-	})
+	begin, _ := set.logSubspace.FDBRangeKeys()
+	entries, err := set.readLog(context.Background(), begin, nil)
 	require.NoError(t, err)
 	return entries
 }
