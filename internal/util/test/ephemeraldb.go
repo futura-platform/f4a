@@ -13,8 +13,10 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/futura-platform/f4a/internal/util"
 	"github.com/futura-platform/f4a/pkg/constants"
-	"github.com/futura-platform/f4a/pkg/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -56,10 +58,8 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db util.DbRoot)) {
 	// First time setup: configure the database
 	// This will fail if already configured (e.g., cluster file was deleted but container still running)
 	exitCode, output, err := c.Exec(ctx, []string{"fdbcli", "--exec", "configure new single memory"})
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
+	require.NoError(t, err)
+
 	// Exit code 0 = success, non-zero might mean already configured which is fine
 	if exitCode != 0 {
 		// Read output to check if it's just "already configured"
@@ -73,43 +73,27 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db util.DbRoot)) {
 	}
 
 	clusterFile, err := setupClusterFile(ctx, c)
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
-	db := fdb.MustOpenDatabase(clusterFile)
-	err = db.Options().SetTransactionRetryLimit(0)
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
-	err = db.Options().SetTransactionTimeout(10000)
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
+	require.NoError(t, err)
 
 	path := []string{"f4a", "test", t.Name(), fmt.Sprintf("%d", rand.Int())}
+	db, err := util.CreateOrOpenDbRoot(path, func() (fdb.Database, error) {
+		return fdb.OpenDatabase(clusterFile)
+	})
+	require.NoError(t, err)
+
 	// clear this path from any previous tests
 	_, err = directory.Root().Remove(db, path)
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
+	require.NoError(t, err)
+	err = db.Options().SetTransactionRetryLimit(0)
+	require.NoError(t, err)
+	err = db.Options().SetTransactionTimeout(10000)
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		_, err := directory.Root().Remove(db, path)
-		if err != nil {
-			t.Errorf("failed to remove test directory: %v", err)
-		}
+		assert.NoError(t, err)
 	})
-
-	dbr, err := util.CreateOrOpenDbRoot(db, path)
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
-	fn(dbr)
+	fn(db)
 }
 
 const (

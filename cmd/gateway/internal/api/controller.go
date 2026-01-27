@@ -9,23 +9,31 @@ import (
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
+	"github.com/futura-platform/f4a/internal/util"
 	"github.com/futura-platform/f4a/pkg/execute"
-	"github.com/futura-platform/f4a/pkg/util"
 )
 
 func NewController(
 	db util.DbRoot,
-	readySet, suspendedSet *reliableset.Set,
 ) (taskv1connect.ControlServiceHandler, error) {
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or open tasks directory: %v", err)
 	}
+	pendingSet, err := servicestate.CreateOrOpenReadySet(db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create or open pending set: %v", err)
+	}
+	suspendedSet, err := servicestate.CreateOrOpenSuspendedSet(db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create or open suspended set: %v", err)
+	}
 	return &controller{
 		db:           db,
 		taskDir:      taskDir,
-		readySet:     readySet,
+		pendingSet:   pendingSet,
 		suspendedSet: suspendedSet,
 	}, nil
 }
@@ -35,7 +43,7 @@ type controller struct {
 	taskDir task.TasksDirectory
 
 	// a queue of tasks that are ready to be executed.
-	readySet,
+	pendingSet,
 	// a queue of tasks that are suspended (have state, but are not executing).
 	suspendedSet *reliableset.Set
 }
@@ -45,7 +53,7 @@ func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskReque
 	id := task.NewId()
 	tkey, err := c.taskDir.Create(c.db, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create task key: %v", err)
+		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
 		tkey.ExecutorId().Set(t, execute.ExecutorId(req.ExecutorId))
@@ -62,13 +70,9 @@ func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskReque
 
 // UpdateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskRequest) (*taskv1.UpdateTaskResponse, error) {
-	id, err := task.IdFromString(req.TaskId)
+	tkey, err := c.openTask(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse task id: %v", err)
-	}
-	tkey, err := c.taskDir.Open(c.db, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get task key: %v", err)
+		return nil, fmt.Errorf("failed to open task: %w", err)
 	}
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
 		tkey.Input().Set(t, req.Parameters.Input)
@@ -82,14 +86,9 @@ func (c *controller) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 
 // ActivateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskRequest) (*taskv1.ActivateTaskResponse, error) {
-	id, err := task.IdFromString(req.TaskId)
+	tkey, err := c.openTask(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse task id: %v", err)
-	}
-
-	tkey, err := c.taskDir.Open(c.db, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get task key: %v", err)
+		return nil, fmt.Errorf("failed to open task: %w", err)
 	}
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
@@ -97,7 +96,7 @@ func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskR
 			return nil, fmt.Errorf("expected task to be suspended, got %s", currentStatus)
 		}
 		tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
-		return nil, c.readySet.Add(t, id.Bytes())
+		return nil, c.pendingSet.Add(t, tkey.Id().Bytes())
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to activate task: %v", err)
@@ -107,13 +106,9 @@ func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskR
 
 // DeleteTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskRequest) (*taskv1.DeleteTaskResponse, error) {
-	id, err := task.IdFromString(req.TaskId)
+	tkey, err := c.openTask(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse task id: %v", err)
-	}
-	tkey, err := c.taskDir.Open(c.db, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get task key: %v", err)
+		return nil, fmt.Errorf("failed to open task: %w", err)
 	}
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
@@ -131,13 +126,9 @@ func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 
 // SuspendTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskRequest) (*taskv1.SuspendTaskResponse, error) {
-	id, err := task.IdFromString(req.TaskId)
+	tkey, err := c.openTask(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse task id: %v", err)
-	}
-	tkey, err := c.taskDir.Open(c.db, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get task key: %v", err)
+		return nil, fmt.Errorf("failed to open task: %w", err)
 	}
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
@@ -172,7 +163,7 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 			return fmt.Errorf("failed to remove task from task set: %v", err)
 		}
 	case task.LifecycleStatusPending:
-		if err := c.readySet.Remove(t, tkey.Id().Bytes()); err != nil {
+		if err := c.pendingSet.Remove(t, tkey.Id().Bytes()); err != nil {
 			return fmt.Errorf("failed to remove task from ready set: %v", err)
 		}
 	default:

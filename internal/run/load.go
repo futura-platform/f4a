@@ -9,9 +9,9 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
+	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
-	"github.com/futura-platform/f4a/pkg/util"
-	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 )
 
 type RunnableTask struct {

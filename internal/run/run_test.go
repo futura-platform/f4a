@@ -10,8 +10,8 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/pkg/util"
-	testutil "github.com/futura-platform/f4a/pkg/util/test"
+	"github.com/futura-platform/f4a/internal/util"
+	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"

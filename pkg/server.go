@@ -3,20 +3,16 @@ package f4a
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
-	"sync/atomic"
-	"time"
 
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/util"
+	serverutil "github.com/futura-platform/f4a/internal/util/server"
+	"github.com/futura-platform/f4a/pkg/constants"
 	"github.com/futura-platform/f4a/pkg/execute"
-	"github.com/futura-platform/f4a/pkg/util"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	shutdownTimeout = 5 * time.Second
 )
 
 // Start starts an F4A worker + an associated health probe server.
@@ -30,33 +26,16 @@ const (
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
 func Start(ctx context.Context, address string, executors map[string]execute.Executor) error {
-	p := new(http.Protocols)
-	p.SetHTTP1(true)
-	// Use h2c so we can serve HTTP/2 without TLS.
-	p.SetUnencryptedHTTP2(true)
-	mux := http.NewServeMux()
-	s := http.Server{
-		Addr:      address,
-		Handler:   mux,
-		Protocols: p,
-	}
-	var shuttingDown atomic.Bool
-
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("POST /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if shuttingDown.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-
-	dbr, err := util.CreateOrOpenDbRoot(fdb.MustOpenDefault(), []string{"f4a"})
+	dbr, err := util.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return err
 	}
+	s, _ := serverutil.NewBaseK8sService(dbr, func() (status int) {
+		return http.StatusOK
+	}, func() (status int) {
+		return http.StatusOK
+	})
+	s.Addr = fmt.Sprintf(":%d", constants.WORKER_PORT)
 
 	// StatefulSet pods have unique, stable hostnames.
 	runnerId, err := os.Hostname()
@@ -73,11 +52,7 @@ func Start(ctx context.Context, address string, executors map[string]execute.Exe
 	group.Go(func() error {
 		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, nil)
 
-		// Signal that we're shutting down so /readyz returns 503.
-		// This allows Kubernetes to stop routing new traffic to this pod.
-		shuttingDown.Store(true)
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.SHUTDOWN_TIMEOUT)
 		defer cancel()
 		if shutdownErr := s.Shutdown(shutdownCtx); shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) {
 			return errors.Join(err, shutdownErr)
@@ -86,7 +61,7 @@ func Start(ctx context.Context, address string, executors map[string]execute.Exe
 		return err
 	})
 	group.Go(func() error {
-		err := s.ListenAndServe()
+		err := serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

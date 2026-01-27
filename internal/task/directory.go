@@ -3,7 +3,7 @@ package task
 import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/pkg/util"
+	"github.com/futura-platform/f4a/internal/util"
 )
 
 type TasksDirectory struct{ d directory.DirectorySubspace }

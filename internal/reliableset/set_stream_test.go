@@ -11,8 +11,8 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/pkg/util"
-	testutil "github.com/futura-platform/f4a/pkg/util/test"
+	"github.com/futura-platform/f4a/internal/util"
+	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
 )
 

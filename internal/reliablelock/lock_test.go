@@ -12,8 +12,8 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/futura-platform/f4a/internal/reliablelock"
-	"github.com/futura-platform/f4a/pkg/util"
-	testutil "github.com/futura-platform/f4a/pkg/util/test"
+	"github.com/futura-platform/f4a/internal/util"
+	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/privateencoding"
 	"github.com/stretchr/testify/assert"
 )

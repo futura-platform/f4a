@@ -6,8 +6,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/pkg/constants"
-	"github.com/futura-platform/f4a/pkg/util"
+	"github.com/futura-platform/f4a/internal/util"
 	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
@@ -20,8 +19,6 @@ type ExecutionContainer struct {
 var _ executiontype.TransactionalContainer = &ExecutionContainer{}
 
 func NewContainer(id task.Id, db util.DbRoot) *ExecutionContainer {
-	fdb.MustAPIVersion(constants.FDB_API_VERSION)
-
 	tasks, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		panic(err)

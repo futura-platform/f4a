@@ -7,7 +7,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	dbutil "github.com/futura-platform/f4a/pkg/util/db"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 const (

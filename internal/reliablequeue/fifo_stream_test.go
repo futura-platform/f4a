@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/pkg/util"
-	testutil "github.com/futura-platform/f4a/pkg/util/test"
+	"github.com/futura-platform/f4a/internal/util"
+	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
 )
 

@@ -10,7 +10,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliablelock"
-	"github.com/futura-platform/f4a/pkg/util"
+	"github.com/futura-platform/f4a/internal/util"
 )
 
 // Set is a log-structured set built on FoundationDB.

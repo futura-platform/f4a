@@ -2,7 +2,7 @@ package pool
 
 import (
 	"github.com/futura-platform/f4a/internal/reliableset"
-	"github.com/futura-platform/f4a/pkg/util"
+	"github.com/futura-platform/f4a/internal/util"
 )
 
 func taskSetPath(runnerId string) []string {

@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
-	dbutil "github.com/futura-platform/f4a/pkg/util/db"
 )
 
 type executorIdSerializer struct{}
