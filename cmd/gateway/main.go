@@ -14,6 +14,9 @@ import (
 	"github.com/futura-platform/f4a/pkg/constants"
 )
 
+// This program is designed to run as a stateless http server that receives
+// task control requests from clients and atomically handles them in a db transaction.
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal error", "error", err)
