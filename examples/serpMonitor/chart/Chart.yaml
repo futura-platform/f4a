@@ -1,0 +1,9 @@
+apiVersion: v2
+name: serpmonitor
+version: 0.1.0
+description: SerpMonitor umbrella chart for f4a + FoundationDB
+type: application
+dependencies:
+  - name: f4a-runner
+    version: 0.1.0
+    repository: file://../../../charts/f4a-runner

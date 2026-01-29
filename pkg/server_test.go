@@ -102,7 +102,7 @@ func startServer(t *testing.T, address string) (context.CancelFunc, <-chan error
 	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Start(ctx, address, nil)
+		errCh <- startOnAddress(ctx, address, nil)
 	}()
 	return cancel, errCh
 }

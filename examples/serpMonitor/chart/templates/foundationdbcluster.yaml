@@ -1,0 +1,6 @@
+apiVersion: apps.foundationdb.org/v1beta2
+kind: FoundationDBCluster
+metadata:
+  name: {{ .Values.foundationdb.clusterName }}
+spec:
+  {{- toYaml .Values.foundationdb.spec | nindent 2 }}

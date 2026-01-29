@@ -17,10 +17,19 @@ import (
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	"github.com/futura-platform/f4a/pkg/constants"
 	"golang.org/x/sync/errgroup"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
 // This program is designed to run as a stateless k8s operator that facilitates
 // the dispatching of tasks from the pending set, to individual worker sets.
+
+const (
+	leaderLeaseDuration = 30 * time.Second
+	leaderRenewDeadline = 20 * time.Second
+	leaderRetryPeriod   = 5 * time.Second
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -30,7 +39,7 @@ func main() {
 }
 
 func run() error {
-	cfg, err := loadConfig()
+	cfg, leaderElectionName, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -54,7 +63,11 @@ func run() error {
 	}, func() int {
 		return http.StatusOK
 	})
-	s.Addr = fmt.Sprintf(":%d", constants.DISPATCH_PORT)
+	port, err := util.RequiredPort("DISPATCH_PORT")
+	if err != nil {
+		return err
+	}
+	s.Addr = fmt.Sprintf(":%d", port)
 
 	baseCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,7 +75,7 @@ func run() error {
 
 	group, ctx := errgroup.WithContext(baseCtx)
 	group.Go(func() error {
-		err := scheduler.Run(ctx, cfg, dbRoot, clients)
+		err := runWithLeaderElection(ctx, cfg, leaderElectionName, dbRoot, clients)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.SHUTDOWN_TIMEOUT)
 		defer cancel()
@@ -82,32 +95,93 @@ func run() error {
 	return group.Wait()
 }
 
-func loadConfig() (scheduler.Config, error) {
+func runWithLeaderElection(
+	ctx context.Context,
+	cfg scheduler.Config,
+	leaderElectionName string,
+	dbRoot util.DbRoot,
+	clients *k8s.Clients,
+) error {
+	if clients == nil || clients.Core == nil {
+		return fmt.Errorf("kubernetes client is required for leader election")
+	}
+	identity, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("failed to get hostname for leader election: %w", err)
+	}
+
+	lock := &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      leaderElectionName,
+			Namespace: cfg.Namespace,
+		},
+		Client: clients.Core.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: identity,
+		},
+	}
+
+	errCh := make(chan error, 1)
+	leaderCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		leaderelection.RunOrDie(leaderCtx, leaderelection.LeaderElectionConfig{
+			Lock:            lock,
+			LeaseDuration:   leaderLeaseDuration,
+			RenewDeadline:   leaderRenewDeadline,
+			RetryPeriod:     leaderRetryPeriod,
+			ReleaseOnCancel: true,
+			Callbacks: leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(runCtx context.Context) {
+					slog.Info("dispatch leadership acquired", "identity", identity, "lock", leaderElectionName)
+					errCh <- scheduler.Run(runCtx, cfg, dbRoot, clients)
+				},
+				OnStoppedLeading: func() {
+					slog.Warn("dispatch leadership lost", "identity", identity, "lock", leaderElectionName)
+				},
+			},
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func loadConfig() (scheduler.Config, string, error) {
 	namespace := resolveNamespace()
 	if namespace == "" {
-		return scheduler.Config{}, fmt.Errorf("NAMESPACE or POD_NAMESPACE is required")
+		return scheduler.Config{}, "", fmt.Errorf("NAMESPACE or POD_NAMESPACE is required")
 	}
 	statefulSetName := strings.TrimSpace(os.Getenv("STATEFULSET_NAME"))
 	if statefulSetName == "" {
-		return scheduler.Config{}, fmt.Errorf("STATEFULSET_NAME is required")
+		return scheduler.Config{}, "", fmt.Errorf("STATEFULSET_NAME is required")
+	}
+	leaderElectionName := strings.TrimSpace(os.Getenv("LEADER_ELECTION_NAME"))
+	if leaderElectionName == "" {
+		return scheduler.Config{}, "", fmt.Errorf("LEADER_ELECTION_NAME is required")
 	}
 
 	metricsIntervalValue := strings.TrimSpace(os.Getenv("METRICS_INTERVAL"))
 	if metricsIntervalValue == "" {
-		return scheduler.Config{}, fmt.Errorf("METRICS_INTERVAL is required")
+		return scheduler.Config{}, "", fmt.Errorf("METRICS_INTERVAL is required")
 	}
 	metricsInterval, err := time.ParseDuration(metricsIntervalValue)
 	if err != nil {
-		return scheduler.Config{}, fmt.Errorf("invalid METRICS_INTERVAL: %w", err)
+		return scheduler.Config{}, "", fmt.Errorf("invalid METRICS_INTERVAL: %w", err)
 	}
 
 	scoreAlphaValue := strings.TrimSpace(os.Getenv("SCORE_EMA_ALPHA"))
 	if scoreAlphaValue == "" {
-		return scheduler.Config{}, fmt.Errorf("SCORE_EMA_ALPHA is required")
+		return scheduler.Config{}, "", fmt.Errorf("SCORE_EMA_ALPHA is required")
 	}
 	scoreAlpha, err := strconv.ParseFloat(scoreAlphaValue, 64)
 	if err != nil {
-		return scheduler.Config{}, fmt.Errorf("invalid SCORE_EMA_ALPHA: %w", err)
+		return scheduler.Config{}, "", fmt.Errorf("invalid SCORE_EMA_ALPHA: %w", err)
 	}
 
 	cfg := scheduler.Config{
@@ -118,7 +192,7 @@ func loadConfig() (scheduler.Config, error) {
 		Logger:          slog.Default(),
 	}
 
-	return cfg, nil
+	return cfg, leaderElectionName, nil
 }
 
 func resolveNamespace() string {

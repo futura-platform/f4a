@@ -1,0 +1,52 @@
+imagePullSecrets: []
+
+gateway:
+  name: "f4a-gateway"
+  image: "f4a-gateway:latest"
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources: {}
+
+dispatch:
+  name: "f4a-dispatch"
+  serviceAccountName: "f4a-dispatch"
+  image: "f4a-dispatch:latest"
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  metricsInterval: "5s"
+  scoreEmaAlpha: "0.5"
+  service:
+    port: 8082
+  resources: {}
+
+worker:
+  name: "f4a-worker"
+  image: "f4a-worker:latest"
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    port: 8081
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+fdb:
+  clusterFile:
+    configMap:
+      name: ""
+      key: "cluster-file"
+    secret:
+      name: ""
+      key: "fdb.cluster"
+    writable:
+      enabled: true
+      mountPath: /etc/foundationdb
+      sourceMountPath: /etc/foundationdb-source
+      initImage: foundationdb/fdb-kubernetes-monitor:7.3.63

@@ -25,7 +25,15 @@ import (
 //
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
-func Start(ctx context.Context, address string, executors map[string]execute.Executor) error {
+func Start(ctx context.Context, executors map[string]execute.Executor) error {
+	port, err := util.RequiredPort("WORKER_PORT")
+	if err != nil {
+		return err
+	}
+	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors)
+}
+
+func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor) error {
 	dbr, err := util.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return err
@@ -35,7 +43,7 @@ func Start(ctx context.Context, address string, executors map[string]execute.Exe
 	}, func() (status int) {
 		return http.StatusOK
 	})
-	s.Addr = fmt.Sprintf(":%d", constants.WORKER_PORT)
+	s.Addr = address
 
 	// StatefulSet pods have unique, stable hostnames.
 	runnerId, err := os.Hostname()
@@ -49,8 +57,20 @@ func Start(ctx context.Context, address string, executors map[string]execute.Exe
 	}
 
 	group, ctx := errgroup.WithContext(ctx)
+	router := execute.NewRouter()
+	if len(executors) > 0 {
+		routes := make([]execute.Route, 0, len(executors))
+		for id, executor := range executors {
+			routes = append(routes, execute.Route{
+				Id:       execute.ExecutorId(id),
+				Executor: executor,
+			})
+		}
+		router = execute.NewRouter(routes...)
+	}
+
 	group.Go(func() error {
-		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, nil)
+		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, router)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.SHUTDOWN_TIMEOUT)
 		defer cancel()

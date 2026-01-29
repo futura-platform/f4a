@@ -10,5 +10,5 @@ import (
 
 func main() {
 	fmt.Println("Starting f4a runner")
-	panic(f4a.Start(context.Background(), ":8080", map[string]execute.Executor{}))
+	panic(f4a.Start(context.Background(), map[string]execute.Executor{}))
 }

@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "f4a-runner.gatewayName" . }}
+  labels:
+    {{- include "f4a-runner.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "f4a-runner.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "f4a-runner.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
+      {{- $clusterFileSourceName := include "f4a-runner.clusterFileSourceName" . -}}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.fdb.clusterFile.writable.enabled }}
+      initContainers:
+        - name: fdb-cluster-init
+          image: {{ .Values.fdb.clusterFile.writable.initImage | quote }}
+          args:
+            - --mode
+            - init
+            - --input-dir
+            - {{ .Values.fdb.clusterFile.writable.sourceMountPath | quote }}
+            - --output-dir
+            - {{ .Values.fdb.clusterFile.writable.mountPath | quote }}
+            - --copy-file
+            - {{ $clusterFileKey | quote }}
+            - --require-not-empty
+            - {{ $clusterFileKey | quote }}
+          volumeMounts:
+            - name: fdb-cluster-source
+              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+              readOnly: true
+            - name: fdb-cluster
+              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+      {{- end }}
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image | quote }}
+          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.service.port }}
+          env:
+            - name: GATEWAY_PORT
+              value: {{ .Values.gateway.service.port | quote }}
+            - name: FDB_CLUSTER_FILE
+              value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.fdb.clusterFile.writable.enabled }}
+            - name: fdb-cluster
+              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+            {{- else }}
+            - name: fdb-cluster-source
+              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: fdb-cluster-source
+          {{- if .Values.fdb.clusterFile.configMap.name }}
+          configMap:
+            name: {{ $clusterFileSourceName }}
+            items:
+              - key: {{ $clusterFileKey | quote }}
+                path: {{ $clusterFileKey | quote }}
+          {{- else }}
+          secret:
+            secretName: {{ $clusterFileSourceName }}
+            items:
+              - key: {{ $clusterFileKey | quote }}
+                path: {{ $clusterFileKey | quote }}
+          {{- end }}
+        {{- if .Values.fdb.clusterFile.writable.enabled }}
+        - name: fdb-cluster
+          emptyDir: {}
+        {{- end }}

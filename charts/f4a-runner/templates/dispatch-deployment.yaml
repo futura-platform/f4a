@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "f4a-runner.dispatchName" . }}
+  labels:
+    {{- include "f4a-runner.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatch
+spec:
+  replicas: {{ .Values.dispatch.replicas }}
+  selector:
+    matchLabels:
+      {{- include "f4a-runner.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dispatch
+  template:
+    metadata:
+      labels:
+        {{- include "f4a-runner.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dispatch
+    spec:
+      {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
+      {{- $clusterFileSourceName := include "f4a-runner.clusterFileSourceName" . -}}
+      serviceAccountName: {{ include "f4a-runner.dispatchServiceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.fdb.clusterFile.writable.enabled }}
+      initContainers:
+        - name: fdb-cluster-init
+          image: {{ .Values.fdb.clusterFile.writable.initImage | quote }}
+          args:
+            - --mode
+            - init
+            - --input-dir
+            - {{ .Values.fdb.clusterFile.writable.sourceMountPath | quote }}
+            - --output-dir
+            - {{ .Values.fdb.clusterFile.writable.mountPath | quote }}
+            - --copy-file
+            - {{ $clusterFileKey | quote }}
+            - --require-not-empty
+            - {{ $clusterFileKey | quote }}
+          volumeMounts:
+            - name: fdb-cluster-source
+              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+              readOnly: true
+            - name: fdb-cluster
+              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+      {{- end }}
+      containers:
+        - name: dispatch
+          image: {{ .Values.dispatch.image | quote }}
+          imagePullPolicy: {{ .Values.dispatch.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.dispatch.service.port }}
+          env:
+            - name: DISPATCH_PORT
+              value: {{ .Values.dispatch.service.port | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: STATEFULSET_NAME
+              value: {{ .Values.worker.name | quote }}
+            - name: METRICS_INTERVAL
+              value: {{ .Values.dispatch.metricsInterval | quote }}
+            - name: SCORE_EMA_ALPHA
+              value: {{ .Values.dispatch.scoreEmaAlpha | quote }}
+            - name: LEADER_ELECTION_NAME
+              value: {{ include "f4a-runner.dispatchName" . | quote }}
+            - name: FDB_CLUSTER_FILE
+              value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.dispatch.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.fdb.clusterFile.writable.enabled }}
+            - name: fdb-cluster
+              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+            {{- else }}
+            - name: fdb-cluster-source
+              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: fdb-cluster-source
+          {{- if .Values.fdb.clusterFile.configMap.name }}
+          configMap:
+            name: {{ $clusterFileSourceName }}
+            items:
+              - key: {{ $clusterFileKey | quote }}
+                path: {{ $clusterFileKey | quote }}
+          {{- else }}
+          secret:
+            secretName: {{ $clusterFileSourceName }}
+            items:
+              - key: {{ $clusterFileKey | quote }}
+                path: {{ $clusterFileKey | quote }}
+          {{- end }}
+        {{- if .Values.fdb.clusterFile.writable.enabled }}
+        - name: fdb-cluster
+          emptyDir: {}
+        {{- end }}

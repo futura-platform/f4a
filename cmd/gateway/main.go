@@ -40,7 +40,11 @@ func run() error {
 	}, func() int {
 		return http.StatusOK
 	})
-	s.Addr = fmt.Sprintf(":%d", constants.GATEWAY_PORT)
+	port, err := util.RequiredPort("GATEWAY_PORT")
+	if err != nil {
+		return err
+	}
+	s.Addr = fmt.Sprintf(":%d", port)
 	mux.Handle(taskv1connect.NewControlServiceHandler(controller))
 
 	err = serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
