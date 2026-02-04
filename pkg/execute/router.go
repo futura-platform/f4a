@@ -1,14 +1,9 @@
 package execute
 
-import (
-	"errors"
-	"fmt"
-)
-
 type ExecutorId string
 
 type Router interface {
-	Route(executorId ExecutorId) (Executor, error)
+	Route(executorId ExecutorId) Executor
 }
 
 type genericRouter struct {
@@ -28,14 +23,10 @@ func NewRouter(routes ...Route) Router {
 	return &genericRouter{executors: executors}
 }
 
-var (
-	ErrExecutorNotFound = errors.New("executor not found")
-)
-
-func (r *genericRouter) Route(executorId ExecutorId) (Executor, error) {
+func (r *genericRouter) Route(executorId ExecutorId) Executor {
 	executor, ok := r.executors[executorId]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrExecutorNotFound, executorId)
+		return notFoundExecutor{requestedExecutorId: executorId}
 	}
-	return executor, nil
+	return executor
 }

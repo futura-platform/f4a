@@ -1,6 +1,7 @@
 package execute_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -20,14 +21,14 @@ func TestRouter(t *testing.T) {
 			},
 		)
 
-		executor, err := router.Route("executor1")
-		assert.NoError(t, err)
-		assert.Equal(t, executor, executor)
+		routed := router.Route("executor1")
+		assert.Equal(t, executor, routed)
 	})
 
 	t.Run("route to unknown executor", func(t *testing.T) {
 		router := execute.NewRouter()
-		_, err := router.Route("executor1")
+		routed := router.Route("executor1")
+		_, err := routed.ExecuteFrom(nil).Execute(context.Background(), nil)
 		assert.ErrorIs(t, err, execute.ErrExecutorNotFound)
 	})
 }
