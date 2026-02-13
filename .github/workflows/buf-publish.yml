@@ -1,0 +1,55 @@
+name: Buf Publish
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: buf-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to BSR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Ensure BUF_TOKEN is configured
+        shell: bash
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -z "${BUF_TOKEN}" ]; then
+            echo "::error::Missing BUF_TOKEN secret. Configure it in repository settings."
+            exit 1
+          fi
+
+      - name: Set up Buf CLI
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish with Git metadata labels
+        shell: bash
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "${REF_TYPE}" = "tag" ]; then
+            # Keep the pushed version tag explicitly attached as a BSR label.
+            buf push --git-metadata --label "${REF_NAME}"
+          else
+            buf push --git-metadata
+          fi
