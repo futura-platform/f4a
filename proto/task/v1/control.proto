@@ -38,9 +38,26 @@ message DeleteTaskRequest {
 message DeleteTaskResponse {}
 
 service ControlService {
+  // CreateTask creates a new task and returns the task ID.
+  // The task will be created in the suspended state.
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+
+  // UpdateTask updates the parameters of a task.
+  // This can be used on a task that is in any state.
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+
+  // ActivateTask "activates" a task that is in the suspended state.
+  // This will set the task to the pending state.
+  // It will be executed by a runner as soon as possible.
   rpc ActivateTask(ActivateTaskRequest) returns (ActivateTaskResponse);
+
+  // SuspendTask suspends a task that is in the pending or running state.
+  // This will set the task to the suspended state.
+  // It will stop execution as soon as possible.
   rpc SuspendTask(SuspendTaskRequest) returns (SuspendTaskResponse);
+
+  // DeleteTask deletes a task.
+  // This will remove the task from the system.
+  // This can be used on a task that is in any state.
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
 }

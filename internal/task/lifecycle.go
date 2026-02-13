@@ -13,7 +13,7 @@ const (
 	// LifecycleStatusPending means the task is activated, and waiting to be assigned to a runner.
 	LifecycleStatusPending LifecycleStatus = iota
 	// LifecycleStatusSuspended means the task is suspended, and waiting to be activated.
-	LifecycleStatusSuspended LifecycleStatus = iota
+	LifecycleStatusSuspended
 	// LifecycleStatusRunning means the task is currently assigned to a runner.
 	LifecycleStatusRunning
 )

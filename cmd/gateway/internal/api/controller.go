@@ -104,26 +104,6 @@ func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskR
 	return &taskv1.ActivateTaskResponse{}, nil
 }
 
-// DeleteTask implements taskv1connect.ControlServiceHandler.
-func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskRequest) (*taskv1.DeleteTaskResponse, error) {
-	tkey, err := c.openTask(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
-		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-		if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
-			return nil, fmt.Errorf("failed to remove task from current queue: %v", err)
-		}
-
-		return nil, tkey.Clear(t)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete task: %v", err)
-	}
-	return &taskv1.DeleteTaskResponse{}, nil
-}
-
 // SuspendTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskRequest) (*taskv1.SuspendTaskResponse, error) {
 	tkey, err := c.openTask(req)
@@ -149,6 +129,26 @@ func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskReq
 		return nil, fmt.Errorf("failed to suspend task: %v", err)
 	}
 	return &taskv1.SuspendTaskResponse{}, nil
+}
+
+// DeleteTask implements taskv1connect.ControlServiceHandler.
+func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskRequest) (*taskv1.DeleteTaskResponse, error) {
+	tkey, err := c.openTask(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open task: %w", err)
+	}
+	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
+		if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
+			return nil, fmt.Errorf("failed to remove task from current queue: %v", err)
+		}
+
+		return nil, tkey.Clear(t)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete task: %v", err)
+	}
+	return &taskv1.DeleteTaskResponse{}, nil
 }
 
 func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey, currentStatus task.LifecycleStatus) error {
