@@ -2,13 +2,13 @@ package servicestate
 
 import (
 	"github.com/futura-platform/f4a/internal/reliableset"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-func CreateOrOpenReadySet(dbRoot util.DbRoot) (*reliableset.Set, error) {
+func CreateOrOpenReadySet(dbRoot dbutil.DbRoot) (*reliableset.Set, error) {
 	return reliableset.CreateOrOpen(dbRoot, []string{"ready"})
 }
 
-func CreateOrOpenSuspendedSet(dbRoot util.DbRoot) (*reliableset.Set, error) {
+func CreateOrOpenSuspendedSet(dbRoot dbutil.DbRoot) (*reliableset.Set, error) {
 	return reliableset.CreateOrOpen(dbRoot, []string{"suspended"})
 }

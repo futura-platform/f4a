@@ -9,7 +9,6 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 )
@@ -25,7 +24,7 @@ func (r RunnableTask) CallbackUrl() *url.URL {
 
 // LoadTasks loads the tasks from the database and returns a list of runnable tasks.
 // This is mainly a helper to load a batch of tasks in a single transaction.
-func LoadTasks(ctx context.Context, db util.DbRoot, router execute.Router, ids []task.Id) ([]RunnableTask, error) {
+func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids []task.Id) ([]RunnableTask, error) {
 	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open task directory: %w", err)
@@ -68,14 +67,7 @@ func LoadTasks(ctx context.Context, db util.DbRoot, router execute.Router, ids [
 				mu.Unlock()
 				return
 			}
-
-			executor, err := router.Route(executorId)
-			if err != nil {
-				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to route executor %s: %w", id, err))
-				mu.Unlock()
-				return
-			}
+			executor := router.Route(executorId)
 
 			callbackUrlValue, err := callbackUrlFuture.Get()
 			if err != nil {

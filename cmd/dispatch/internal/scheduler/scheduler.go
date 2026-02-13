@@ -17,7 +17,7 @@ import (
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	weightedrand "github.com/mroth/weightedrand/v2"
 )
 
@@ -35,7 +35,7 @@ type Config struct {
 
 type Scheduler struct {
 	cfg        Config
-	db         util.DbRoot
+	db         dbutil.DbRoot
 	taskDir    task.TasksDirectory
 	pendingSet *reliableset.Set
 	clients    *k8s.Clients
@@ -45,7 +45,7 @@ type Scheduler struct {
 	logger     *slog.Logger
 }
 
-func Run(ctx context.Context, cfg Config, db util.DbRoot, clients *k8s.Clients) error {
+func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients) error {
 	if cfg.Namespace == "" {
 		return fmt.Errorf("namespace is required")
 	}

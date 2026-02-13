@@ -12,7 +12,7 @@ import (
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/flog"
 )
@@ -37,12 +37,11 @@ type taskManager struct {
 func RunWorkLoop(
 	ctx context.Context,
 	runnerId string,
-	db util.DbRoot,
+	db dbutil.DbRoot,
 	taskSet *reliableset.Set,
 	router execute.Router,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	var runErrOnce sync.Once
 	runErrCh := make(chan error, 1)
@@ -54,7 +53,10 @@ func RunWorkLoop(
 		}),
 		c: http.DefaultClient,
 	}
-	defer taskManager.cancelAll()
+	defer func() {
+		cancel()
+		taskManager.wait()
+	}()
 
 	initialValues, eventsCh, streamErrCh, err := taskSet.Stream(ctx)
 	if err != nil {
@@ -116,7 +118,7 @@ func RunWorkLoop(
 func processAddedBatch(
 	ctx context.Context,
 	taskManager *taskManager,
-	db util.DbRoot,
+	db dbutil.DbRoot,
 	router execute.Router,
 	items mapset.Set[string],
 ) error {
@@ -137,7 +139,7 @@ func processAddedBatch(
 		return fmt.Errorf("failed to load runnables: %w", err)
 	}
 	for _, runnable := range runnables {
-		err := taskManager.run(runnable)
+		err := taskManager.run(ctx, runnable)
 		if err != nil {
 			return fmt.Errorf("failed to run task %s: %w", runnable.Id(), err)
 		}

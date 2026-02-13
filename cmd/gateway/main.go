@@ -10,6 +10,7 @@ import (
 	"github.com/futura-platform/f4a/cmd/gateway/internal/api"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	"github.com/futura-platform/f4a/pkg/constants"
 )
@@ -25,7 +26,7 @@ func main() {
 }
 
 func run() error {
-	dbRoot, err := util.CreateOrOpenDefaultDbRoot()
+	dbRoot, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return fmt.Errorf("failed to create or open default db root: %w", err)
 	}

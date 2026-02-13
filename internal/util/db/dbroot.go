@@ -1,4 +1,4 @@
-package util
+package dbutil
 
 import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"

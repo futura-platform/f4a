@@ -9,26 +9,26 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setPath(db util.DbRoot, name string) []string {
+func setPath(db dbutil.DbRoot, name string) []string {
 	path := append([]string{}, db.Root.GetPath()...)
 	path = append(path, "set", name)
 	return path
 }
 
-func newSet(t testing.TB, db util.DbRoot, name string) *Set {
+func newSet(t testing.TB, db dbutil.DbRoot, name string) *Set {
 	t.Helper()
 	set, err := Create(db, setPath(db, name))
 	require.NoError(t, err)
 	return set
 }
 
-func addItem(t testing.TB, db util.DbRoot, set *Set, item []byte) {
+func addItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, set.Add(tx, item)
@@ -36,7 +36,7 @@ func addItem(t testing.TB, db util.DbRoot, set *Set, item []byte) {
 	require.NoError(t, err)
 }
 
-func removeItem(t testing.TB, db util.DbRoot, set *Set, item []byte) {
+func removeItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, set.Remove(tx, item)
@@ -44,7 +44,7 @@ func removeItem(t testing.TB, db util.DbRoot, set *Set, item []byte) {
 	require.NoError(t, err)
 }
 
-func addBatch(t testing.TB, db util.DbRoot, set *Set, items [][]byte) {
+func addBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -57,7 +57,7 @@ func addBatch(t testing.TB, db util.DbRoot, set *Set, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func removeBatch(t testing.TB, db util.DbRoot, set *Set, items [][]byte) {
+func removeBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -70,7 +70,7 @@ func removeBatch(t testing.TB, db util.DbRoot, set *Set, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func readSetValues(t testing.TB, db util.DbRoot, set *Set) mapset.Set[string] {
+func readSetValues(t testing.TB, db dbutil.DbRoot, set *Set) mapset.Set[string] {
 	t.Helper()
 	var items mapset.Set[string]
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -82,14 +82,14 @@ func readSetValues(t testing.TB, db util.DbRoot, set *Set) mapset.Set[string] {
 	return items
 }
 
-func requireSetMatchesDB(t *testing.T, db util.DbRoot, set *Set, expected mapset.Set[string]) {
+func requireSetMatchesDB(t *testing.T, db dbutil.DbRoot, set *Set, expected mapset.Set[string]) {
 	t.Helper()
 	actual := readSetValues(t, db, set)
 	require.True(t, stateSetsEqual(actual, expected), "set mismatch: expected %v got %v", expected, actual)
 }
 
 func TestSetAddRemove(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "basic")
 		items := [][]byte{
 			[]byte("alpha"),
@@ -112,7 +112,7 @@ func TestSetAddRemove(t *testing.T) {
 }
 
 func TestSetCreateOrOpenReusesPath(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		path := setPath(db, "reopen")
 		set1, err := Create(db, path)
 		require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestSetCreateOrOpenReusesPath(t *testing.T) {
 }
 
 func TestSetEpochKeyChangesOnOperations(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "epoch_key_invariant")
 
 		readEpoch := func() []byte {
@@ -158,7 +158,7 @@ func TestSetEpochKeyChangesOnOperations(t *testing.T) {
 }
 
 func TestSetItemSizeLimit(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "size_limit")
 		tooLarge := make([]byte, entrySizeLimit+1)
 
@@ -175,7 +175,7 @@ func TestSetItemSizeLimit(t *testing.T) {
 }
 
 func TestSetCompactLog(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "compact")
 		addItem(t, db, set, []byte("a"))
 		addItem(t, db, set, []byte("b"))
@@ -203,7 +203,7 @@ func TestSetCompactLog(t *testing.T) {
 }
 
 func TestCursorRegistrationAndAdvance(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "cursor_registration")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -225,7 +225,7 @@ func TestCursorRegistrationAndAdvance(t *testing.T) {
 }
 
 func TestCompactionRespectsActiveCursor(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "compact_cursor")
 		addItem(t, db, set, []byte("a"))
 		addItem(t, db, set, []byte("b"))
@@ -254,7 +254,7 @@ func TestCompactionRespectsActiveCursor(t *testing.T) {
 }
 
 func TestCleanDeadCursors(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "cursor_gc")
 		expiredID := "expired"
 		activeID := "active"
@@ -284,7 +284,7 @@ func TestCleanDeadCursors(t *testing.T) {
 }
 
 func BenchmarkSetAdd(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		set := newSet(b, db, "bench_add")
 		payload := []byte("payload")
 
@@ -302,7 +302,7 @@ func BenchmarkSetAdd(b *testing.B) {
 }
 
 func BenchmarkSetRemove(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		set := newSet(b, db, "bench_remove")
 		payload := []byte("payload")
 
@@ -343,7 +343,7 @@ func cloneSet(in mapset.Set[string]) mapset.Set[string] {
 	return out
 }
 
-func readLastLogKey(t testing.TB, db util.DbRoot, set *Set) fdb.Key {
+func readLastLogKey(t testing.TB, db dbutil.DbRoot, set *Set) fdb.Key {
 	t.Helper()
 	var key fdb.Key
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -364,7 +364,7 @@ func readLastLogKey(t testing.TB, db util.DbRoot, set *Set) fdb.Key {
 	return key
 }
 
-func readCursor(t testing.TB, db util.DbRoot, set *Set, id string) (fdb.Key, time.Time) {
+func readCursor(t testing.TB, db dbutil.DbRoot, set *Set, id string) (fdb.Key, time.Time) {
 	t.Helper()
 	var tail fdb.Key
 	var lease time.Time
@@ -382,7 +382,7 @@ func readCursor(t testing.TB, db util.DbRoot, set *Set, id string) (fdb.Key, tim
 	return tail, lease
 }
 
-func readLogEntries(t testing.TB, db util.DbRoot, set *Set) []KeyedLogEntry {
+func readLogEntries(t testing.TB, db dbutil.DbRoot, set *Set) []KeyedLogEntry {
 	t.Helper()
 	var entries []KeyedLogEntry
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -395,7 +395,7 @@ func readLogEntries(t testing.TB, db util.DbRoot, set *Set) []KeyedLogEntry {
 	return entries
 }
 
-func waitForCursorTail(t *testing.T, db util.DbRoot, set *Set, id string, expected fdb.Key) {
+func waitForCursorTail(t *testing.T, db dbutil.DbRoot, set *Set, id string, expected fdb.Key) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

@@ -27,17 +27,55 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "f4a-runner.clusterFileKey" -}}
-{{- if .Values.fdb.clusterFile.configMap.name -}}
-{{- .Values.fdb.clusterFile.configMap.key | default "cluster-file" -}}
-{{- else -}}
 {{- .Values.fdb.clusterFile.secret.key | default "fdb.cluster" -}}
 {{- end -}}
-{{- end -}}
 
-{{- define "f4a-runner.clusterFileSourceName" -}}
-{{- if .Values.fdb.clusterFile.configMap.name -}}
-{{- .Values.fdb.clusterFile.configMap.name -}}
-{{- else -}}
+{{- define "f4a-runner.clusterFileSecretName" -}}
 {{- .Values.fdb.clusterFile.secret.name -}}
 {{- end -}}
+
+{{- define "f4a-runner.clusterFileInitContainer" -}}
+- name: fdb-cluster-init
+  image: {{ .Values.fdb.clusterFile.writable.initImage | quote }}
+  args:
+    - --mode
+    - init
+    - --input-dir
+    - {{ .Values.fdb.clusterFile.writable.sourceMountPath | quote }}
+    - --output-dir
+    - {{ .Values.fdb.clusterFile.writable.mountPath | quote }}
+    - --copy-file
+    - {{ .clusterFileKey | quote }}
+    - --require-not-empty
+    - {{ .clusterFileKey | quote }}
+  volumeMounts:
+    - name: fdb-cluster-source
+      mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+      readOnly: true
+    - name: fdb-cluster
+      mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+{{- end -}}
+
+{{- define "f4a-runner.clusterFileVolumeMounts" -}}
+{{- if .Values.fdb.clusterFile.writable.enabled }}
+- name: fdb-cluster
+  mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+{{- else }}
+- name: fdb-cluster-source
+  mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "f4a-runner.clusterFileVolumes" -}}
+- name: fdb-cluster-source
+  secret:
+    secretName: {{ .clusterFileSecretName }}
+    items:
+      - key: {{ .clusterFileKey | quote }}
+        path: {{ .clusterFileKey | quote }}
+{{- if .Values.fdb.clusterFile.writable.enabled }}
+- name: fdb-cluster
+  emptyDir: {}
+{{- end }}
 {{- end -}}

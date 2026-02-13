@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestRunnableId(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 		assert.NoError(t, err)
 		id := task.NewId()

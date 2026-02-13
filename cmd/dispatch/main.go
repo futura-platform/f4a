@@ -14,6 +14,7 @@ import (
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler"
 	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	"github.com/futura-platform/f4a/pkg/constants"
 	"golang.org/x/sync/errgroup"
@@ -44,7 +45,7 @@ func run() error {
 		return err
 	}
 
-	dbRoot, err := util.CreateOrOpenDefaultDbRoot()
+	dbRoot, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return fmt.Errorf("failed to create or open default db root: %w", err)
 	}
@@ -99,7 +100,7 @@ func runWithLeaderElection(
 	ctx context.Context,
 	cfg scheduler.Config,
 	leaderElectionName string,
-	dbRoot util.DbRoot,
+	dbRoot dbutil.DbRoot,
 	clients *k8s.Clients,
 ) error {
 	if clients == nil || clients.Core == nil {

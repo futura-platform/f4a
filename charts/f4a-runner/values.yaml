@@ -39,9 +39,7 @@ worker:
 
 fdb:
   clusterFile:
-    configMap:
-      name: ""
-      key: "cluster-file"
+    # Secret containing the FDB cluster connection file
     secret:
       name: ""
       key: "fdb.cluster"

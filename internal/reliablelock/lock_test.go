@@ -12,17 +12,17 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/futura-platform/f4a/internal/reliablelock"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/privateencoding"
 	"github.com/stretchr/testify/assert"
 )
 
-func lockKey(db util.DbRoot) fdb.Key {
+func lockKey(db dbutil.DbRoot) fdb.Key {
 	return db.Root.Pack(tuple.Tuple{"lock"})
 }
 
-func readLockValue[T comparable](t *testing.T, db util.DbRoot, key fdb.KeyConvertible) (reliablelock.LeaseValue[T], bool) {
+func readLockValue[T comparable](t *testing.T, db dbutil.DbRoot, key fdb.KeyConvertible) (reliablelock.LeaseValue[T], bool) {
 	t.Helper()
 
 	var raw []byte
@@ -55,7 +55,7 @@ type lockHolderMetadata struct {
 }
 
 func TestLockAcquireRelease(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		metadata := "holder-1"
 		lock := reliablelock.NewLock(db.Database, key, metadata)
@@ -77,7 +77,7 @@ func TestLockAcquireRelease(t *testing.T) {
 }
 
 func TestLockStoresCorrectValue(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		holder := lockHolderMetadata{
 			ID:     "task-123",
@@ -103,7 +103,7 @@ func TestLockStoresCorrectValue(t *testing.T) {
 }
 
 func TestLockBlocksUntilReleased(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		holder := reliablelock.NewLock(db.Database, key, "holder")
 		waiter := reliablelock.NewLock(db.Database, key, "waiter")
@@ -138,7 +138,7 @@ func TestLockBlocksUntilReleased(t *testing.T) {
 }
 
 func TestLockReleaseNotOwner(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		holder := reliablelock.NewLock(db.Database, key, "holder")
 		other := reliablelock.NewLock(db.Database, key, "other")
@@ -152,7 +152,7 @@ func TestLockReleaseNotOwner(t *testing.T) {
 }
 
 func TestLockAcquireContextCanceled(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		holder := reliablelock.NewLock(db.Database, key, "holder")
 		waiter := reliablelock.NewLock(db.Database, key, "waiter")
@@ -169,7 +169,7 @@ func TestLockAcquireContextCanceled(t *testing.T) {
 }
 
 func TestLockHolderDies(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		key := lockKey(db)
 		leaseDuration := 200 * time.Millisecond
 		holder := reliablelock.NewLock(db.Database, key, "holder",
@@ -205,7 +205,7 @@ func TestLockHolderDies(t *testing.T) {
 }
 
 func TestLockContention(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
 		key := lockKey(db)
 
@@ -265,7 +265,7 @@ func TestLockContention(t *testing.T) {
 }
 
 func BenchmarkLockAcquireRelease(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		key := db.Root.Pack(tuple.Tuple{"bench_lock"})
 		lock := reliablelock.NewLock(db.Database, key, "bench")
 		ctx := context.Background()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	"github.com/futura-platform/f4a/pkg/constants"
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -34,10 +35,12 @@ func Start(ctx context.Context, executors map[string]execute.Executor) error {
 }
 
 func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor) error {
-	dbr, err := util.CreateOrOpenDefaultDbRoot()
+	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return err
 	}
+	ctx = dbutil.WithDB(ctx, dbr)
+
 	s, _ := serverutil.NewBaseK8sService(dbr, func() (status int) {
 		return http.StatusOK
 	}, func() (status int) {

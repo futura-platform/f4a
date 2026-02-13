@@ -1,6 +1,6 @@
 package dbutil
 
-type serializable[T any] interface {
-	Marshal(v T) []byte
+type Serializer[T any] interface {
+	Marshal(T) []byte
 	Unmarshal([]byte) (T, error)
 }

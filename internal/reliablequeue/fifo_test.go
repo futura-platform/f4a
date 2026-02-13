@@ -6,19 +6,19 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func fifoPath(db util.DbRoot, name string) []string {
+func fifoPath(db dbutil.DbRoot, name string) []string {
 	path := append([]string{}, db.Root.GetPath()...)
 	path = append(path, "fifo", name)
 	return path
 }
 
-func newFIFO(db util.DbRoot, name string) *FIFO {
+func newFIFO(db dbutil.DbRoot, name string) *FIFO {
 	fifo, err := CreateOrOpenFIFO(db.Database, fifoPath(db, name))
 	if err != nil {
 		panic(err)
@@ -40,7 +40,7 @@ func (t *transactorWithNotify) Transact(fn func(fdb.Transaction) (any, error)) (
 	return result, err
 }
 
-func enqueue(t testing.TB, db util.DbRoot, queue *FIFO, item []byte) {
+func enqueue(t testing.TB, db dbutil.DbRoot, queue *FIFO, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, queue.Enqueue(tx, item)
@@ -48,7 +48,7 @@ func enqueue(t testing.TB, db util.DbRoot, queue *FIFO, item []byte) {
 	require.NoError(t, err)
 }
 
-func dequeue(t testing.TB, db util.DbRoot, queue *FIFO) ([]byte, error) {
+func dequeue(t testing.TB, db dbutil.DbRoot, queue *FIFO) ([]byte, error) {
 	t.Helper()
 	var item []byte
 	var err error
@@ -61,7 +61,7 @@ func dequeue(t testing.TB, db util.DbRoot, queue *FIFO) ([]byte, error) {
 }
 
 func TestFIFOEnqueueDequeueOrder(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "order")
 		items := [][]byte{
 			[]byte("first"),
@@ -85,7 +85,7 @@ func TestFIFOEnqueueDequeueOrder(t *testing.T) {
 }
 
 func TestFIFOMultipleEnqueueSingleTransaction(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "multi_enqueue_tx")
 		items := [][]byte{
 			[]byte("first"),
@@ -109,7 +109,7 @@ func TestFIFOMultipleEnqueueSingleTransaction(t *testing.T) {
 }
 
 func TestFIFOMultipleDequeueSingleTransaction(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "multi_dequeue_tx")
 		items := [][]byte{
 			[]byte("first"),
@@ -129,7 +129,7 @@ func TestFIFOMultipleDequeueSingleTransaction(t *testing.T) {
 }
 
 func TestFIFOCreateOrOpenReusesPath(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		path := fifoPath(db, "reopen")
 		queue, err := CreateOrOpenFIFO(db.Database, path)
 		require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestFIFOCreateOrOpenReusesPath(t *testing.T) {
 // TestFIFOEpochKeyChangesOnOperations verifies that the epoch key changes on
 // every enqueue and dequeue, and does not change on an empty dequeue.
 func TestFIFOEpochKeyChangesOnOperations(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "epoch_key_invariant")
 
 		readEpoch := func() []byte {
@@ -196,7 +196,7 @@ func TestFIFOEpochKeyChangesOnOperations(t *testing.T) {
 }
 
 func TestFIFOConcurrentDequeue(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		assert.NoError(t, db.Options().SetTransactionRetryLimit(5))
 
 		queue := newFIFO(db, "concurrent")
@@ -254,7 +254,7 @@ func TestFIFOConcurrentDequeue(t *testing.T) {
 }
 
 func BenchmarkFIFOEnqueue(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "bench_enqueue")
 		payload := []byte("payload")
 
@@ -272,7 +272,7 @@ func BenchmarkFIFOEnqueue(b *testing.B) {
 }
 
 func BenchmarkFIFODequeue(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "bench_dequeue")
 		payload := []byte("payload")
 

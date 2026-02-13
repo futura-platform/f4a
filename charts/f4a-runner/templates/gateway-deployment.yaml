@@ -18,32 +18,14 @@ spec:
         app.kubernetes.io/component: gateway
     spec:
       {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
-      {{- $clusterFileSourceName := include "f4a-runner.clusterFileSourceName" . -}}
+      {{- $clusterFileSecretName := include "f4a-runner.clusterFileSecretName" . -}}
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       {{- end }}
       {{- if .Values.fdb.clusterFile.writable.enabled }}
       initContainers:
-        - name: fdb-cluster-init
-          image: {{ .Values.fdb.clusterFile.writable.initImage | quote }}
-          args:
-            - --mode
-            - init
-            - --input-dir
-            - {{ .Values.fdb.clusterFile.writable.sourceMountPath | quote }}
-            - --output-dir
-            - {{ .Values.fdb.clusterFile.writable.mountPath | quote }}
-            - --copy-file
-            - {{ $clusterFileKey | quote }}
-            - --require-not-empty
-            - {{ $clusterFileKey | quote }}
-          volumeMounts:
-            - name: fdb-cluster-source
-              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
-              readOnly: true
-            - name: fdb-cluster
-              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+        {{- include "f4a-runner.clusterFileInitContainer" (dict "Values" .Values "clusterFileKey" $clusterFileKey) | nindent 8 }}
       {{- end }}
       containers:
         - name: gateway
@@ -72,30 +54,6 @@ spec:
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
           volumeMounts:
-            {{- if .Values.fdb.clusterFile.writable.enabled }}
-            - name: fdb-cluster
-              mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
-            {{- else }}
-            - name: fdb-cluster-source
-              mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
-              readOnly: true
-            {{- end }}
+            {{- include "f4a-runner.clusterFileVolumeMounts" (dict "Values" .Values) | nindent 12 }}
       volumes:
-        - name: fdb-cluster-source
-          {{- if .Values.fdb.clusterFile.configMap.name }}
-          configMap:
-            name: {{ $clusterFileSourceName }}
-            items:
-              - key: {{ $clusterFileKey | quote }}
-                path: {{ $clusterFileKey | quote }}
-          {{- else }}
-          secret:
-            secretName: {{ $clusterFileSourceName }}
-            items:
-              - key: {{ $clusterFileKey | quote }}
-                path: {{ $clusterFileKey | quote }}
-          {{- end }}
-        {{- if .Values.fdb.clusterFile.writable.enabled }}
-        - name: fdb-cluster
-          emptyDir: {}
-        {{- end }}
+        {{- include "f4a-runner.clusterFileVolumes" (dict "Values" .Values "clusterFileKey" $clusterFileKey "clusterFileSecretName" $clusterFileSecretName) | nindent 8 }}

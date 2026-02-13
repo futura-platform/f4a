@@ -10,14 +10,14 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 )
 
-func setInput(t *testing.T, db util.DbRoot, td task.TaskKey, value []byte) {
+func setInput(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value []byte) {
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		td.Input().Set(tx, value)
 		return nil, nil
@@ -27,7 +27,7 @@ func setInput(t *testing.T, db util.DbRoot, td task.TaskKey, value []byte) {
 
 func TestRun(t *testing.T) {
 	t.Run("returns output on successful execution", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -73,7 +73,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("retries callback until it succeeds", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -135,7 +135,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("forwards execution error to callback", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -180,7 +180,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("restarts execution when input changes", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -277,7 +277,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("cancelled execution due to input change returns ErrInputChanged", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -353,7 +353,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("context cancellation stops execution", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -421,7 +421,7 @@ func TestRun(t *testing.T) {
 		})
 	})
 	t.Run("waits for execution to exit before returning", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -492,7 +492,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("execution receives correct input", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			expectedInput := []byte("expected input data")
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -529,7 +529,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("multiple rapid input changes eventually complete with latest", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
@@ -607,7 +607,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("returns ErrRunFatal when execution encounters an error", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 

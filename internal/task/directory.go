@@ -3,12 +3,12 @@ package task
 import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 type TasksDirectory struct{ d directory.DirectorySubspace }
 
-func CreateOrOpenTasksDirectory(db util.DbRoot) (TasksDirectory, error) {
+func CreateOrOpenTasksDirectory(db dbutil.DbRoot) (TasksDirectory, error) {
 	dir, err := db.Root.CreateOrOpen(db, []string{"tasks"}, nil)
 	return TasksDirectory{dir}, err
 }

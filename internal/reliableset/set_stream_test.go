@@ -11,13 +11,13 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSetStreamInitialSnapshotAndSequence(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_sequence")
 		initialItems := [][]byte{
 			[]byte("first"),
@@ -55,7 +55,7 @@ func TestSetStreamInitialSnapshotAndSequence(t *testing.T) {
 }
 
 func TestSetStreamEmptyTransitions(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_empty")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -81,7 +81,7 @@ func TestSetStreamEmptyTransitions(t *testing.T) {
 }
 
 func TestSetStreamAddBatchSingleEvent(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_add_batch")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -109,7 +109,7 @@ func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 }
 
 func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_remove_batch")
 
 		const totalItems = 10
@@ -139,7 +139,7 @@ func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 }
 
 func TestSetStreamHighActivity(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_high_activity")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -200,7 +200,7 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 		maxOps := 40 + rng.IntN(80)
 		addBias := 50 + rng.IntN(40)
 
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			require.NoError(t, db.Options().SetTransactionRetryLimit(10))
 			writerSet := newSet(t, db, "stream_fuzz_concurrent")
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

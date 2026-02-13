@@ -9,7 +9,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/futura-platform/futura/moment"
@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTaskAndContainer(t *testing.T, db util.DbRoot, id task.Id) *fdbexec.ExecutionContainer {
+func createTaskAndContainer(t *testing.T, db dbutil.DbRoot, id task.Id) *fdbexec.ExecutionContainer {
 	tasks, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
 	_, err = tasks.Create(db, id)
@@ -29,7 +29,7 @@ func TestExecutionContainer(t *testing.T) {
 	gob.Register(struct{}{})
 
 	assert.NotPanics(t, func() {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			assert.NotNil(t, createTaskAndContainer(t, db, task.NewId()))
 		})
 	})
@@ -38,7 +38,7 @@ func TestExecutionContainer(t *testing.T) {
 		t *testing.T,
 		txFns ...func(ctx context.Context, tx executiontype.Container) error,
 	) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			container := createTaskAndContainer(t, db, task.NewId())
 			for _, txFn := range txFns {
 				err := container.Transact(t.Context(), txFn)
@@ -53,7 +53,7 @@ func TestExecutionContainer(t *testing.T) {
 	testIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 1}}))
 	t.Run("Transact", func(t *testing.T) {
 		t.Run("Error rolls back transaction", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				container := createTaskAndContainer(t, db, task.NewId())
 				errSentinel := errors.New("boom")
 
@@ -305,7 +305,7 @@ func TestExecutionContainer(t *testing.T) {
 			})
 		})
 		t.Run("Isolation per task id", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				firstContainer := createTaskAndContainer(t, db, task.NewId())
 				secondContainer := createTaskAndContainer(t, db, task.NewId())
 

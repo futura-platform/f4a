@@ -11,12 +11,12 @@ import (
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 )
 
 func NewController(
-	db util.DbRoot,
+	db dbutil.DbRoot,
 ) (taskv1connect.ControlServiceHandler, error) {
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
@@ -39,7 +39,7 @@ func NewController(
 }
 
 type controller struct {
-	db      util.DbRoot
+	db      dbutil.DbRoot
 	taskDir task.TasksDirectory
 
 	// a queue of tasks that are ready to be executed.

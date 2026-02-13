@@ -16,7 +16,7 @@ import (
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
@@ -32,7 +32,7 @@ const (
 
 func seedTask(
 	t *testing.T,
-	db util.DbRoot,
+	db dbutil.DbRoot,
 	id task.Id,
 	executorId execute.ExecutorId,
 	callbackUrl string,
@@ -58,7 +58,7 @@ func seedTask(
 	return err
 }
 
-func openTaskSet(t testing.TB, db util.DbRoot, runnerId string) *reliableset.Set {
+func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *reliableset.Set {
 	t.Helper()
 
 	path := append([]string{}, db.Root.GetPath()...)
@@ -68,7 +68,7 @@ func openTaskSet(t testing.TB, db util.DbRoot, runnerId string) *reliableset.Set
 	return set
 }
 
-func addTasks(t testing.TB, db util.DbRoot, set *reliableset.Set, ids []task.Id) {
+func addTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.Id) {
 	t.Helper()
 
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -82,7 +82,7 @@ func addTasks(t testing.TB, db util.DbRoot, set *reliableset.Set, ids []task.Id)
 	require.NoError(t, err)
 }
 
-func removeTasks(t testing.TB, db util.DbRoot, set *reliableset.Set, ids []task.Id) {
+func removeTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.Id) {
 	t.Helper()
 
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -144,7 +144,7 @@ func assertNoTaskEvents(t *testing.T, ch <-chan task.Id, runErr <-chan error, di
 
 func TestWorkLoop(t *testing.T) {
 	t.Run("when a task is assigned, it is executed", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			assert.NoError(t, db.Options().SetTransactionRetryLimit(3)) // since we are accessing concurrently we can get conflicts
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -221,7 +221,7 @@ func TestWorkLoop(t *testing.T) {
 		})
 	})
 	t.Run("if a non-existent task is assigned, it causes RunWorkLoop to return an error", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			assert.NoError(t, db.Options().SetTransactionRetryLimit(3)) // since we are accessing concurrently we can get conflicts
 
 			runWorkLoopErr := make(chan error)
@@ -240,7 +240,7 @@ func TestWorkLoop(t *testing.T) {
 		})
 	})
 	t.Run("does not return non-run cancel cause", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			assert.NoError(t, db.Options().SetTransactionRetryLimit(3)) // since we are accessing concurrently we can get conflicts
 
 			ctx, cancel := context.WithCancelCause(context.Background())
@@ -263,7 +263,7 @@ func TestWorkLoop(t *testing.T) {
 		})
 	})
 	t.Run("returns run failed error when a run fails", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			expectedErr := fmt.Errorf("%w: expected error", run.ErrRunFatal)
 			runWorkLoopErr := make(chan error, 1)
 			runnerId := "test-runner"
@@ -296,7 +296,7 @@ func TestWorkLoop(t *testing.T) {
 	})
 	t.Run("the result is reliably delivered at least once to the callback url", func(t *testing.T) {
 		t.Run("when there are no errors", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				gotCallbackCh := make(chan struct{})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +339,7 @@ func TestWorkLoop(t *testing.T) {
 			})
 		})
 		t.Run("when the loop fails during the callback, the next worker loop will retry the callback", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				callbackSuccessful := make(chan struct{})
 				var callCount atomic.Int32

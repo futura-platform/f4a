@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFIFOStreamInitialSnapshotAndSequence(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "stream_sequence")
 		initialItems := [][]byte{
 			[]byte("first"),
@@ -58,7 +58,7 @@ func TestFIFOStreamInitialSnapshotAndSequence(t *testing.T) {
 }
 
 func TestFIFOStreamEmptyQueueTransitions(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "stream_empty")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -91,7 +91,7 @@ func TestFIFOStreamEmptyQueueTransitions(t *testing.T) {
 }
 
 func TestFIFOStreamEnqueueBatchSingleEvent(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "stream_enqueue_batch")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -119,7 +119,7 @@ func TestFIFOStreamEnqueueBatchSingleEvent(t *testing.T) {
 }
 
 func TestFIFOStreamDequeueBatchSingleEvent(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "stream_dequeue_batch")
 
 		const totalItems = 10
@@ -150,7 +150,7 @@ func TestFIFOStreamDequeueBatchSingleEvent(t *testing.T) {
 }
 
 func TestFIFOStreamHighActivity(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		queue := newFIFO(db, "stream_high_activity")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -206,7 +206,7 @@ func FuzzFIFOStreamHighActivity(f *testing.F) {
 			ops = ops[:64]
 		}
 
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			queue := newFIFO(db, "stream_fuzz")
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			initialValues, events, errCh, err := queue.Stream(ctx)
@@ -269,7 +269,7 @@ func FuzzFIFOStreamConcurrentReadersWriters(f *testing.F) {
 		maxOps := 40 + rng.IntN(80)
 		enqueueBias := 50 + rng.IntN(40)
 
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			queue := newFIFO(db, "stream_fuzz_concurrent")
 			ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 			defer cancel()
@@ -753,7 +753,7 @@ func queuesEqual(a, b [][]byte) bool {
 	return true
 }
 
-func readQueueValues(t testing.TB, db util.DbRoot, queue *FIFO) [][]byte {
+func readQueueValues(t testing.TB, db dbutil.DbRoot, queue *FIFO) [][]byte {
 	t.Helper()
 	var kvs []fdb.KeyValue
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -774,13 +774,13 @@ func readQueueValues(t testing.TB, db util.DbRoot, queue *FIFO) [][]byte {
 	return values
 }
 
-func requireQueueMatchesDB(t *testing.T, db util.DbRoot, queue *FIFO, expected [][]byte) {
+func requireQueueMatchesDB(t *testing.T, db dbutil.DbRoot, queue *FIFO, expected [][]byte) {
 	t.Helper()
 	actual := readQueueValues(t, db, queue)
 	require.True(t, queuesEqual(expected, actual), "queue mismatch: expected %q got %q", expected, actual)
 }
 
-func dequeueAllowEmpty(t testing.TB, db util.DbRoot, queue *FIFO) ([]byte, error) {
+func dequeueAllowEmpty(t testing.TB, db dbutil.DbRoot, queue *FIFO) ([]byte, error) {
 	t.Helper()
 	var item []byte
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -791,7 +791,7 @@ func dequeueAllowEmpty(t testing.TB, db util.DbRoot, queue *FIFO) ([]byte, error
 	return item, err
 }
 
-func enqueueBatch(t testing.TB, db util.DbRoot, queue *FIFO, items [][]byte) {
+func enqueueBatch(t testing.TB, db dbutil.DbRoot, queue *FIFO, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -804,7 +804,7 @@ func enqueueBatch(t testing.TB, db util.DbRoot, queue *FIFO, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func dequeueBatch(t testing.TB, db util.DbRoot, queue *FIFO, count int) ([][]byte, error) {
+func dequeueBatch(t testing.TB, db dbutil.DbRoot, queue *FIFO, count int) ([][]byte, error) {
 	t.Helper()
 	items := make([][]byte, 0, count)
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {

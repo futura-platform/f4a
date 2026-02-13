@@ -6,19 +6,20 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
 type ExecutionContainer struct {
-	db        fdb.Database
-	memoTable directory.DirectorySubspace
-	callOrder directory.DirectorySubspace
+	db             fdb.Database
+	memoTable      directory.DirectorySubspace
+	callOrder      directory.DirectorySubspace
+	durableObjects directory.DirectorySubspace
 }
 
 var _ executiontype.TransactionalContainer = &ExecutionContainer{}
 
-func NewContainer(id task.Id, db util.DbRoot) *ExecutionContainer {
+func NewContainer(id task.Id, db dbutil.DbRoot) *ExecutionContainer {
 	tasks, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		panic(err)
@@ -35,7 +36,16 @@ func NewContainer(id task.Id, db util.DbRoot) *ExecutionContainer {
 	if err != nil {
 		panic(err)
 	}
-	return &ExecutionContainer{db: db.Database, memoTable: memoTable, callOrder: callOrder}
+	durableObjects, err := tkey.DurableObjectSpace(db)
+	if err != nil {
+		panic(err)
+	}
+	return &ExecutionContainer{
+		db:             db.Database,
+		memoTable:      memoTable,
+		callOrder:      callOrder,
+		durableObjects: durableObjects,
+	}
 }
 
 func (c *ExecutionContainer) Transact(ctx context.Context, fn func(ctx context.Context, tx executiontype.Container) error) error {
@@ -46,6 +56,7 @@ func (c *ExecutionContainer) Transact(ctx context.Context, fn func(ctx context.C
 				ReadTransaction: t,
 				memoTable:       c.memoTable,
 				callOrder:       c.callOrder,
+				durableObjects:  c.durableObjects,
 			},
 		})
 		if err != nil {
@@ -65,6 +76,7 @@ func (c *ExecutionContainer) ReadTransact(ctx context.Context, fn func(ctx conte
 			ReadTransaction: t,
 			memoTable:       c.memoTable,
 			callOrder:       c.callOrder,
+			durableObjects:  c.durableObjects,
 		})
 		if err != nil {
 			return nil, err

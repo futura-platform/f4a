@@ -1,0 +1,9 @@
+dependencies:
+- name: f4a-runner
+  repository: file://../../../charts/f4a-runner
+  version: 0.1.0
+- name: metrics-server
+  repository: https://kubernetes-sigs.github.io/metrics-server/
+  version: 3.12.2
+digest: sha256:6c0819055e35db7a5db69ad80518668fa6767de4da0b3eba10f8e892854c7e8b
+generated: "2026-01-29T12:39:54.750143-08:00"

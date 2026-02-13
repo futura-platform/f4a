@@ -35,7 +35,9 @@ var (
 	ErrDuplicateRun = errors.New("run already exists for task")
 )
 
-func (m *runMap) run(r run.Runnable, callback func(context.Context, []byte, error) error) error {
+func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.Context, []byte, error) error) error {
+	ctx = task.WithTaskKey(ctx, r.TaskKey())
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -43,7 +45,7 @@ func (m *runMap) run(r run.Runnable, callback func(context.Context, []byte, erro
 		return ErrDuplicateRun
 	}
 
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(ctx)
 	m.wg.Go(func() {
 		cleanup := func() {
 			m.mu.Lock()
@@ -75,19 +77,7 @@ func (m *runMap) cancel(id task.Id) error {
 	return nil
 }
 
-// cancelAll cancels all runs and waits for them to exit.
-func (m *runMap) cancelAll() {
-	m.mu.Lock()
-	cancels := make([]context.CancelCauseFunc, 0, len(m.runCancels))
-
-	for id, cancel := range m.runCancels {
-		cancels = append(cancels, cancel)
-		delete(m.runCancels, id)
-	}
-	m.mu.Unlock()
-
-	for _, cancel := range cancels {
-		cancel(nil)
-	}
+// wait waits for all runs to exit.
+func (m *runMap) wait() {
 	m.wg.Wait()
 }

@@ -17,6 +17,7 @@ type genericExecutable[A, R any] struct {
 	f *futura.Flow[A, R]
 
 	marshaller ExecutionMarshaller[A, R]
+	opts       []ftype.FlowLoopOption
 }
 
 func (g *genericExecutable[A, R]) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
@@ -25,7 +26,7 @@ func (g *genericExecutable[A, R]) Execute(ctx context.Context, marshalledInput [
 		return nil, err
 	}
 
-	output, err := g.f.Execute(ctx, g.fn, input, opts...)
+	output, err := g.f.Execute(ctx, g.fn, input, append(g.opts, opts...)...)
 	if err != nil {
 		return nil, err
 	}

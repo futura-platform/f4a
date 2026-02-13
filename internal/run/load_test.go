@@ -7,7 +7,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
@@ -18,7 +18,7 @@ import (
 
 func setTaskMetadata(
 	t *testing.T,
-	db util.DbRoot,
+	db dbutil.DbRoot,
 	taskKey task.TaskKey,
 	executorId *execute.ExecutorId,
 	callbackUrl *string,
@@ -39,7 +39,7 @@ func setTaskMetadata(
 
 func TestLoadTasks(t *testing.T) {
 	t.Run("loads tasks with executor and callback", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
 
@@ -94,7 +94,7 @@ func TestLoadTasks(t *testing.T) {
 	})
 
 	t.Run("returns error when executor id missing", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
 
@@ -110,8 +110,9 @@ func TestLoadTasks(t *testing.T) {
 		})
 	})
 
-	t.Run("returns error when executor cannot be routed", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	// (this will be handled when by the executor sending a not found error to the callback when it is executed)
+	t.Run("does not return an error when executor cannot be routed", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
 
@@ -123,13 +124,12 @@ func TestLoadTasks(t *testing.T) {
 			setTaskMetadata(t, db, tkey, &executorId, &callbackUrl)
 
 			_, err = LoadTasks(t.Context(), db, execute.NewRouter(), []task.Id{id})
-			assert.Error(t, err)
-			assert.ErrorContains(t, err, "failed to route executor")
+			assert.NoError(t, err)
 		})
 	})
 
 	t.Run("returns error when callback url is invalid", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
 

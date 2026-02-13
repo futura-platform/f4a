@@ -3,10 +3,43 @@
 This example deploys a FoundationDB cluster using the FoundationDB operator and
 installs the `f4a-runner` chart via a local umbrella chart.
 
-## 1) Install the FoundationDB operator + CRDs
+## Quick Start with Tilt (Recommended)
 
-Follow the official operator instructions:
-https://github.com/FoundationDB/fdb-kubernetes-operator?tab=readme-ov-file#running-the-operator
+[Tilt](https://tilt.dev) provides automatic rebuilding and redeployment on code changes.
+
+```bash
+# Install Tilt
+brew install tilt
+
+# Start minikube (if not running)
+minikube start --memory=6144 --cpus=4 --disk-size=20g
+
+# Run Tilt from the serpMonitor directory
+cd examples/serpMonitor
+tilt up
+```
+
+Open http://localhost:10350 to see the Tilt dashboard. Tilt will:
+
+1. Install the FDB operator and CRDs
+2. Build all Docker images
+3. Deploy the Helm chart
+4. Watch for code changes and auto-redeploy
+
+Press `s` to stop, or run `tilt down` to tear everything down.
+
+## Manual Deployment
+
+### Prerequisites
+
+The umbrella chart includes:
+
+- **f4a-runner**: Gateway, dispatch, and worker services
+- **metrics-server**: Required for dispatch to collect pod resource metrics
+
+The FDB operator must be installed separately (no published Helm repo).
+
+### 1) Install the FoundationDB operator + CRDs
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/FoundationDB/fdb-kubernetes-operator/main/config/crd/bases/apps.foundationdb.org_foundationdbclusters.yaml
@@ -15,36 +48,58 @@ kubectl apply -f https://raw.githubusercontent.com/FoundationDB/fdb-kubernetes-o
 kubectl apply -f https://raw.githubusercontent.com/foundationdb/fdb-kubernetes-operator/main/config/samples/deployment.yaml
 ```
 
-## 2) Build and publish images
+### 2) Build images
 
-Build the SerpMonitor worker image:
+The Dockerfiles require both `f4a` and `futura` directories in the build context:
 
 ```bash
-docker build -t serpmonitor:latest -f examples/serpMonitor/Dockerfile .
+# Create build context with both repos
+mkdir -p /tmp/f4a-build
+cp -r . /tmp/f4a-build/f4a
+cp -r ../futura /tmp/f4a-build/futura
+
+# Build images (for minikube)
+cd /tmp/f4a-build
+minikube image build -t f4a-gateway:latest -f f4a/cmd/gateway/Dockerfile .
+minikube image build -t f4a-dispatch:latest -f f4a/cmd/dispatch/Dockerfile .
+minikube image build -t serpmonitor:latest -f f4a/examples/serpMonitor/Dockerfile .
 ```
 
-The `f4a-runner` chart also needs images for the gateway and dispatch services.
-Update `examples/serpMonitor/chart/values.yaml` with the image tags you publish.
+For production, push to a registry and update `examples/serpMonitor/chart/values.yaml`.
 
-All images must include the FoundationDB client library appropriate for the
-FDB version you run.
-
-## 3) Install the umbrella chart
-
-From the repository root:
+### 3) Install the umbrella chart
 
 ```bash
 helm dependency update examples/serpMonitor/chart
 helm install serpmonitor examples/serpMonitor/chart
 ```
 
-The FoundationDB operator creates a ConfigMap named
-`<clusterName>-config` containing the `cluster-file` key. The umbrella values
-wire that into the `f4a-runner` chart and copy it into a writable `emptyDir`
-before the services start.
-
-Check cluster reconciliation:
+### 4) Verify deployment
 
 ```bash
+# Check FDB cluster
 kubectl get foundationdbcluster serpmonitor
+
+# Check all pods are running
+kubectl get pods
+
+# Verify FDB is available
+kubectl exec serpmonitor-log-0 -c foundationdb -- fdbcli --exec "status minimal"
+
+# Check metrics are available
+kubectl top pods
+```
+
+## Configuration
+
+The umbrella chart configures:
+
+- FDB cluster file passed to f4a services via ConfigMap
+- metrics-server with `--kubelet-insecure-tls` for local clusters
+
+To disable metrics-server (e.g., if already installed):
+
+```yaml
+metrics-server:
+  enabled: false
 ```

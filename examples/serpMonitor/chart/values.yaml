@@ -1,3 +1,9 @@
+# Metrics server for pod resource metrics (used by dispatch for load balancing)
+metrics-server:
+  enabled: true
+  args:
+    - --kubelet-insecure-tls # Required for minikube/local clusters
+
 foundationdb:
   clusterName: serpmonitor
   spec:
@@ -9,7 +15,6 @@ foundationdb:
       key: foundationdb.org/none
     imageType: split
     labels:
-      filterOnOwnerReference: false
       matchLabels:
         foundationdb.org/fdb-cluster-name: serpmonitor
       processClassLabels:
@@ -64,8 +69,6 @@ foundationdb:
       defineDNSLocalityFields: true
     sidecarContainer:
       enableLivenessProbe: true
-      enableReadinessProbe: false
-      useExplicitListenAddress: true
 
 f4a-runner:
   gateway:
@@ -76,10 +79,10 @@ f4a-runner:
     image: serpmonitor:latest
   fdb:
     clusterFile:
-      configMap:
-        # Must match <foundationdb.clusterName>-config
-        name: serpmonitor-config
-        key: cluster-file
+      # Secret created by fdb-secret-sync job from the operator's ConfigMap
+      secret:
+        name: serpmonitor-cluster-file
+        key: fdb.cluster
       writable:
         enabled: true
         mountPath: /etc/foundationdb

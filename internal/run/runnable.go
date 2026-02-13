@@ -24,6 +24,10 @@ func (r Runnable) Id() task.Id {
 	return r.taskKey.Id()
 }
 
+func (r Runnable) TaskKey() task.TaskKey {
+	return r.taskKey
+}
+
 func NewRunnable(
 	executor execute.Executor,
 	db fdb.Database,

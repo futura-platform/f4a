@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ func withEphemeralBaseK8sService(t *testing.T,
 		srv *http.Server,
 		startServing func(),
 	)) {
-	testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		ln, err := ephemeralListener()
 		require.NoError(t, err)
 		srv, _ := serverutil.NewBaseK8sService(db, healthCheck, additionalReadyCheck)

@@ -15,9 +15,9 @@ import (
 )
 
 // run shadows the runMap.run method. This is to abstract away the callback function.
-func (m *taskManager) run(r run.RunnableTask) error {
-	return m.runMap.run(r.Runnable, func(ctx context.Context, output []byte, err error) error {
-		return m.postResult(ctx, r, output, err)
+func (m *taskManager) run(ctx context.Context, r run.RunnableTask) error {
+	return m.runMap.run(ctx, r.Runnable, func(runCtx context.Context, output []byte, err error) error {
+		return m.postResult(runCtx, r, output, err)
 	})
 }
 

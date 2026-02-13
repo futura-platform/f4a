@@ -23,7 +23,7 @@ RUN sed -i 's|=> \.\./futura|=> /workspace/futura|' go.mod
 
 RUN go mod download
 
-RUN CGO_ENABLED=1 GOOS=linux go build -o /serpmonitor ./examples/serpMonitor
+RUN CGO_ENABLED=1 GOOS=linux go build -o /dispatch ./cmd/dispatch
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -37,8 +37,8 @@ COPY --from=fdb /usr/lib/libfdb_c.so /usr/lib/libfdb_c.so
 
 WORKDIR /app
 
-COPY --from=builder /serpmonitor .
+COPY --from=builder /dispatch .
 
-EXPOSE 8081
+EXPOSE 8082
 
-ENTRYPOINT ["/app/serpmonitor"]
+ENTRYPOINT ["/app/dispatch"]

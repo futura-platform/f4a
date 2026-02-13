@@ -12,7 +12,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
@@ -36,7 +36,7 @@ type capturedRequest struct {
 	readErr     error
 }
 
-func loadRunnableTask(t *testing.T, db util.DbRoot, callbackURL string) run.RunnableTask {
+func loadRunnableTask(t *testing.T, db dbutil.DbRoot, callbackURL string) run.RunnableTask {
 	t.Helper()
 
 	executorId := execute.ExecutorId("test-executor")
@@ -71,7 +71,7 @@ func loadRunnableTask(t *testing.T, db util.DbRoot, callbackURL string) run.Runn
 
 func TestTaskManagerPostResult(t *testing.T) {
 	t.Run("posts raw output when no error", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			output := []byte("expected output")
 			capturedCh := make(chan capturedRequest, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 	})
 
 	t.Run("posts problem JSON when error", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			taskErr := errors.New("boom")
 			capturedCh := make(chan capturedRequest, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 	})
 
 	t.Run("returns error on non-accepted status", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusTeapot)
 			}))
@@ -156,7 +156,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 	})
 
 	t.Run("returns error when client fails", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			runnable := loadRunnableTask(t, db, "http://example.com/callback")
 			manager := &taskManager{
 				runMap: newRunMap(t.Name(), nil),

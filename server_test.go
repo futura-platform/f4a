@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 )
 
@@ -21,7 +21,7 @@ const (
 )
 
 func TestStart_HealthzReadyz(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(_ util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(_ dbutil.DbRoot) {
 		t.Setenv("FDB_CLUSTER_FILE", requireClusterFile(t))
 
 		address := freeAddress(t)
@@ -42,7 +42,7 @@ func TestStart_HealthzReadyz(t *testing.T) {
 }
 
 func TestStart_ShutdownOnContextCancel(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(_ util.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(_ dbutil.DbRoot) {
 		t.Setenv("FDB_CLUSTER_FILE", requireClusterFile(t))
 
 		address := freeAddress(t)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"iter"
 	"unsafe"
 
@@ -27,8 +28,9 @@ type executionTransaction struct {
 
 type executionReadTransaction struct {
 	fdb.ReadTransaction
-	memoTable directory.DirectorySubspace
-	callOrder directory.DirectorySubspace
+	memoTable      directory.DirectorySubspace
+	callOrder      directory.DirectorySubspace
+	durableObjects directory.DirectorySubspace
 }
 
 func callOrderLengthKey(callOrder directory.DirectorySubspace) fdb.Key {
@@ -95,6 +97,16 @@ func (t *executionTransaction) SetMoment(identity moment.Identity, m moment.Mome
 		panic(err)
 	}
 	t.Set(momentTableKey(t.memoTable, identity), buf.Bytes())
+}
+
+func (t *executionTransaction) StoreDurable(key string, value []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("failed to store durable: %v", r)
+		}
+	}()
+	t.Set(t.durableObjects.Pack(tuple.Tuple{key}), value)
+	return nil
 }
 
 func (t *executionReadTransaction) CallOrderAt(index int) moment.Identity {
@@ -194,6 +206,14 @@ func (t *executionReadTransaction) KnownMoments() iter.Seq[moment.Identity] {
 			}
 		}
 	}
+}
+
+func (t *executionReadTransaction) LoadDurable(key string) ([]byte, bool, error) {
+	value, err := t.Get(t.durableObjects.Pack(tuple.Tuple{key})).Get()
+	if err != nil {
+		return nil, false, err
+	}
+	return value, value != nil, nil
 }
 
 var _ executiontype.Container = &executionTransaction{}

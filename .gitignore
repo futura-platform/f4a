@@ -27,3 +27,6 @@ go.work.sum
 # coverage files
 coverage.txt
 coverage.html
+
+# Helm dependency cache
+examples/serpMonitor/chart/charts/

@@ -10,7 +10,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/privateencoding"
 	"github.com/stretchr/testify/assert"
@@ -93,10 +93,10 @@ func (f *mockFutureNil) MustGet() {
 }
 
 func TestWatch(t *testing.T) {
-	toMonitorKey := func(db util.DbRoot) fdb.Key {
+	toMonitorKey := func(db dbutil.DbRoot) fdb.Key {
 		return db.Root.Pack(tuple.Tuple{"toMonitor"})
 	}
-	updateToMonitorToString := func(db util.DbRoot, value string) error {
+	updateToMonitorToString := func(db dbutil.DbRoot, value string) error {
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			buf := bytes.NewBuffer(nil)
 			encoder := privateencoding.NewEncoder[string](buf)
@@ -110,7 +110,7 @@ func TestWatch(t *testing.T) {
 
 	t.Run("immedietely sends the current value, even if there is no change", func(t *testing.T) {
 		t.Run("without initial value", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				stateCh, errCh := WatchCh[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 				select {
 				case state := <-stateCh:
@@ -121,7 +121,7 @@ func TestWatch(t *testing.T) {
 			})
 		})
 		t.Run("with initial value", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				const expectedValue = "expectedValue"
 				err := updateToMonitorToString(db, expectedValue)
 				assert.NoError(t, err)
@@ -138,7 +138,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("initial watch gates emissions", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			err := updateToMonitorToString(db, "initialValue")
 			assert.NoError(t, err)
 
@@ -181,7 +181,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("initial watch error is returned", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			initialWatch := newMockFutureNil()
 			stateCh, errCh := WatchCh[string](t.Context(), db, toMonitorKey(db), "", initialWatch, PrivateEncodingGetter[string])
 			expectedErr := fmt.Errorf("initial watch error")
@@ -206,7 +206,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("basic watch", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			expectedValue := "expectedValue"
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 				buf := bytes.NewBuffer(nil)
@@ -230,7 +230,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("passes lastValue to getter", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -283,7 +283,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("detects update after initial value", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			stateCh, errCh := WatchCh[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
 			// Receive initial (empty)
@@ -312,7 +312,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("detects a delete by sending a zero value", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 				buf := bytes.NewBuffer(nil)
 				encoder := privateencoding.NewEncoder[string](buf)
@@ -352,7 +352,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("eventual consistency with rapid updates", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			stateCh, errCh := WatchCh[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
 			// Wait for initial empty value
@@ -389,7 +389,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("key deletion emits zero value", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			// Set an initial value
 			err := updateToMonitorToString(db, "initialValue")
 			assert.NoError(t, err)
@@ -426,7 +426,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("long-running watch with periodic updates", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			stateCh, errCh := WatchCh[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
 			// Receive initial empty value
@@ -457,7 +457,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("decode error is sent to error channel", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			// Write garbage bytes that can't be decoded
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 				tx.Set(toMonitorKey(db), []byte{0xFF, 0xFE, 0xFD, 0xFC})
@@ -479,7 +479,7 @@ func TestWatch(t *testing.T) {
 	})
 
 	t.Run("multiple consecutive watches on same key", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			err := updateToMonitorToString(db, "value1")
 			assert.NoError(t, err)
 
@@ -527,7 +527,7 @@ func TestWatch(t *testing.T) {
 
 	t.Run("watch returns the context error when the context is cancelled", func(t *testing.T) {
 		t.Run("before start", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				stateCh, errCh := WatchCh[string](ctx, db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
@@ -540,7 +540,7 @@ func TestWatch(t *testing.T) {
 			})
 		})
 		t.Run("while waiting for change", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				ctx, cancel := context.WithCancel(t.Context())
 				stateCh, errCh := WatchCh[string](ctx, db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
@@ -563,7 +563,7 @@ func TestWatch(t *testing.T) {
 			})
 		})
 		t.Run("while waiting on initial watch", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				ctx, cancel := context.WithCancel(t.Context())
 				initialWatch := newMockFutureNil()
 				stateCh, errCh := WatchCh[string](ctx, db, toMonitorKey(db), "", initialWatch, PrivateEncodingGetter[string])
@@ -596,10 +596,10 @@ func TestWatch(t *testing.T) {
 }
 
 func TestWatchExported(t *testing.T) {
-	toMonitorKey := func(db util.DbRoot) fdb.Key {
+	toMonitorKey := func(db dbutil.DbRoot) fdb.Key {
 		return db.Root.Pack(tuple.Tuple{"toMonitor"})
 	}
-	updateToMonitorToString := func(db util.DbRoot, value string) error {
+	updateToMonitorToString := func(db dbutil.DbRoot, value string) error {
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			buf := bytes.NewBuffer(nil)
 			encoder := privateencoding.NewEncoder[string](buf)
@@ -614,7 +614,7 @@ func TestWatchExported(t *testing.T) {
 
 	t.Run("onChange callback receives initial value", func(t *testing.T) {
 		t.Run("without initial value", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				onChange := Watch[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
 				received := make(chan string, 1)
@@ -635,7 +635,7 @@ func TestWatchExported(t *testing.T) {
 			})
 		})
 		t.Run("with initial value", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				const expectedValue = "initialValue"
 				err := updateToMonitorToString(db, expectedValue)
 				assert.NoError(t, err)
@@ -671,7 +671,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("onChange uses lastValue from previous iteration", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -741,7 +741,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("onChange callback receives updates", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			onChange := Watch[string](ctx, db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
@@ -788,7 +788,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("onChange error cancels the watch", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			onChange := Watch[string](t.Context(), db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
 			expectedErr := fmt.Errorf("callback error")
@@ -810,7 +810,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("context cancellation stops the watch", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			onChange := Watch[string](ctx, db, toMonitorKey(db), "", nil, PrivateEncodingGetter[string])
 
@@ -844,7 +844,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("decode error propagates to onChange caller", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			// Write garbage bytes that can't be decoded
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 				tx.Set(toMonitorKey(db), []byte{0xFF, 0xFE, 0xFD, 0xFC})
@@ -876,7 +876,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("multiple values received in sequence", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -919,7 +919,7 @@ func TestWatchExported(t *testing.T) {
 	})
 
 	t.Run("callback runs concurrently with watch loop", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 

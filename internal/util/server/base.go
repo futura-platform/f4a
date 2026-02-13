@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 // NewBaseK8sService creates a dbroot and a new http.Server with the base Kubernetes service endpoints already added to the mux. (health check, ready check)
 // The ready check first checks that the database is writable, then calls the additionalReadyCheck function.
 // Also, it adds the necessary protocols to the server to function in the f4a k8s cluster.
 func NewBaseK8sService(
-	dbr util.DbRoot,
+	dbr dbutil.DbRoot,
 	healthCheck, additionalReadyCheck func() (status int),
 ) (*http.Server, *http.ServeMux) {
 	mux := http.NewServeMux()

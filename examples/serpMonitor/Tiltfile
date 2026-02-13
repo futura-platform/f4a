@@ -1,0 +1,135 @@
+# -*- mode: Python -*-
+
+# ============================================================================
+# SerpMonitor Tilt Configuration
+# ============================================================================
+# Run with: tilt up
+# Dashboard: http://localhost:10350
+
+load('ext://helm_resource', 'helm_resource', 'helm_repo')
+load('ext://namespace', 'namespace_create')
+
+# ============================================================================
+# FDB Operator Setup (CRDs + Operator)
+# ============================================================================
+
+# Apply FDB CRDs and operator deployment
+local_resource(
+    'fdb-operator-setup',
+    cmd='''
+        kubectl apply -f https://raw.githubusercontent.com/FoundationDB/fdb-kubernetes-operator/main/config/crd/bases/apps.foundationdb.org_foundationdbclusters.yaml
+        kubectl apply -f https://raw.githubusercontent.com/FoundationDB/fdb-kubernetes-operator/main/config/crd/bases/apps.foundationdb.org_foundationdbbackups.yaml
+        kubectl apply -f https://raw.githubusercontent.com/FoundationDB/fdb-kubernetes-operator/main/config/crd/bases/apps.foundationdb.org_foundationdbrestores.yaml
+        kubectl apply -f https://raw.githubusercontent.com/foundationdb/fdb-kubernetes-operator/main/config/samples/deployment.yaml
+    ''',
+    labels=['infrastructure'],
+)
+
+# ============================================================================
+# Build Context Setup
+# ============================================================================
+
+# We need both f4a and futura in the build context
+# Tilt will use custom_build to handle this
+
+def build_f4a_image(name, dockerfile, entrypoint_binary):
+    # Use unique build dir per image to avoid race conditions
+    build_dir = '/tmp/f4a-build-' + name
+    custom_build(
+        name,
+        command='''
+            set -ex
+            BUILD_DIR="''' + build_dir + '''"
+            rm -rf "$BUILD_DIR" 2>/dev/null || true
+            mkdir -p "$BUILD_DIR"
+            # Use rsync to avoid permission issues with .git
+            rsync -a --exclude='.git' "$REPO_ROOT/" "$BUILD_DIR/f4a/"
+            rsync -a --exclude='.git' "$REPO_ROOT/../futura/" "$BUILD_DIR/futura/"
+            cd "$BUILD_DIR"
+            docker build -t $EXPECTED_REF -f f4a/''' + dockerfile + ''' .
+            rm -rf "$BUILD_DIR"
+        ''',
+        deps=[
+            '../../cmd/',
+            '../../pkg/',
+            '../../internal/',
+            '../../go.mod',
+            '../../go.sum',
+            './main.go',
+        ],
+        env={
+            'REPO_ROOT': os.getcwd() + '/../..',
+        },
+        skips_local_docker=False,
+        disable_push=True,
+    )
+
+# ============================================================================
+# Docker Images
+# ============================================================================
+
+build_f4a_image('f4a-gateway', 'cmd/gateway/Dockerfile', 'gateway')
+build_f4a_image('f4a-dispatch', 'cmd/dispatch/Dockerfile', 'dispatch')
+build_f4a_image('serpmonitor', 'examples/serpMonitor/Dockerfile', 'serpmonitor')
+
+# ============================================================================
+# Helm Chart
+# ============================================================================
+
+# Update helm dependencies first
+local_resource(
+    'helm-deps',
+    cmd='helm dependency update',
+    dir='./chart',
+    labels=['infrastructure'],
+    resource_deps=['fdb-operator-setup'],
+)
+
+# Deploy the umbrella chart
+k8s_yaml(helm(
+    './chart',
+    name='serpmonitor',
+    values=['./chart/values.yaml'],
+))
+
+# ============================================================================
+# Resource Configuration
+# ============================================================================
+
+# Group resources for the Tilt UI
+k8s_resource(
+    'f4a-gateway',
+    labels=['f4a'],
+    resource_deps=['helm-deps'],
+    port_forwards=['8080:8080'],
+)
+
+k8s_resource(
+    'f4a-dispatch', 
+    labels=['f4a'],
+    resource_deps=['helm-deps'],
+)
+
+k8s_resource(
+    'f4a-worker',
+    labels=['f4a'],
+    resource_deps=['helm-deps'],
+)
+
+k8s_resource(
+    'serpmonitor-metrics-server',
+    labels=['infrastructure'],
+    resource_deps=['helm-deps'],
+)
+
+# ============================================================================
+# Local Commands
+# ============================================================================
+
+# Handy button to check FDB status
+local_resource(
+    'fdb-status',
+    cmd='kubectl exec -it $(kubectl get pods -l foundationdb.org/fdb-process-class=log -o jsonpath="{.items[0].metadata.name}") -c foundationdb -- fdbcli --exec "status minimal" 2>/dev/null || echo "FDB not ready yet"',
+    auto_init=False,
+    labels=['foundationdb'],
+)

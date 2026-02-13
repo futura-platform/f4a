@@ -2,7 +2,6 @@ package reliableset
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -10,7 +9,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliablelock"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 // Set is a log-structured set built on FoundationDB.
@@ -69,12 +68,14 @@ func newSetDirectories[T fdb.ReadTransaction](
 	return d, nil
 }
 
-func Create(db util.DbRoot, path []string) (*Set, error) {
+func constructWith(
+	db fdb.Transactor,
+	path []string,
+	directoryConstructor func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error),
+) (*Set, error) {
 	var s *Set
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		dirs, err := newSetDirectories(tx, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
-			return db.Root.Create(t, path, layer)
-		})
+		dirs, err := newSetDirectories(tx, path, directoryConstructor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create directories: %w", err)
 		}
@@ -91,37 +92,22 @@ func Create(db util.DbRoot, path []string) (*Set, error) {
 	return s, nil
 }
 
-func Open(db util.DbRoot, path []string) (*Set, error) {
-	var s *Set
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		dirs, err := newSetDirectories(tx, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
-			return db.Root.Open(t, path, layer)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to open directories: %w", err)
-		}
-		s = &Set{
-			db:             tx.GetDatabase(),
-			setDirectories: dirs,
-		}
-		return nil, nil
+func Create(db dbutil.DbRoot, path []string) (*Set, error) {
+	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
+		return db.Root.Create(t, path, layer)
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to open set: %w", err)
-	}
-	s.initRuntime()
-	return s, nil
 }
 
-func CreateOrOpen(db util.DbRoot, path []string) (*Set, error) {
-	s, err := Open(db, path)
-	if err != nil {
-		if errors.Is(err, directory.ErrDirNotExists) {
-			return Create(db, path)
-		}
-		return nil, fmt.Errorf("failed to open set: %w", err)
-	}
-	return s, nil
+func Open(db dbutil.DbRoot, path []string) (*Set, error) {
+	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
+		return db.Root.Open(t, path, layer)
+	})
+}
+
+func CreateOrOpen(db dbutil.DbRoot, path []string) (*Set, error) {
+	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
+		return db.Root.CreateOrOpen(t, path, layer)
+	})
 }
 
 func (s *Set) initRuntime() {

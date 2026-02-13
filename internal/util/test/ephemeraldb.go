@@ -13,7 +13,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +32,7 @@ func testContext(t testing.TB) context.Context {
 	return context.Background()
 }
 
-func WithEphemeralDBRoot(t testing.TB, fn func(db util.DbRoot)) {
+func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 	fdb.MustAPIVersion(constants.FDB_API_VERSION)
 	ctx := testContext(t)
 
@@ -76,7 +76,7 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db util.DbRoot)) {
 	require.NoError(t, err)
 
 	path := []string{"f4a", "test", t.Name(), fmt.Sprintf("%d", rand.Int())}
-	db, err := util.CreateOrOpenDbRoot(path, func() (fdb.Database, error) {
+	db, err := dbutil.CreateOrOpenDbRoot(path, func() (fdb.Database, error) {
 		return fdb.OpenDatabase(clusterFile)
 	})
 	require.NoError(t, err)

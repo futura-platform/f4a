@@ -10,14 +10,14 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
-	"github.com/futura-platform/f4a/internal/util"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 )
 
-func setInput(t *testing.T, db util.DbRoot, tkey task.TaskKey, input []byte) {
+func setInput(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey, input []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		tkey.Input().Set(tx, input)
@@ -35,7 +35,7 @@ func neverCallErrorCallback(t testing.TB) func(id task.Id, err error) {
 
 func TestRunMap(t *testing.T) {
 	t.Run("natural run completion", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -54,7 +54,7 @@ func TestRunMap(t *testing.T) {
 			)
 			var wg sync.WaitGroup
 			wg.Add(1)
-			err = m.run(runnable, func(_ context.Context, output []byte, err error) error {
+			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
 				// it should not be cleaned up when until callback exits successfully
 				assert.Equal(t, 1, len(m.runCancels))
 				assert.Equal(t, []byte("output"), output)
@@ -72,7 +72,7 @@ func TestRunMap(t *testing.T) {
 	})
 
 	t.Run("run, then cancel", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 
 			var executeWg sync.WaitGroup
@@ -97,7 +97,7 @@ func TestRunMap(t *testing.T) {
 				tkey,
 				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(runnable, func(_ context.Context, output []byte, err error) error {
+			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
 				assert.Equal(t, []byte("output"), output)
 				assert.ErrorIs(t, err, context.Canceled)
 				callbackWg.Done()
@@ -117,9 +117,11 @@ func TestRunMap(t *testing.T) {
 			callbackWg.Wait()
 		})
 	})
-	t.Run("run, then cancel all", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	t.Run("run, then cancel parent context", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			runCount := 10
 			var executeWg sync.WaitGroup
 			executeWg.Add(runCount)
@@ -131,7 +133,7 @@ func TestRunMap(t *testing.T) {
 				tkey, err := tasksDirectory.Create(db, task.NewId())
 				assert.NoError(t, err)
 				setInput(t, db, tkey, []byte("input"))
-				err = m.run(run.NewRunnable(
+				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
 						Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 							executeWg.Done()
@@ -153,15 +155,18 @@ func TestRunMap(t *testing.T) {
 			assert.Equal(t, runCount, len(m.runCancels))
 			executeWg.Wait()
 
-			m.cancelAll()
+			cancel()
+			m.wait()
 			callbackWg.Wait()
 
 			assert.Equal(t, 0, len(m.runCancels))
 		})
 	})
-	t.Run("cancelAll waits for runs to exit", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+	t.Run("wait blocks until runs exit after parent cancellation", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			runCount := 3
 			sleepTime := 1 * time.Second
 			var executeWg sync.WaitGroup
@@ -174,7 +179,7 @@ func TestRunMap(t *testing.T) {
 				tkey, err := tasksDirectory.Create(db, task.NewId())
 				assert.NoError(t, err)
 				setInput(t, db, tkey, []byte("input"))
-				err = m.run(run.NewRunnable(
+				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
 						Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 							executeWg.Done()
@@ -197,7 +202,8 @@ func TestRunMap(t *testing.T) {
 			executeWg.Wait()
 
 			start := time.Now()
-			m.cancelAll()
+			cancel()
+			m.wait()
 			elapsed := time.Since(start)
 			assert.GreaterOrEqual(t, elapsed, sleepTime)
 
@@ -206,7 +212,7 @@ func TestRunMap(t *testing.T) {
 		})
 	})
 	t.Run("execution error passed to callback", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 			expectedErr := fmt.Errorf("execution failed")
 			var wg sync.WaitGroup
@@ -226,7 +232,7 @@ func TestRunMap(t *testing.T) {
 				tkey,
 				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(runnable, func(_ context.Context, output []byte, err error) error {
+			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
 				assert.Nil(t, output)
 				assert.ErrorIs(t, err, expectedErr)
 				wg.Done()
@@ -236,9 +242,9 @@ func TestRunMap(t *testing.T) {
 			wg.Wait()
 		})
 	})
-	t.Run("cancelAll on empty map", func(t *testing.T) {
+	t.Run("wait on empty map", func(t *testing.T) {
 		m := newRunMap(t.Name(), neverCallErrorCallback(t))
-		m.cancelAll() // should not panic
+		m.wait() // should not panic
 		assert.Equal(t, 0, len(m.runCancels))
 	})
 	t.Run("delete non-existent run", func(t *testing.T) {
@@ -247,7 +253,7 @@ func TestRunMap(t *testing.T) {
 		assert.ErrorIs(t, err, ErrRunNotFound)
 	})
 	t.Run("duplicate run", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db util.DbRoot) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			m := newRunMap(t.Name(), neverCallErrorCallback(t))
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -264,11 +270,11 @@ func TestRunMap(t *testing.T) {
 				tkey,
 				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(runnable, func(_ context.Context, b []byte, err error) error {
+			err = m.run(t.Context(), runnable, func(_ context.Context, b []byte, err error) error {
 				return nil
 			})
 			assert.NoError(t, err)
-			err = m.run(runnable, func(_ context.Context, b []byte, err error) error {
+			err = m.run(t.Context(), runnable, func(_ context.Context, b []byte, err error) error {
 				return nil
 			})
 			assert.ErrorIs(t, err, ErrDuplicateRun)

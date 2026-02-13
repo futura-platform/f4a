@@ -140,33 +140,21 @@
 				"clusterFile": {
 					"type": "object",
 					"properties": {
-						"configMap": {
-							"type": "object",
-							"properties": {
-								"name": {
-									"type": "string",
-									"description": "Name of the ConfigMap that contains the FoundationDB cluster file."
-								},
-								"key": {
-									"type": "string",
-									"description": "Key within the ConfigMap for the cluster file.",
-									"minLength": 1
-								}
-							}
-						},
 						"secret": {
 							"type": "object",
 							"properties": {
 								"name": {
 									"type": "string",
-									"description": "Name of the Secret that contains the FoundationDB cluster file."
+									"description": "Name of the Secret that contains the FoundationDB cluster file.",
+									"minLength": 1
 								},
 								"key": {
 									"type": "string",
 									"description": "Key within the Secret for the cluster file.",
 									"minLength": 1
 								}
-							}
+							},
+							"required": ["name"]
 						},
 						"writable": {
 							"type": "object",
@@ -182,7 +170,7 @@
 								},
 								"sourceMountPath": {
 									"type": "string",
-									"description": "Filesystem path where the source ConfigMap/Secret is mounted for the init container.",
+									"description": "Filesystem path where the source Secret is mounted for the init container.",
 									"minLength": 1
 								},
 								"initImage": {
@@ -194,31 +182,7 @@
 							"required": ["enabled", "mountPath", "sourceMountPath", "initImage"]
 						}
 					},
-					"required": ["writable"],
-					"anyOf": [
-						{
-							"required": ["configMap"],
-							"properties": {
-								"configMap": {
-									"required": ["name"],
-									"properties": {
-										"name": { "minLength": 1 }
-									}
-								}
-							}
-						},
-						{
-							"required": ["secret"],
-							"properties": {
-								"secret": {
-									"required": ["name"],
-									"properties": {
-										"name": { "minLength": 1 }
-									}
-								}
-							}
-						}
-					]
+					"required": ["secret", "writable"]
 				}
 			},
 			"required": ["clusterFile"]
