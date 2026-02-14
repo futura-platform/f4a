@@ -28,6 +28,14 @@ Open http://localhost:10350 to see the Tilt dashboard. Tilt will:
 
 Press `s` to stop, or run `tilt down` to tear everything down.
 
+## Prebuilt Images (GHCR)
+
+Prebuilt `gateway` and `dispatch` images are available in the GitHub Container Registry (GHCR)
+on version tags (`v*`):
+
+- `ghcr.io/futura-platform/f4a-gateway:<tag>`
+- `ghcr.io/futura-platform/f4a-dispatch:<tag>`
+
 ## Manual Deployment
 
 ### Prerequisites
@@ -50,22 +58,15 @@ kubectl apply -f https://raw.githubusercontent.com/foundationdb/fdb-kubernetes-o
 
 ### 2) Build images
 
-The Dockerfiles require both `f4a` and `futura` directories in the build context:
-
 ```bash
-# Create build context with both repos
-mkdir -p /tmp/f4a-build
-cp -r . /tmp/f4a-build/f4a
-cp -r ../futura /tmp/f4a-build/futura
-
-# Build images (for minikube)
-cd /tmp/f4a-build
-minikube image build -t f4a-gateway:latest -f f4a/cmd/gateway/Dockerfile .
-minikube image build -t f4a-dispatch:latest -f f4a/cmd/dispatch/Dockerfile .
-minikube image build -t serpmonitor:latest -f f4a/examples/serpMonitor/Dockerfile .
+# Run from the f4a repo root.
+minikube image build -t f4a-gateway:latest -f cmd/gateway/Dockerfile .
+minikube image build -t f4a-dispatch:latest -f cmd/dispatch/Dockerfile .
+minikube image build -t serpmonitor:latest -f examples/serpMonitor/Dockerfile .
 ```
 
-For production, push to a registry and update `examples/serpMonitor/chart/values.yaml`.
+For production, use the prebuilt GHCR images above (or push your own images) and
+update `examples/serpMonitor/chart/values.yaml`.
 
 ### 3) Install the umbrella chart
 

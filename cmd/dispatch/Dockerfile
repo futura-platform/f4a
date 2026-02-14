@@ -10,16 +10,10 @@ COPY --from=fdb /usr/include/foundationdb /usr/include/foundationdb
 
 WORKDIR /workspace
 
-# Copy futura dependency first (referenced via replace directive)
-COPY futura ./futura
-
 # Copy f4a source
 COPY f4a ./f4a
 
 WORKDIR /workspace/f4a
-
-# Update replace directive to use workspace-relative path
-RUN sed -i 's|=> \.\./futura|=> /workspace/futura|' go.mod
 
 RUN go mod download
 
