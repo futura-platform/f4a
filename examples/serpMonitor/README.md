@@ -28,14 +28,6 @@ Open http://localhost:10350 to see the Tilt dashboard. Tilt will:
 
 Press `s` to stop, or run `tilt down` to tear everything down.
 
-## Prebuilt Images (GHCR)
-
-Prebuilt `gateway` and `dispatch` images are available in the GitHub Container Registry (GHCR)
-on version tags (`v*`):
-
-- `ghcr.io/futura-platform/f4a-gateway:<tag>`
-- `ghcr.io/futura-platform/f4a-dispatch:<tag>`
-
 ## Manual Deployment
 
 ### Prerequisites
