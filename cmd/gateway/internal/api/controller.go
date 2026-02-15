@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/pool"
@@ -50,11 +52,16 @@ type controller struct {
 
 // CreateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskRequest) (*taskv1.CreateTaskResponse, error) {
-	tkey, err := c.taskDir.Create(c.db, task.Id(req.TaskId))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+	id := task.Id(req.TaskId)
+	_, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+		tkey, err := c.taskDir.Create(t, id)
+		if err != nil {
+			if errors.Is(err, directory.ErrDirAlreadyExists) {
+				// Task already exists; treat CreateTask as idempotent.
+				return nil, nil
+			}
+			return nil, fmt.Errorf("failed to create task: %w", err)
+		}
 		tkey.ExecutorId().Set(t, execute.ExecutorId(req.ExecutorId))
 		tkey.CallbackUrl().Set(t, req.CallbackUrl)
 		tkey.Input().Set(t, req.Parameters.Input)
@@ -69,11 +76,12 @@ func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskReque
 
 // UpdateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskRequest) (*taskv1.UpdateTaskResponse, error) {
-	tkey, err := c.openTask(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+	_, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+		tkey, err := openTask(t, c.taskDir, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open task: %w", err)
+		}
+
 		tkey.Input().Set(t, req.Parameters.Input)
 		return nil, nil
 	})
@@ -85,14 +93,16 @@ func (c *controller) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 
 // ActivateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskRequest) (*taskv1.ActivateTaskResponse, error) {
-	tkey, err := c.openTask(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+	_, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+		tkey, err := openTask(t, c.taskDir, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open task: %w", err)
+		}
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-		if currentStatus != task.LifecycleStatusSuspended {
-			return nil, fmt.Errorf("expected task to be suspended, got %s", currentStatus)
+		switch currentStatus {
+		case task.LifecycleStatusPending, task.LifecycleStatusRunning:
+			// task is already in the correct state, do nothing for idempotent operation
+			return nil, nil
 		}
 		tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
 		return nil, c.pendingSet.Add(t, []byte(tkey.Id()))
@@ -105,14 +115,15 @@ func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskR
 
 // SuspendTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskRequest) (*taskv1.SuspendTaskResponse, error) {
-	tkey, err := c.openTask(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+	_, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+		tkey, err := openTask(t, c.taskDir, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open task: %w", err)
+		}
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
 		if currentStatus == task.LifecycleStatusSuspended {
-			return nil, fmt.Errorf("task is already suspended")
+			// task is already suspended, do nothing for idempotent operation
+			return nil, nil
 		}
 		if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
 			return nil, fmt.Errorf("failed to remove task from current queue: %v", err)
@@ -132,13 +143,19 @@ func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskReq
 
 // DeleteTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskRequest) (*taskv1.DeleteTaskResponse, error) {
-	tkey, err := c.openTask(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open task: %w", err)
-	}
-	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+	_, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+		tkey, err := openTask(t, c.taskDir, req)
+		if err != nil {
+			if errors.Is(err, directory.ErrDirNotExists) {
+				// Task already deleted or never created; treat DeleteTask as idempotent.
+				return nil, nil
+			}
+			return nil, fmt.Errorf("failed to open task: %w", err)
+		}
 		currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-		if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
+		if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil &&
+			// If the task is not in any queue, do nothing for idempotent operation
+			!errors.Is(err, ErrNotInAnyQueue) {
 			return nil, fmt.Errorf("failed to remove task from current queue: %v", err)
 		}
 
@@ -150,6 +167,12 @@ func (c *controller) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 	return &taskv1.DeleteTaskResponse{}, nil
 }
 
+var (
+	ErrNotInAnyQueue = errors.New("task is not in any queue")
+)
+
+// removeFromCurrentQueue removes the task from the current queue.
+// If the task is not in any queue, it returns ErrNotInAnyQueue.
 func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey, currentStatus task.LifecycleStatus) error {
 	switch currentStatus {
 	case task.LifecycleStatusRunning:
@@ -165,8 +188,10 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		if err := c.pendingSet.Remove(t, []byte(tkey.Id())); err != nil {
 			return fmt.Errorf("failed to remove task from ready set: %v", err)
 		}
+	case task.LifecycleStatusSuspended:
+		return ErrNotInAnyQueue
 	default:
-		return fmt.Errorf("expected task to be running or pending, got %s", currentStatus)
+		return fmt.Errorf("unknown status '%s'", currentStatus)
 	}
 	return nil
 }

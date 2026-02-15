@@ -10,22 +10,22 @@ import (
 type LifecycleStatus byte
 
 const (
-	// LifecycleStatusPending means the task is activated, and waiting to be assigned to a runner.
-	LifecycleStatusPending LifecycleStatus = iota
 	// LifecycleStatusSuspended means the task is suspended, and waiting to be activated.
-	LifecycleStatusSuspended
+	LifecycleStatusSuspended LifecycleStatus = iota
+	// LifecycleStatusPending means the task is activated, and waiting to be assigned to a runner.
+	LifecycleStatusPending
 	// LifecycleStatusRunning means the task is currently assigned to a runner.
 	LifecycleStatusRunning
 )
 
 func (s LifecycleStatus) String() string {
 	switch s {
+	case LifecycleStatusSuspended:
+		return "suspended"
 	case LifecycleStatusPending:
 		return "pending"
 	case LifecycleStatusRunning:
 		return "running"
-	case LifecycleStatusSuspended:
-		return "suspended"
 	}
 	return "unknown"
 }

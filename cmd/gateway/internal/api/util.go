@@ -1,9 +1,10 @@
 package api
 
 import (
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/task"
 )
 
-func (c *controller) openTask(r interface{ GetTaskId() string }) (task.TaskKey, error) {
-	return c.taskDir.Open(c.db, task.Id(r.GetTaskId()))
+func openTask(t fdb.Transactor, taskDir task.TasksDirectory, r interface{ GetTaskId() string }) (task.TaskKey, error) {
+	return taskDir.Open(t, task.Id(r.GetTaskId()))
 }
