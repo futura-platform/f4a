@@ -128,11 +128,7 @@ func processAddedBatch(
 
 	taskIds := make([]task.Id, items.Cardinality())
 	for i, item := range items.ToSlice() {
-		id, err := task.IdFromBytes([]byte(item))
-		if err != nil {
-			return fmt.Errorf("failed to parse task id: %w", err)
-		}
-		taskIds[i] = id
+		taskIds[i] = task.Id(item)
 	}
 	runnables, err := run.LoadTasks(ctx, db, router, taskIds)
 	if err != nil {
@@ -149,11 +145,8 @@ func processAddedBatch(
 
 func processRemovedBatch(taskManager *runMap, items mapset.Set[string]) error {
 	for _, item := range items.ToSlice() {
-		id, err := task.IdFromBytes([]byte(item))
-		if err != nil {
-			return fmt.Errorf("failed to parse task id: %w", err)
-		}
-		err = taskManager.cancel(id)
+		id := task.Id(item)
+		err := taskManager.cancel(id)
 		if err != nil {
 			return fmt.Errorf("failed to cancel task %s: %w", id, err)
 		}

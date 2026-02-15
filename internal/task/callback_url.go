@@ -24,7 +24,7 @@ func (s callbackUrlSerializer) Unmarshal(bytes []byte) (string, error) {
 
 func (k TaskKey) CallbackUrl() dbutil.TypedKey[string] {
 	return dbutil.NewTypedKey(
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "callback_url"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "callback_url"}),
 		callbackUrlSerializer{},
 	)
 }

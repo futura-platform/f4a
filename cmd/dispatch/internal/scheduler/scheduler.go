@@ -188,7 +188,7 @@ func (s *Scheduler) assignPending(ctx context.Context, pending mapset.Set[task.I
 				pending.Remove(id)
 				continue
 			}
-			s.logger.Error("failed to assign task", "task_id", id.String(), "worker", worker, "error", err)
+			s.logger.Error("failed to assign task", "task_id", string(id), "worker", worker, "error", err)
 			return
 		}
 		pending.Remove(id)
@@ -199,7 +199,7 @@ func (s *Scheduler) assignPending(ctx context.Context, pending mapset.Set[task.I
 func (s *Scheduler) assignTask(ctx context.Context, id task.Id, worker string) error {
 	taskKey, err := s.taskDir.Open(s.db, id)
 	if err != nil {
-		return fmt.Errorf("failed to open task %s: %w", id.String(), err)
+		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
 	taskSet, ok := s.taskSets[worker]
@@ -214,10 +214,10 @@ func (s *Scheduler) assignTask(ctx context.Context, id task.Id, worker string) e
 		}
 		taskKey.RunnerId().Set(tx, worker)
 		taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-		if err := taskSet.Add(tx, id.Bytes()); err != nil {
+		if err := taskSet.Add(tx, []byte(id)); err != nil {
 			return nil, err
 		}
-		if err := s.pendingSet.Remove(tx, id.Bytes()); err != nil {
+		if err := s.pendingSet.Remove(tx, []byte(id)); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -227,11 +227,7 @@ func (s *Scheduler) assignTask(ctx context.Context, id task.Id, worker string) e
 
 func addInitialPending(pending mapset.Set[task.Id], initial mapset.Set[string]) error {
 	for _, item := range initial.ToSlice() {
-		id, err := task.IdFromBytes([]byte(item))
-		if err != nil {
-			return fmt.Errorf("failed to parse pending task id: %w", err)
-		}
-		pending.Add(id)
+		pending.Add(task.Id(item))
 	}
 	return nil
 }
@@ -240,10 +236,7 @@ func applyPendingBatch(pending mapset.Set[task.Id], batch []reliableset.LogEntry
 	addedSet := mapset.NewSetWithSize[task.Id](len(batch))
 	removedSet := mapset.NewSetWithSize[task.Id](len(batch))
 	for _, entry := range batch {
-		id, err := task.IdFromBytes(entry.Value)
-		if err != nil {
-			return fmt.Errorf("failed to parse task id: %w", err)
-		}
+		id := task.Id(entry.Value)
 		switch entry.Op {
 		case reliableset.LogOperationAdd:
 			addedSet.Add(id)

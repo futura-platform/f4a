@@ -50,8 +50,7 @@ type controller struct {
 
 // CreateTask implements taskv1connect.ControlServiceHandler.
 func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskRequest) (*taskv1.CreateTaskResponse, error) {
-	id := task.NewId()
-	tkey, err := c.taskDir.Create(c.db, id)
+	tkey, err := c.taskDir.Create(c.db, task.Id(req.TaskId))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
@@ -60,12 +59,12 @@ func (c *controller) CreateTask(ctx context.Context, req *taskv1.CreateTaskReque
 		tkey.CallbackUrl().Set(t, req.CallbackUrl)
 		tkey.Input().Set(t, req.Parameters.Input)
 		tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
-		return nil, c.suspendedSet.Add(t, id.Bytes())
+		return nil, c.suspendedSet.Add(t, []byte(tkey.Id()))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create task: %v", err)
 	}
-	return &taskv1.CreateTaskResponse{TaskId: id.String()}, nil
+	return &taskv1.CreateTaskResponse{}, nil
 }
 
 // UpdateTask implements taskv1connect.ControlServiceHandler.
@@ -96,7 +95,7 @@ func (c *controller) ActivateTask(ctx context.Context, req *taskv1.ActivateTaskR
 			return nil, fmt.Errorf("expected task to be suspended, got %s", currentStatus)
 		}
 		tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
-		return nil, c.pendingSet.Add(t, tkey.Id().Bytes())
+		return nil, c.pendingSet.Add(t, []byte(tkey.Id()))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to activate task: %v", err)
@@ -119,7 +118,7 @@ func (c *controller) SuspendTask(ctx context.Context, req *taskv1.SuspendTaskReq
 			return nil, fmt.Errorf("failed to remove task from current queue: %v", err)
 		}
 
-		if err := c.suspendedSet.Add(t, tkey.Id().Bytes()); err != nil {
+		if err := c.suspendedSet.Add(t, []byte(tkey.Id())); err != nil {
 			return nil, fmt.Errorf("failed to add task to suspended set: %v", err)
 		}
 		tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
@@ -159,11 +158,11 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		if err != nil {
 			return fmt.Errorf("failed to create or open task set: %v", err)
 		}
-		if err := taskSet.Remove(t, tkey.Id().Bytes()); err != nil {
+		if err := taskSet.Remove(t, []byte(tkey.Id())); err != nil {
 			return fmt.Errorf("failed to remove task from task set: %v", err)
 		}
 	case task.LifecycleStatusPending:
-		if err := c.pendingSet.Remove(t, tkey.Id().Bytes()); err != nil {
+		if err := c.pendingSet.Remove(t, []byte(tkey.Id())); err != nil {
 			return fmt.Errorf("failed to remove task from ready set: %v", err)
 		}
 	default:

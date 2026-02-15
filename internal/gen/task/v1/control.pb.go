@@ -7,6 +7,7 @@
 package taskv1
 
 import (
+	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -67,9 +68,10 @@ func (x *TaskParameters) GetInput() []byte {
 
 type CreateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ExecutorId    string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	CallbackUrl   string                 `protobuf:"bytes,2,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
-	Parameters    *TaskParameters        `protobuf:"bytes,3,opt,name=parameters,proto3" json:"parameters,omitempty"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ExecutorId    string                 `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
+	CallbackUrl   string                 `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	Parameters    *TaskParameters        `protobuf:"bytes,4,opt,name=parameters,proto3" json:"parameters,omitempty"` // todo: add the ability to connect this task to a trace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -104,6 +106,13 @@ func (*CreateTaskRequest) Descriptor() ([]byte, []int) {
 	return file_task_v1_control_proto_rawDescGZIP(), []int{1}
 }
 
+func (x *CreateTaskRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
 func (x *CreateTaskRequest) GetExecutorId() string {
 	if x != nil {
 		return x.ExecutorId
@@ -127,7 +136,6 @@ func (x *CreateTaskRequest) GetParameters() *TaskParameters {
 
 type CreateTaskResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -160,13 +168,6 @@ func (x *CreateTaskResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateTaskResponse.ProtoReflect.Descriptor instead.
 func (*CreateTaskResponse) Descriptor() ([]byte, []int) {
 	return file_task_v1_control_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *CreateTaskResponse) GetTaskId() string {
-	if x != nil {
-		return x.TaskId
-	}
-	return ""
 }
 
 type UpdateTaskRequest struct {
@@ -259,7 +260,7 @@ func (*UpdateTaskResponse) Descriptor() ([]byte, []int) {
 
 type ActivateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // todo: add the ability to connect this task to a trace
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -501,18 +502,18 @@ var File_task_v1_control_proto protoreflect.FileDescriptor
 
 const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x15task/v1/control.proto\x12\atask.v1\"&\n" +
+	"\x15task/v1/control.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\"&\n" +
 	"\x0eTaskParameters\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\fR\x05input\"\x90\x01\n" +
-	"\x11CreateTaskRequest\x12\x1f\n" +
-	"\vexecutor_id\x18\x01 \x01(\tR\n" +
+	"\x05input\x18\x01 \x01(\fR\x05input\"\xb2\x01\n" +
+	"\x11CreateTaskRequest\x12 \n" +
+	"\atask_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18 R\x06taskId\x12\x1f\n" +
+	"\vexecutor_id\x18\x02 \x01(\tR\n" +
 	"executorId\x12!\n" +
-	"\fcallback_url\x18\x02 \x01(\tR\vcallbackUrl\x127\n" +
+	"\fcallback_url\x18\x03 \x01(\tR\vcallbackUrl\x127\n" +
 	"\n" +
-	"parameters\x18\x03 \x01(\v2\x17.task.v1.TaskParametersR\n" +
-	"parameters\"-\n" +
-	"\x12CreateTaskResponse\x12\x17\n" +
-	"\atask_id\x18\x01 \x01(\tR\x06taskId\"e\n" +
+	"parameters\x18\x04 \x01(\v2\x17.task.v1.TaskParametersR\n" +
+	"parameters\"\x14\n" +
+	"\x12CreateTaskResponse\"e\n" +
 	"\x11UpdateTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x127\n" +
 	"\n" +

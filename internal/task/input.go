@@ -27,7 +27,7 @@ func (s inputSerializer) Unmarshal(bytes []byte) ([]byte, error) {
 
 func (k TaskKey) Input() dbutil.TypedKey[[]byte] {
 	return dbutil.NewTypedKey(
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "input"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "input"}),
 		inputSerializer{},
 	)
 }

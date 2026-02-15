@@ -14,7 +14,7 @@ func CreateOrOpenTasksDirectory(db dbutil.DbRoot) (TasksDirectory, error) {
 }
 
 func (d TasksDirectory) Create(db fdb.Transactor, id Id) (TaskKey, error) {
-	path := []string{id.String()}
+	path := []string{string(id)}
 	task, err := d.d.Create(db, path, nil)
 	if err != nil {
 		return TaskKey{}, err
@@ -30,7 +30,7 @@ func (d TasksDirectory) Create(db fdb.Transactor, id Id) (TaskKey, error) {
 }
 
 func (d TasksDirectory) Open(db fdb.Transactor, id Id) (TaskKey, error) {
-	path := []string{id.String()}
+	path := []string{string(id)}
 	task, err := d.d.Open(db, path, nil)
 	if err != nil {
 		return TaskKey{}, err

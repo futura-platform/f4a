@@ -19,7 +19,7 @@ func (s runnerIdSerializer) Unmarshal(bytes []byte) (string, error) {
 
 func (k TaskKey) RunnerId() dbutil.TypedKey[string] {
 	return dbutil.NewTypedKey(
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "runner_id"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "runner_id"}),
 		runnerIdSerializer{},
 	)
 }

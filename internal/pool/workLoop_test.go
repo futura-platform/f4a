@@ -52,7 +52,7 @@ func seedTask(
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskDirectory.ExecutorId().Set(tx, executorId)
 		taskDirectory.CallbackUrl().Set(tx, callbackUrl)
-		taskDirectory.Input().Set(tx, []byte(id.String()))
+		taskDirectory.Input().Set(tx, []byte(id))
 		return nil, nil
 	})
 	return err
@@ -73,7 +73,7 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.I
 
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, id := range ids {
-			if err := set.Add(tx, id.Bytes()); err != nil {
+			if err := set.Add(tx, []byte(id)); err != nil {
 				return nil, err
 			}
 		}
@@ -87,7 +87,7 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []tas
 
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, id := range ids {
-			if err := set.Remove(tx, id.Bytes()); err != nil {
+			if err := set.Remove(tx, []byte(id)); err != nil {
 				return nil, err
 			}
 		}
@@ -154,11 +154,9 @@ func TestWorkLoop(t *testing.T) {
 			executorId := execute.ExecutorId("test-executor")
 			taskCount := 4
 			taskIds := make([]task.Id, 0, taskCount)
-			idByInput := make(map[string]task.Id, taskCount)
 			for range taskCount {
 				id := task.NewId()
 				taskIds = append(taskIds, id)
-				idByInput[id.String()] = id
 				require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback"))
 			}
 
@@ -167,10 +165,7 @@ func TestWorkLoop(t *testing.T) {
 
 			executor := &testutil.MockExecutor{
 				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-					id, ok := idByInput[string(marshalledInput)]
-					if !ok {
-						return nil, fmt.Errorf("unexpected input: %q", marshalledInput)
-					}
+					id := task.Id(marshalledInput)
 					startedCh <- id
 
 					<-ctx.Done()

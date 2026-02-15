@@ -24,7 +24,7 @@ func (m *taskManager) run(ctx context.Context, r run.RunnableTask) error {
 func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask, output []byte, taskErr error) error {
 	l := flog.FromContext(ctx)
 	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
-		slog.String("task_id", runnable.Id().String()),
+		slog.String("task_id", string(runnable.Id())),
 		slog.Bool("error", taskErr != nil))
 	var body io.Reader
 	var contentType string

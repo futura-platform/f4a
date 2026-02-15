@@ -52,10 +52,27 @@ const (
 
 // ControlServiceClient is a client for the task.v1.ControlService service.
 type ControlServiceClient interface {
+	// CreateTask creates a new task and returns the task ID.
+	// The task will be created in the suspended state.
+	// if the task_id is already in use, this will do nothing.
 	CreateTask(context.Context, *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error)
+	// UpdateTask updates the parameters of a task.
+	// This can be used on a task that is in any state.
 	UpdateTask(context.Context, *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error)
+	// ActivateTask "activates" a task that is in the suspended state.
+	// If the task is in the running state, this will do nothing.
+	// Otherwise, this will set the task to the pending state.
+	// It will be executed by a runner as soon as possible.
 	ActivateTask(context.Context, *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error)
+	// SuspendTask suspends a task that is in the pending or running state.
+	// If the task is in the suspended state, this will do nothing.
+	// This will set the task to the suspended state.
+	// It will stop execution as soon as possible.
 	SuspendTask(context.Context, *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error)
+	// DeleteTask deletes a task.
+	// This will remove the task from the system.
+	// This can be used on a task that is in any state.
+	// if the task_id does not exist, this will do nothing.
 	DeleteTask(context.Context, *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error)
 }
 
@@ -159,10 +176,27 @@ func (c *controlServiceClient) DeleteTask(ctx context.Context, req *v1.DeleteTas
 
 // ControlServiceHandler is an implementation of the task.v1.ControlService service.
 type ControlServiceHandler interface {
+	// CreateTask creates a new task and returns the task ID.
+	// The task will be created in the suspended state.
+	// if the task_id is already in use, this will do nothing.
 	CreateTask(context.Context, *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error)
+	// UpdateTask updates the parameters of a task.
+	// This can be used on a task that is in any state.
 	UpdateTask(context.Context, *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error)
+	// ActivateTask "activates" a task that is in the suspended state.
+	// If the task is in the running state, this will do nothing.
+	// Otherwise, this will set the task to the pending state.
+	// It will be executed by a runner as soon as possible.
 	ActivateTask(context.Context, *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error)
+	// SuspendTask suspends a task that is in the pending or running state.
+	// If the task is in the suspended state, this will do nothing.
+	// This will set the task to the suspended state.
+	// It will stop execution as soon as possible.
 	SuspendTask(context.Context, *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error)
+	// DeleteTask deletes a task.
+	// This will remove the task from the system.
+	// This can be used on a task that is in any state.
+	// if the task_id does not exist, this will do nothing.
 	DeleteTask(context.Context, *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error)
 }
 

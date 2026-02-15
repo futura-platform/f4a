@@ -25,7 +25,7 @@ func (s executorIdSerializer) Unmarshal(bytes []byte) (execute.ExecutorId, error
 
 func (k TaskKey) ExecutorId() dbutil.TypedKey[execute.ExecutorId] {
 	return dbutil.NewTypedKey(
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "executor_id"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "executor_id"}),
 		executorIdSerializer{},
 	)
 }

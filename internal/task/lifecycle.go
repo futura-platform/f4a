@@ -51,7 +51,7 @@ func (l lifecycleStatusSerializer) Unmarshal(bytes []byte) (LifecycleStatus, err
 
 func (k TaskKey) LifecycleStatus() dbutil.TypedKey[LifecycleStatus] {
 	return dbutil.NewTypedKey(
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "lifecycle_status"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "lifecycle_status"}),
 		lifecycleStatusSerializer{},
 	)
 }

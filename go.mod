@@ -3,6 +3,7 @@ module github.com/futura-platform/f4a
 go 1.25.3
 
 require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260209202127-80ab13bee0bf.1
 	connectrpc.com/connect v1.19.1
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250702211439-37fcf1c8ce08
 	github.com/deckarep/golang-set/v2 v2.8.0

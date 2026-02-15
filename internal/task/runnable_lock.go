@@ -11,7 +11,7 @@ import (
 func (k TaskKey) RunnableLock(db fdb.Transactor, holder string) *reliablelock.Lock[string] {
 	return reliablelock.NewLock(
 		db,
-		k.d.Pack(tuple.Tuple{k.id.Bytes(), "lock"}),
+		k.d.Pack(tuple.Tuple{string(k.id), "lock"}),
 		holder,
 		reliablelock.WithLeaseDuration(10*time.Second),
 		reliablelock.WithRefreshInterval(1*time.Second),
