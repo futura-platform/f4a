@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/futura-platform/f4a/cmd/gateway/internal/api"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
+	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
@@ -41,6 +43,11 @@ func run() error {
 	}, func() int {
 		return http.StatusOK
 	})
+	gcCtx, cancelGC := context.WithCancel(context.Background())
+	defer cancelGC()
+	s.RegisterOnShutdown(cancelGC)
+	go task.RunRevisionGCLoop(gcCtx, dbRoot)
+
 	port, err := util.RequiredPort("GATEWAY_PORT")
 	if err != nil {
 		return err

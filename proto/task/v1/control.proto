@@ -19,52 +19,125 @@ message CreateTaskRequest {
 }
 message CreateTaskResponse {}
 
+message ControlServiceCreateTaskRequest {
+  // Monotonically increasing per task. Must be 1 for task creation.
+  uint64 revision = 1;
+  CreateTaskRequest request = 2;
+}
+
 message UpdateTaskRequest {
   string task_id = 1;
   TaskParameters parameters = 2;
 }
 message UpdateTaskResponse {}
 
+message ControlServiceUpdateTaskRequest {
+  // Monotonically increasing per task.
+  uint64 revision = 1;
+  UpdateTaskRequest request = 2;
+}
+
 message ActivateTaskRequest {
   string task_id = 1;
 }
 message ActivateTaskResponse {}
+
+message ControlServiceActivateTaskRequest {
+  // Monotonically increasing per task.
+  uint64 revision = 1;
+  ActivateTaskRequest request = 2;
+}
 
 message SuspendTaskRequest {
   string task_id = 1;
 }
 message SuspendTaskResponse {}
 
+message ControlServiceSuspendTaskRequest {
+  // Monotonically increasing per task.
+  uint64 revision = 1;
+  SuspendTaskRequest request = 2;
+}
+
 message DeleteTaskRequest {
   string task_id = 1;
 }
 message DeleteTaskResponse {}
 
+message ControlServiceDeleteTaskRequest {
+  // Monotonically increasing per task.
+  uint64 revision = 1;
+  DeleteTaskRequest request = 2;
+}
+
+message BatchTaskOperationsRequest {
+  repeated BatchTaskOperation operations = 1;
+}
+
+message BatchTaskOperation {
+  oneof operation {
+    ControlServiceCreateTaskRequest create_task = 1;
+    ControlServiceUpdateTaskRequest update_task = 2;
+    ControlServiceActivateTaskRequest activate_task = 3;
+    ControlServiceSuspendTaskRequest suspend_task = 4;
+    ControlServiceDeleteTaskRequest delete_task = 5;
+  }
+}
+
+enum BatchTaskOperationStatus {
+  BATCH_TASK_OPERATION_STATUS_UNSPECIFIED = 0;
+  BATCH_TASK_OPERATION_STATUS_APPLIED = 1;
+  BATCH_TASK_OPERATION_STATUS_DUPLICATE = 2;
+  BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION = 3;
+  BATCH_TASK_OPERATION_STATUS_ERROR = 4;
+}
+
+message BatchTaskOperationResult {
+  uint32 operation_index = 1;
+  BatchTaskOperationStatus status = 2;
+  string error_message = 3;
+  oneof response {
+    CreateTaskResponse create_task = 10;
+    UpdateTaskResponse update_task = 11;
+    ActivateTaskResponse activate_task = 12;
+    SuspendTaskResponse suspend_task = 13;
+    DeleteTaskResponse delete_task = 14;
+  }
+}
+
+message BatchTaskOperationsResponse {
+  repeated BatchTaskOperationResult results = 1;
+}
+
 service ControlService {
   // CreateTask creates a new task and returns the task ID.
   // The task will be created in the suspended state.
   // if the task_id is already in use, this will do nothing.
-  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc CreateTask(ControlServiceCreateTaskRequest) returns (CreateTaskResponse);
 
   // UpdateTask updates the parameters of a task.
   // This can be used on a task that is in any state.
-  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+  rpc UpdateTask(ControlServiceUpdateTaskRequest) returns (UpdateTaskResponse);
 
   // ActivateTask "activates" a task that is in the suspended state.
   // If the task is in the running state, this will do nothing.
   // Otherwise, this will set the task to the pending state.
   // It will be executed by a runner as soon as possible.
-  rpc ActivateTask(ActivateTaskRequest) returns (ActivateTaskResponse);
+  rpc ActivateTask(ControlServiceActivateTaskRequest) returns (ActivateTaskResponse);
 
   // SuspendTask suspends a task that is in the pending or running state.
   // If the task is in the suspended state, this will do nothing.
   // This will set the task to the suspended state.
   // It will stop execution as soon as possible.
-  rpc SuspendTask(SuspendTaskRequest) returns (SuspendTaskResponse);
+  rpc SuspendTask(ControlServiceSuspendTaskRequest) returns (SuspendTaskResponse);
 
   // DeleteTask deletes a task.
   // This will remove the task from the system.
   // This can be used on a task that is in any state.
   // if the task_id does not exist, this will do nothing.
-  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+  rpc DeleteTask(ControlServiceDeleteTaskRequest) returns (DeleteTaskResponse);
+
+  // BatchTaskOperations applies a set of operations in best-effort mode.
+  // Each operation returns an independent result.
+  rpc BatchTaskOperations(BatchTaskOperationsRequest) returns (BatchTaskOperationsResponse);
 }

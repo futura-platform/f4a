@@ -48,6 +48,9 @@ const (
 	// ControlServiceDeleteTaskProcedure is the fully-qualified name of the ControlService's DeleteTask
 	// RPC.
 	ControlServiceDeleteTaskProcedure = "/task.v1.ControlService/DeleteTask"
+	// ControlServiceBatchTaskOperationsProcedure is the fully-qualified name of the ControlService's
+	// BatchTaskOperations RPC.
+	ControlServiceBatchTaskOperationsProcedure = "/task.v1.ControlService/BatchTaskOperations"
 )
 
 // ControlServiceClient is a client for the task.v1.ControlService service.
@@ -55,25 +58,28 @@ type ControlServiceClient interface {
 	// CreateTask creates a new task and returns the task ID.
 	// The task will be created in the suspended state.
 	// if the task_id is already in use, this will do nothing.
-	CreateTask(context.Context, *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error)
+	CreateTask(context.Context, *v1.ControlServiceCreateTaskRequest) (*v1.CreateTaskResponse, error)
 	// UpdateTask updates the parameters of a task.
 	// This can be used on a task that is in any state.
-	UpdateTask(context.Context, *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error)
+	UpdateTask(context.Context, *v1.ControlServiceUpdateTaskRequest) (*v1.UpdateTaskResponse, error)
 	// ActivateTask "activates" a task that is in the suspended state.
 	// If the task is in the running state, this will do nothing.
 	// Otherwise, this will set the task to the pending state.
 	// It will be executed by a runner as soon as possible.
-	ActivateTask(context.Context, *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error)
+	ActivateTask(context.Context, *v1.ControlServiceActivateTaskRequest) (*v1.ActivateTaskResponse, error)
 	// SuspendTask suspends a task that is in the pending or running state.
 	// If the task is in the suspended state, this will do nothing.
 	// This will set the task to the suspended state.
 	// It will stop execution as soon as possible.
-	SuspendTask(context.Context, *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error)
+	SuspendTask(context.Context, *v1.ControlServiceSuspendTaskRequest) (*v1.SuspendTaskResponse, error)
 	// DeleteTask deletes a task.
 	// This will remove the task from the system.
 	// This can be used on a task that is in any state.
 	// if the task_id does not exist, this will do nothing.
-	DeleteTask(context.Context, *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error)
+	DeleteTask(context.Context, *v1.ControlServiceDeleteTaskRequest) (*v1.DeleteTaskResponse, error)
+	// BatchTaskOperations applies a set of operations in best-effort mode.
+	// Each operation returns an independent result.
+	BatchTaskOperations(context.Context, *v1.BatchTaskOperationsRequest) (*v1.BatchTaskOperationsResponse, error)
 }
 
 // NewControlServiceClient constructs a client for the task.v1.ControlService service. By default,
@@ -87,34 +93,40 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	controlServiceMethods := v1.File_task_v1_control_proto.Services().ByName("ControlService").Methods()
 	return &controlServiceClient{
-		createTask: connect.NewClient[v1.CreateTaskRequest, v1.CreateTaskResponse](
+		createTask: connect.NewClient[v1.ControlServiceCreateTaskRequest, v1.CreateTaskResponse](
 			httpClient,
 			baseURL+ControlServiceCreateTaskProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("CreateTask")),
 			connect.WithClientOptions(opts...),
 		),
-		updateTask: connect.NewClient[v1.UpdateTaskRequest, v1.UpdateTaskResponse](
+		updateTask: connect.NewClient[v1.ControlServiceUpdateTaskRequest, v1.UpdateTaskResponse](
 			httpClient,
 			baseURL+ControlServiceUpdateTaskProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("UpdateTask")),
 			connect.WithClientOptions(opts...),
 		),
-		activateTask: connect.NewClient[v1.ActivateTaskRequest, v1.ActivateTaskResponse](
+		activateTask: connect.NewClient[v1.ControlServiceActivateTaskRequest, v1.ActivateTaskResponse](
 			httpClient,
 			baseURL+ControlServiceActivateTaskProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("ActivateTask")),
 			connect.WithClientOptions(opts...),
 		),
-		suspendTask: connect.NewClient[v1.SuspendTaskRequest, v1.SuspendTaskResponse](
+		suspendTask: connect.NewClient[v1.ControlServiceSuspendTaskRequest, v1.SuspendTaskResponse](
 			httpClient,
 			baseURL+ControlServiceSuspendTaskProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("SuspendTask")),
 			connect.WithClientOptions(opts...),
 		),
-		deleteTask: connect.NewClient[v1.DeleteTaskRequest, v1.DeleteTaskResponse](
+		deleteTask: connect.NewClient[v1.ControlServiceDeleteTaskRequest, v1.DeleteTaskResponse](
 			httpClient,
 			baseURL+ControlServiceDeleteTaskProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("DeleteTask")),
+			connect.WithClientOptions(opts...),
+		),
+		batchTaskOperations: connect.NewClient[v1.BatchTaskOperationsRequest, v1.BatchTaskOperationsResponse](
+			httpClient,
+			baseURL+ControlServiceBatchTaskOperationsProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("BatchTaskOperations")),
 			connect.WithClientOptions(opts...),
 		),
 	}
@@ -122,15 +134,16 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // controlServiceClient implements ControlServiceClient.
 type controlServiceClient struct {
-	createTask   *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
-	updateTask   *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
-	activateTask *connect.Client[v1.ActivateTaskRequest, v1.ActivateTaskResponse]
-	suspendTask  *connect.Client[v1.SuspendTaskRequest, v1.SuspendTaskResponse]
-	deleteTask   *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
+	createTask          *connect.Client[v1.ControlServiceCreateTaskRequest, v1.CreateTaskResponse]
+	updateTask          *connect.Client[v1.ControlServiceUpdateTaskRequest, v1.UpdateTaskResponse]
+	activateTask        *connect.Client[v1.ControlServiceActivateTaskRequest, v1.ActivateTaskResponse]
+	suspendTask         *connect.Client[v1.ControlServiceSuspendTaskRequest, v1.SuspendTaskResponse]
+	deleteTask          *connect.Client[v1.ControlServiceDeleteTaskRequest, v1.DeleteTaskResponse]
+	batchTaskOperations *connect.Client[v1.BatchTaskOperationsRequest, v1.BatchTaskOperationsResponse]
 }
 
 // CreateTask calls task.v1.ControlService.CreateTask.
-func (c *controlServiceClient) CreateTask(ctx context.Context, req *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error) {
+func (c *controlServiceClient) CreateTask(ctx context.Context, req *v1.ControlServiceCreateTaskRequest) (*v1.CreateTaskResponse, error) {
 	response, err := c.createTask.CallUnary(ctx, connect.NewRequest(req))
 	if response != nil {
 		return response.Msg, err
@@ -139,7 +152,7 @@ func (c *controlServiceClient) CreateTask(ctx context.Context, req *v1.CreateTas
 }
 
 // UpdateTask calls task.v1.ControlService.UpdateTask.
-func (c *controlServiceClient) UpdateTask(ctx context.Context, req *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error) {
+func (c *controlServiceClient) UpdateTask(ctx context.Context, req *v1.ControlServiceUpdateTaskRequest) (*v1.UpdateTaskResponse, error) {
 	response, err := c.updateTask.CallUnary(ctx, connect.NewRequest(req))
 	if response != nil {
 		return response.Msg, err
@@ -148,7 +161,7 @@ func (c *controlServiceClient) UpdateTask(ctx context.Context, req *v1.UpdateTas
 }
 
 // ActivateTask calls task.v1.ControlService.ActivateTask.
-func (c *controlServiceClient) ActivateTask(ctx context.Context, req *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error) {
+func (c *controlServiceClient) ActivateTask(ctx context.Context, req *v1.ControlServiceActivateTaskRequest) (*v1.ActivateTaskResponse, error) {
 	response, err := c.activateTask.CallUnary(ctx, connect.NewRequest(req))
 	if response != nil {
 		return response.Msg, err
@@ -157,7 +170,7 @@ func (c *controlServiceClient) ActivateTask(ctx context.Context, req *v1.Activat
 }
 
 // SuspendTask calls task.v1.ControlService.SuspendTask.
-func (c *controlServiceClient) SuspendTask(ctx context.Context, req *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error) {
+func (c *controlServiceClient) SuspendTask(ctx context.Context, req *v1.ControlServiceSuspendTaskRequest) (*v1.SuspendTaskResponse, error) {
 	response, err := c.suspendTask.CallUnary(ctx, connect.NewRequest(req))
 	if response != nil {
 		return response.Msg, err
@@ -166,8 +179,17 @@ func (c *controlServiceClient) SuspendTask(ctx context.Context, req *v1.SuspendT
 }
 
 // DeleteTask calls task.v1.ControlService.DeleteTask.
-func (c *controlServiceClient) DeleteTask(ctx context.Context, req *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error) {
+func (c *controlServiceClient) DeleteTask(ctx context.Context, req *v1.ControlServiceDeleteTaskRequest) (*v1.DeleteTaskResponse, error) {
 	response, err := c.deleteTask.CallUnary(ctx, connect.NewRequest(req))
+	if response != nil {
+		return response.Msg, err
+	}
+	return nil, err
+}
+
+// BatchTaskOperations calls task.v1.ControlService.BatchTaskOperations.
+func (c *controlServiceClient) BatchTaskOperations(ctx context.Context, req *v1.BatchTaskOperationsRequest) (*v1.BatchTaskOperationsResponse, error) {
+	response, err := c.batchTaskOperations.CallUnary(ctx, connect.NewRequest(req))
 	if response != nil {
 		return response.Msg, err
 	}
@@ -179,25 +201,28 @@ type ControlServiceHandler interface {
 	// CreateTask creates a new task and returns the task ID.
 	// The task will be created in the suspended state.
 	// if the task_id is already in use, this will do nothing.
-	CreateTask(context.Context, *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error)
+	CreateTask(context.Context, *v1.ControlServiceCreateTaskRequest) (*v1.CreateTaskResponse, error)
 	// UpdateTask updates the parameters of a task.
 	// This can be used on a task that is in any state.
-	UpdateTask(context.Context, *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error)
+	UpdateTask(context.Context, *v1.ControlServiceUpdateTaskRequest) (*v1.UpdateTaskResponse, error)
 	// ActivateTask "activates" a task that is in the suspended state.
 	// If the task is in the running state, this will do nothing.
 	// Otherwise, this will set the task to the pending state.
 	// It will be executed by a runner as soon as possible.
-	ActivateTask(context.Context, *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error)
+	ActivateTask(context.Context, *v1.ControlServiceActivateTaskRequest) (*v1.ActivateTaskResponse, error)
 	// SuspendTask suspends a task that is in the pending or running state.
 	// If the task is in the suspended state, this will do nothing.
 	// This will set the task to the suspended state.
 	// It will stop execution as soon as possible.
-	SuspendTask(context.Context, *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error)
+	SuspendTask(context.Context, *v1.ControlServiceSuspendTaskRequest) (*v1.SuspendTaskResponse, error)
 	// DeleteTask deletes a task.
 	// This will remove the task from the system.
 	// This can be used on a task that is in any state.
 	// if the task_id does not exist, this will do nothing.
-	DeleteTask(context.Context, *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error)
+	DeleteTask(context.Context, *v1.ControlServiceDeleteTaskRequest) (*v1.DeleteTaskResponse, error)
+	// BatchTaskOperations applies a set of operations in best-effort mode.
+	// Each operation returns an independent result.
+	BatchTaskOperations(context.Context, *v1.BatchTaskOperationsRequest) (*v1.BatchTaskOperationsResponse, error)
 }
 
 // NewControlServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -237,6 +262,12 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("DeleteTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceBatchTaskOperationsHandler := connect.NewUnaryHandlerSimple(
+		ControlServiceBatchTaskOperationsProcedure,
+		svc.BatchTaskOperations,
+		connect.WithSchema(controlServiceMethods.ByName("BatchTaskOperations")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/task.v1.ControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ControlServiceCreateTaskProcedure:
@@ -249,6 +280,8 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceSuspendTaskHandler.ServeHTTP(w, r)
 		case ControlServiceDeleteTaskProcedure:
 			controlServiceDeleteTaskHandler.ServeHTTP(w, r)
+		case ControlServiceBatchTaskOperationsProcedure:
+			controlServiceBatchTaskOperationsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -258,22 +291,26 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 // UnimplementedControlServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedControlServiceHandler struct{}
 
-func (UnimplementedControlServiceHandler) CreateTask(context.Context, *v1.CreateTaskRequest) (*v1.CreateTaskResponse, error) {
+func (UnimplementedControlServiceHandler) CreateTask(context.Context, *v1.ControlServiceCreateTaskRequest) (*v1.CreateTaskResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.CreateTask is not implemented"))
 }
 
-func (UnimplementedControlServiceHandler) UpdateTask(context.Context, *v1.UpdateTaskRequest) (*v1.UpdateTaskResponse, error) {
+func (UnimplementedControlServiceHandler) UpdateTask(context.Context, *v1.ControlServiceUpdateTaskRequest) (*v1.UpdateTaskResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.UpdateTask is not implemented"))
 }
 
-func (UnimplementedControlServiceHandler) ActivateTask(context.Context, *v1.ActivateTaskRequest) (*v1.ActivateTaskResponse, error) {
+func (UnimplementedControlServiceHandler) ActivateTask(context.Context, *v1.ControlServiceActivateTaskRequest) (*v1.ActivateTaskResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.ActivateTask is not implemented"))
 }
 
-func (UnimplementedControlServiceHandler) SuspendTask(context.Context, *v1.SuspendTaskRequest) (*v1.SuspendTaskResponse, error) {
+func (UnimplementedControlServiceHandler) SuspendTask(context.Context, *v1.ControlServiceSuspendTaskRequest) (*v1.SuspendTaskResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.SuspendTask is not implemented"))
 }
 
-func (UnimplementedControlServiceHandler) DeleteTask(context.Context, *v1.DeleteTaskRequest) (*v1.DeleteTaskResponse, error) {
+func (UnimplementedControlServiceHandler) DeleteTask(context.Context, *v1.ControlServiceDeleteTaskRequest) (*v1.DeleteTaskResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.DeleteTask is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) BatchTaskOperations(context.Context, *v1.BatchTaskOperationsRequest) (*v1.BatchTaskOperationsResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task.v1.ControlService.BatchTaskOperations is not implemented"))
 }

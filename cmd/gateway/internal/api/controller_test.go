@@ -32,46 +32,67 @@ type taskState struct {
 	LifecycleStatus task.LifecycleStatus
 }
 
-func mustCreateTask(t *testing.T, c *controller, taskID, executorID, callbackURL string, input []byte) {
+func mustCreateTask(
+	t *testing.T,
+	c *controller,
+	revision uint64,
+	taskID, executorID, callbackURL string,
+	input []byte,
+) {
 	t.Helper()
-	_, err := c.CreateTask(context.Background(), &taskv1.CreateTaskRequest{
-		TaskId:      taskID,
-		ExecutorId:  executorID,
-		CallbackUrl: callbackURL,
-		Parameters:  &taskv1.TaskParameters{Input: input},
+	_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+		Revision: revision,
+		Request: &taskv1.CreateTaskRequest{
+			TaskId:      taskID,
+			ExecutorId:  executorID,
+			CallbackUrl: callbackURL,
+			Parameters:  &taskv1.TaskParameters{Input: input},
+		},
 	})
 	require.NoError(t, err)
 }
 
-func mustUpdateTask(t *testing.T, c *controller, taskID string, input []byte) {
+func mustUpdateTask(t *testing.T, c *controller, revision uint64, taskID string, input []byte) {
 	t.Helper()
-	_, err := c.UpdateTask(context.Background(), &taskv1.UpdateTaskRequest{
-		TaskId:     taskID,
-		Parameters: &taskv1.TaskParameters{Input: input},
+	_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
+		Revision: revision,
+		Request: &taskv1.UpdateTaskRequest{
+			TaskId:     taskID,
+			Parameters: &taskv1.TaskParameters{Input: input},
+		},
 	})
 	require.NoError(t, err)
 }
 
-func mustActivateTask(t *testing.T, c *controller, taskID string) {
+func mustActivateTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.ActivateTask(context.Background(), &taskv1.ActivateTaskRequest{
-		TaskId: taskID,
+	_, err := c.ActivateTask(context.Background(), &taskv1.ControlServiceActivateTaskRequest{
+		Revision: revision,
+		Request: &taskv1.ActivateTaskRequest{
+			TaskId: taskID,
+		},
 	})
 	require.NoError(t, err)
 }
 
-func mustSuspendTask(t *testing.T, c *controller, taskID string) {
+func mustSuspendTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.SuspendTask(context.Background(), &taskv1.SuspendTaskRequest{
-		TaskId: taskID,
+	_, err := c.SuspendTask(context.Background(), &taskv1.ControlServiceSuspendTaskRequest{
+		Revision: revision,
+		Request: &taskv1.SuspendTaskRequest{
+			TaskId: taskID,
+		},
 	})
 	require.NoError(t, err)
 }
 
-func mustDeleteTask(t *testing.T, c *controller, taskID string) {
+func mustDeleteTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.DeleteTask(context.Background(), &taskv1.DeleteTaskRequest{
-		TaskId: taskID,
+	_, err := c.DeleteTask(context.Background(), &taskv1.ControlServiceDeleteTaskRequest{
+		Revision: revision,
+		Request: &taskv1.DeleteTaskRequest{
+			TaskId: taskID,
+		},
 	})
 	require.NoError(t, err)
 }
@@ -125,9 +146,6 @@ func setTaskLifecycleStatus(t *testing.T, db dbutil.DbRoot, taskID string, statu
 	require.NoError(t, err)
 }
 
-// Note: nested "idempotency" subtests intentionally reuse state established by
-// the "functionality" parent subtest. Keep these subtests sequential
-// (do not call t.Parallel) so ordering stays deterministic.
 func TestControllerCreateTask(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
@@ -141,7 +159,7 @@ func TestControllerCreateTask(t *testing.T) {
 				Input:           []byte("payload-a"),
 				LifecycleStatus: task.LifecycleStatusSuspended,
 			}
-			mustCreateTask(t, c, taskID, expected.ExecutorID, expected.CallbackURL, expected.Input)
+			mustCreateTask(t, c, 1, taskID, expected.ExecutorID, expected.CallbackURL, expected.Input)
 
 			state, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
@@ -149,7 +167,7 @@ func TestControllerCreateTask(t *testing.T) {
 
 			t.Run("idempotency", func(t *testing.T) {
 				// Replay with different values should be a no-op.
-				mustCreateTask(t, c, taskID, "executor-new", "https://example.com/new", []byte("new"))
+				mustCreateTask(t, c, 1, taskID, "executor-new", "https://example.com/new", []byte("new"))
 
 				state, exists := readTaskState(t, db, taskID)
 				require.True(t, exists)
@@ -165,8 +183,8 @@ func TestControllerUpdateTask(t *testing.T) {
 
 		t.Run("functionality", func(t *testing.T) {
 			taskID := "update-functional"
-			mustCreateTask(t, c, taskID, "executor-a", "https://example.com/a", []byte("before"))
-			mustUpdateTask(t, c, taskID, []byte("after"))
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("before"))
+			mustUpdateTask(t, c, 2, taskID, []byte("after"))
 
 			expected, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
@@ -176,7 +194,7 @@ func TestControllerUpdateTask(t *testing.T) {
 			require.Equal(t, task.LifecycleStatusSuspended, expected.LifecycleStatus)
 
 			t.Run("idempotency", func(t *testing.T) {
-				mustUpdateTask(t, c, taskID, []byte("after"))
+				mustUpdateTask(t, c, 2, taskID, []byte("after"))
 
 				state, exists := readTaskState(t, db, taskID)
 				require.True(t, exists)
@@ -192,15 +210,15 @@ func TestControllerActivateTask(t *testing.T) {
 
 		t.Run("functionality", func(t *testing.T) {
 			taskID := "activate-functional"
-			mustCreateTask(t, c, taskID, "executor-a", "https://example.com/a", []byte("payload"))
-			mustActivateTask(t, c, taskID)
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+			mustActivateTask(t, c, 2, taskID)
 
 			state, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
 			require.Equal(t, task.LifecycleStatusPending, state.LifecycleStatus)
 
 			t.Run("idempotency", func(t *testing.T) {
-				mustActivateTask(t, c, taskID)
+				mustActivateTask(t, c, 2, taskID)
 
 				state, exists := readTaskState(t, db, taskID)
 				require.True(t, exists)
@@ -216,16 +234,16 @@ func TestControllerSuspendTask(t *testing.T) {
 
 		t.Run("functionality", func(t *testing.T) {
 			taskID := "suspend-functional"
-			mustCreateTask(t, c, taskID, "executor-a", "https://example.com/a", []byte("payload"))
-			mustActivateTask(t, c, taskID)
-			mustSuspendTask(t, c, taskID)
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+			mustActivateTask(t, c, 2, taskID)
+			mustSuspendTask(t, c, 3, taskID)
 
 			state, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
 			require.Equal(t, task.LifecycleStatusSuspended, state.LifecycleStatus)
 
 			t.Run("idempotency", func(t *testing.T) {
-				mustSuspendTask(t, c, taskID)
+				mustSuspendTask(t, c, 3, taskID)
 
 				state, exists := readTaskState(t, db, taskID)
 				require.True(t, exists)
@@ -241,21 +259,21 @@ func TestControllerDeleteTask(t *testing.T) {
 
 		t.Run("functionality", func(t *testing.T) {
 			taskID := "delete-functional"
-			mustCreateTask(t, c, taskID, "executor-a", "https://example.com/a", []byte("payload"))
-			mustActivateTask(t, c, taskID)
-			mustDeleteTask(t, c, taskID)
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+			mustActivateTask(t, c, 2, taskID)
+			mustDeleteTask(t, c, 3, taskID)
 
 			_, exists := readTaskState(t, db, taskID)
 			require.False(t, exists)
 
 			t.Run("idempotency", func(t *testing.T) {
 				// Repeated delete on the same task should be a no-op.
-				mustDeleteTask(t, c, taskID)
+				mustDeleteTask(t, c, 3, taskID)
 				_, exists := readTaskState(t, db, taskID)
 				require.False(t, exists)
 
 				// Deleting an unknown task should also be a no-op.
-				mustDeleteTask(t, c, "delete-missing")
+				mustDeleteTask(t, c, 1, "delete-missing")
 			})
 		})
 	})
@@ -266,12 +284,160 @@ func TestControllerActivateTask_RunningTaskIsNoOp(t *testing.T) {
 		c := newTestController(t, db)
 		taskID := "activate-running-noop"
 
-		mustCreateTask(t, c, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+		mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
 		setTaskLifecycleStatus(t, db, taskID, task.LifecycleStatusRunning)
-		mustActivateTask(t, c, taskID)
+		mustActivateTask(t, c, 2, taskID)
 
 		state, exists := readTaskState(t, db, taskID)
 		require.True(t, exists)
 		require.Equal(t, task.LifecycleStatusRunning, state.LifecycleStatus)
+	})
+}
+
+func TestControllerRevisionRules(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+
+		t.Run("create revision must be one", func(t *testing.T) {
+			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+				Revision: 2,
+				Request: &taskv1.CreateTaskRequest{
+					TaskId:      "bad-create-revision",
+					ExecutorId:  "executor-a",
+					CallbackUrl: "https://example.com/a",
+					Parameters:  &taskv1.TaskParameters{Input: []byte("payload")},
+				},
+			})
+			require.Error(t, err)
+			require.ErrorIs(t, err, task.ErrCreateRevisionMustBeOne)
+		})
+
+		t.Run("revision gaps fail", func(t *testing.T) {
+			taskID := "revision-gap"
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+
+			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
+				Revision: 3,
+				Request: &taskv1.UpdateTaskRequest{
+					TaskId:     taskID,
+					Parameters: &taskv1.TaskParameters{Input: []byte("payload-new")},
+				},
+			})
+			require.Error(t, err)
+			require.ErrorIs(t, err, task.ErrRevisionGap)
+		})
+
+		t.Run("stale revisions are no-op success", func(t *testing.T) {
+			taskID := "stale-revision"
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("v1"))
+			mustUpdateTask(t, c, 2, taskID, []byte("v2"))
+
+			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
+				Revision: 1,
+				Request: &taskv1.UpdateTaskRequest{
+					TaskId:     taskID,
+					Parameters: &taskv1.TaskParameters{Input: []byte("stale")},
+				},
+			})
+			require.NoError(t, err)
+
+			state, exists := readTaskState(t, db, taskID)
+			require.True(t, exists)
+			require.Equal(t, []byte("v2"), state.Input)
+		})
+	})
+}
+
+func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+
+		resp, err := c.BatchTaskOperations(context.Background(), &taskv1.BatchTaskOperationsRequest{
+			Operations: []*taskv1.BatchTaskOperation{
+				{
+					Operation: &taskv1.BatchTaskOperation_CreateTask{
+						CreateTask: &taskv1.ControlServiceCreateTaskRequest{
+							Revision: 1,
+							Request: &taskv1.CreateTaskRequest{
+								TaskId:      "batch-task-a",
+								ExecutorId:  "executor-a",
+								CallbackUrl: "https://example.com/a",
+								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							},
+						},
+					},
+				},
+				{
+					Operation: &taskv1.BatchTaskOperation_CreateTask{
+						CreateTask: &taskv1.ControlServiceCreateTaskRequest{
+							Revision: 2,
+							Request: &taskv1.CreateTaskRequest{
+								TaskId:      "batch-task-b",
+								ExecutorId:  "executor-b",
+								CallbackUrl: "https://example.com/b",
+								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							},
+						},
+					},
+				},
+				{
+					Operation: &taskv1.BatchTaskOperation_UpdateTask{
+						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+							Revision: 2,
+							Request: &taskv1.UpdateTaskRequest{
+								TaskId:     "batch-task-a",
+								Parameters: &taskv1.TaskParameters{Input: []byte("v2")},
+							},
+						},
+					},
+				},
+				{
+					Operation: &taskv1.BatchTaskOperation_UpdateTask{
+						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+							Revision: 4,
+							Request: &taskv1.UpdateTaskRequest{
+								TaskId:     "batch-task-a",
+								Parameters: &taskv1.TaskParameters{Input: []byte("v4")},
+							},
+						},
+					},
+				},
+				{
+					Operation: &taskv1.BatchTaskOperation_UpdateTask{
+						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+							Revision: 2,
+							Request: &taskv1.UpdateTaskRequest{
+								TaskId:     "batch-task-a",
+								Parameters: &taskv1.TaskParameters{Input: []byte("duplicate")},
+							},
+						},
+					},
+				},
+				{
+					Operation: &taskv1.BatchTaskOperation_DeleteTask{
+						DeleteTask: &taskv1.ControlServiceDeleteTaskRequest{
+							Revision: 1,
+							Request: &taskv1.DeleteTaskRequest{
+								TaskId: "batch-missing-delete",
+							},
+						},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, resp.GetResults(), 6)
+
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[0].GetStatus())
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, resp.GetResults()[1].GetStatus())
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[2].GetStatus())
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, resp.GetResults()[3].GetStatus())
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE, resp.GetResults()[4].GetStatus())
+		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[5].GetStatus())
+
+		state, exists := readTaskState(t, db, "batch-task-a")
+		require.True(t, exists)
+		require.Equal(t, []byte("v2"), state.Input)
+		require.Equal(t, task.LifecycleStatusSuspended, state.LifecycleStatus)
 	})
 }

@@ -22,6 +22,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type BatchTaskOperationStatus int32
+
+const (
+	BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_UNSPECIFIED         BatchTaskOperationStatus = 0
+	BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED             BatchTaskOperationStatus = 1
+	BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE           BatchTaskOperationStatus = 2
+	BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION BatchTaskOperationStatus = 3
+	BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_ERROR               BatchTaskOperationStatus = 4
+)
+
+// Enum value maps for BatchTaskOperationStatus.
+var (
+	BatchTaskOperationStatus_name = map[int32]string{
+		0: "BATCH_TASK_OPERATION_STATUS_UNSPECIFIED",
+		1: "BATCH_TASK_OPERATION_STATUS_APPLIED",
+		2: "BATCH_TASK_OPERATION_STATUS_DUPLICATE",
+		3: "BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION",
+		4: "BATCH_TASK_OPERATION_STATUS_ERROR",
+	}
+	BatchTaskOperationStatus_value = map[string]int32{
+		"BATCH_TASK_OPERATION_STATUS_UNSPECIFIED":         0,
+		"BATCH_TASK_OPERATION_STATUS_APPLIED":             1,
+		"BATCH_TASK_OPERATION_STATUS_DUPLICATE":           2,
+		"BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION": 3,
+		"BATCH_TASK_OPERATION_STATUS_ERROR":               4,
+	}
+)
+
+func (x BatchTaskOperationStatus) Enum() *BatchTaskOperationStatus {
+	p := new(BatchTaskOperationStatus)
+	*p = x
+	return p
+}
+
+func (x BatchTaskOperationStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BatchTaskOperationStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_task_v1_control_proto_enumTypes[0].Descriptor()
+}
+
+func (BatchTaskOperationStatus) Type() protoreflect.EnumType {
+	return &file_task_v1_control_proto_enumTypes[0]
+}
+
+func (x BatchTaskOperationStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BatchTaskOperationStatus.Descriptor instead.
+func (BatchTaskOperationStatus) EnumDescriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{0}
+}
+
 type TaskParameters struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Input         []byte                 `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`
@@ -67,11 +122,13 @@ func (x *TaskParameters) GetInput() []byte {
 }
 
 type CreateTaskRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ExecutorId    string                 `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	CallbackUrl   string                 `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
-	Parameters    *TaskParameters        `protobuf:"bytes,4,opt,name=parameters,proto3" json:"parameters,omitempty"` // todo: add the ability to connect this task to a trace
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// This value should be randomly generated.
+	// This is to reduce hotspots on the database.
+	TaskId        string          `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ExecutorId    string          `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
+	CallbackUrl   string          `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	Parameters    *TaskParameters `protobuf:"bytes,4,opt,name=parameters,proto3" json:"parameters,omitempty"` // todo: add the ability to connect this task to a trace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -170,6 +227,59 @@ func (*CreateTaskResponse) Descriptor() ([]byte, []int) {
 	return file_task_v1_control_proto_rawDescGZIP(), []int{2}
 }
 
+type ControlServiceCreateTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonically increasing per task. Must be 1 for task creation.
+	Revision      uint64             `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Request       *CreateTaskRequest `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ControlServiceCreateTaskRequest) Reset() {
+	*x = ControlServiceCreateTaskRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlServiceCreateTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlServiceCreateTaskRequest) ProtoMessage() {}
+
+func (x *ControlServiceCreateTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlServiceCreateTaskRequest.ProtoReflect.Descriptor instead.
+func (*ControlServiceCreateTaskRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ControlServiceCreateTaskRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ControlServiceCreateTaskRequest) GetRequest() *CreateTaskRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
 type UpdateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -180,7 +290,7 @@ type UpdateTaskRequest struct {
 
 func (x *UpdateTaskRequest) Reset() {
 	*x = UpdateTaskRequest{}
-	mi := &file_task_v1_control_proto_msgTypes[3]
+	mi := &file_task_v1_control_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -192,7 +302,7 @@ func (x *UpdateTaskRequest) String() string {
 func (*UpdateTaskRequest) ProtoMessage() {}
 
 func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[3]
+	mi := &file_task_v1_control_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -205,7 +315,7 @@ func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTaskRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{3}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *UpdateTaskRequest) GetTaskId() string {
@@ -230,7 +340,7 @@ type UpdateTaskResponse struct {
 
 func (x *UpdateTaskResponse) Reset() {
 	*x = UpdateTaskResponse{}
-	mi := &file_task_v1_control_proto_msgTypes[4]
+	mi := &file_task_v1_control_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -242,7 +352,7 @@ func (x *UpdateTaskResponse) String() string {
 func (*UpdateTaskResponse) ProtoMessage() {}
 
 func (x *UpdateTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[4]
+	mi := &file_task_v1_control_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -255,7 +365,60 @@ func (x *UpdateTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTaskResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTaskResponse) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{4}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{5}
+}
+
+type ControlServiceUpdateTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonically increasing per task.
+	Revision      uint64             `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Request       *UpdateTaskRequest `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ControlServiceUpdateTaskRequest) Reset() {
+	*x = ControlServiceUpdateTaskRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlServiceUpdateTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlServiceUpdateTaskRequest) ProtoMessage() {}
+
+func (x *ControlServiceUpdateTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlServiceUpdateTaskRequest.ProtoReflect.Descriptor instead.
+func (*ControlServiceUpdateTaskRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ControlServiceUpdateTaskRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ControlServiceUpdateTaskRequest) GetRequest() *UpdateTaskRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
 }
 
 type ActivateTaskRequest struct {
@@ -267,7 +430,7 @@ type ActivateTaskRequest struct {
 
 func (x *ActivateTaskRequest) Reset() {
 	*x = ActivateTaskRequest{}
-	mi := &file_task_v1_control_proto_msgTypes[5]
+	mi := &file_task_v1_control_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -279,7 +442,7 @@ func (x *ActivateTaskRequest) String() string {
 func (*ActivateTaskRequest) ProtoMessage() {}
 
 func (x *ActivateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[5]
+	mi := &file_task_v1_control_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -292,7 +455,7 @@ func (x *ActivateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateTaskRequest.ProtoReflect.Descriptor instead.
 func (*ActivateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{5}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ActivateTaskRequest) GetTaskId() string {
@@ -310,7 +473,7 @@ type ActivateTaskResponse struct {
 
 func (x *ActivateTaskResponse) Reset() {
 	*x = ActivateTaskResponse{}
-	mi := &file_task_v1_control_proto_msgTypes[6]
+	mi := &file_task_v1_control_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -322,7 +485,7 @@ func (x *ActivateTaskResponse) String() string {
 func (*ActivateTaskResponse) ProtoMessage() {}
 
 func (x *ActivateTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[6]
+	mi := &file_task_v1_control_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -335,7 +498,60 @@ func (x *ActivateTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateTaskResponse.ProtoReflect.Descriptor instead.
 func (*ActivateTaskResponse) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{6}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{8}
+}
+
+type ControlServiceActivateTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonically increasing per task.
+	Revision      uint64               `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Request       *ActivateTaskRequest `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ControlServiceActivateTaskRequest) Reset() {
+	*x = ControlServiceActivateTaskRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlServiceActivateTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlServiceActivateTaskRequest) ProtoMessage() {}
+
+func (x *ControlServiceActivateTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlServiceActivateTaskRequest.ProtoReflect.Descriptor instead.
+func (*ControlServiceActivateTaskRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ControlServiceActivateTaskRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ControlServiceActivateTaskRequest) GetRequest() *ActivateTaskRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
 }
 
 type SuspendTaskRequest struct {
@@ -347,7 +563,7 @@ type SuspendTaskRequest struct {
 
 func (x *SuspendTaskRequest) Reset() {
 	*x = SuspendTaskRequest{}
-	mi := &file_task_v1_control_proto_msgTypes[7]
+	mi := &file_task_v1_control_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -359,7 +575,7 @@ func (x *SuspendTaskRequest) String() string {
 func (*SuspendTaskRequest) ProtoMessage() {}
 
 func (x *SuspendTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[7]
+	mi := &file_task_v1_control_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -372,7 +588,7 @@ func (x *SuspendTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspendTaskRequest.ProtoReflect.Descriptor instead.
 func (*SuspendTaskRequest) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{7}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SuspendTaskRequest) GetTaskId() string {
@@ -390,7 +606,7 @@ type SuspendTaskResponse struct {
 
 func (x *SuspendTaskResponse) Reset() {
 	*x = SuspendTaskResponse{}
-	mi := &file_task_v1_control_proto_msgTypes[8]
+	mi := &file_task_v1_control_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -402,7 +618,7 @@ func (x *SuspendTaskResponse) String() string {
 func (*SuspendTaskResponse) ProtoMessage() {}
 
 func (x *SuspendTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[8]
+	mi := &file_task_v1_control_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -415,7 +631,60 @@ func (x *SuspendTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspendTaskResponse.ProtoReflect.Descriptor instead.
 func (*SuspendTaskResponse) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{8}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{11}
+}
+
+type ControlServiceSuspendTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonically increasing per task.
+	Revision      uint64              `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Request       *SuspendTaskRequest `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ControlServiceSuspendTaskRequest) Reset() {
+	*x = ControlServiceSuspendTaskRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlServiceSuspendTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlServiceSuspendTaskRequest) ProtoMessage() {}
+
+func (x *ControlServiceSuspendTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlServiceSuspendTaskRequest.ProtoReflect.Descriptor instead.
+func (*ControlServiceSuspendTaskRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ControlServiceSuspendTaskRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ControlServiceSuspendTaskRequest) GetRequest() *SuspendTaskRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
 }
 
 type DeleteTaskRequest struct {
@@ -427,7 +696,7 @@ type DeleteTaskRequest struct {
 
 func (x *DeleteTaskRequest) Reset() {
 	*x = DeleteTaskRequest{}
-	mi := &file_task_v1_control_proto_msgTypes[9]
+	mi := &file_task_v1_control_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -439,7 +708,7 @@ func (x *DeleteTaskRequest) String() string {
 func (*DeleteTaskRequest) ProtoMessage() {}
 
 func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[9]
+	mi := &file_task_v1_control_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -452,7 +721,7 @@ func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTaskRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTaskRequest) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{9}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeleteTaskRequest) GetTaskId() string {
@@ -470,7 +739,7 @@ type DeleteTaskResponse struct {
 
 func (x *DeleteTaskResponse) Reset() {
 	*x = DeleteTaskResponse{}
-	mi := &file_task_v1_control_proto_msgTypes[10]
+	mi := &file_task_v1_control_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +751,7 @@ func (x *DeleteTaskResponse) String() string {
 func (*DeleteTaskResponse) ProtoMessage() {}
 
 func (x *DeleteTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_control_proto_msgTypes[10]
+	mi := &file_task_v1_control_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +764,432 @@ func (x *DeleteTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTaskResponse.ProtoReflect.Descriptor instead.
 func (*DeleteTaskResponse) Descriptor() ([]byte, []int) {
-	return file_task_v1_control_proto_rawDescGZIP(), []int{10}
+	return file_task_v1_control_proto_rawDescGZIP(), []int{14}
+}
+
+type ControlServiceDeleteTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Monotonically increasing per task.
+	Revision      uint64             `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Request       *DeleteTaskRequest `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ControlServiceDeleteTaskRequest) Reset() {
+	*x = ControlServiceDeleteTaskRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlServiceDeleteTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlServiceDeleteTaskRequest) ProtoMessage() {}
+
+func (x *ControlServiceDeleteTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlServiceDeleteTaskRequest.ProtoReflect.Descriptor instead.
+func (*ControlServiceDeleteTaskRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ControlServiceDeleteTaskRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ControlServiceDeleteTaskRequest) GetRequest() *DeleteTaskRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+type BatchTaskOperationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Operations    []*BatchTaskOperation  `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchTaskOperationsRequest) Reset() {
+	*x = BatchTaskOperationsRequest{}
+	mi := &file_task_v1_control_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchTaskOperationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchTaskOperationsRequest) ProtoMessage() {}
+
+func (x *BatchTaskOperationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchTaskOperationsRequest.ProtoReflect.Descriptor instead.
+func (*BatchTaskOperationsRequest) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *BatchTaskOperationsRequest) GetOperations() []*BatchTaskOperation {
+	if x != nil {
+		return x.Operations
+	}
+	return nil
+}
+
+type BatchTaskOperation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Operation:
+	//
+	//	*BatchTaskOperation_CreateTask
+	//	*BatchTaskOperation_UpdateTask
+	//	*BatchTaskOperation_ActivateTask
+	//	*BatchTaskOperation_SuspendTask
+	//	*BatchTaskOperation_DeleteTask
+	Operation     isBatchTaskOperation_Operation `protobuf_oneof:"operation"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchTaskOperation) Reset() {
+	*x = BatchTaskOperation{}
+	mi := &file_task_v1_control_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchTaskOperation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchTaskOperation) ProtoMessage() {}
+
+func (x *BatchTaskOperation) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchTaskOperation.ProtoReflect.Descriptor instead.
+func (*BatchTaskOperation) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *BatchTaskOperation) GetOperation() isBatchTaskOperation_Operation {
+	if x != nil {
+		return x.Operation
+	}
+	return nil
+}
+
+func (x *BatchTaskOperation) GetCreateTask() *ControlServiceCreateTaskRequest {
+	if x != nil {
+		if x, ok := x.Operation.(*BatchTaskOperation_CreateTask); ok {
+			return x.CreateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperation) GetUpdateTask() *ControlServiceUpdateTaskRequest {
+	if x != nil {
+		if x, ok := x.Operation.(*BatchTaskOperation_UpdateTask); ok {
+			return x.UpdateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperation) GetActivateTask() *ControlServiceActivateTaskRequest {
+	if x != nil {
+		if x, ok := x.Operation.(*BatchTaskOperation_ActivateTask); ok {
+			return x.ActivateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperation) GetSuspendTask() *ControlServiceSuspendTaskRequest {
+	if x != nil {
+		if x, ok := x.Operation.(*BatchTaskOperation_SuspendTask); ok {
+			return x.SuspendTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperation) GetDeleteTask() *ControlServiceDeleteTaskRequest {
+	if x != nil {
+		if x, ok := x.Operation.(*BatchTaskOperation_DeleteTask); ok {
+			return x.DeleteTask
+		}
+	}
+	return nil
+}
+
+type isBatchTaskOperation_Operation interface {
+	isBatchTaskOperation_Operation()
+}
+
+type BatchTaskOperation_CreateTask struct {
+	CreateTask *ControlServiceCreateTaskRequest `protobuf:"bytes,1,opt,name=create_task,json=createTask,proto3,oneof"`
+}
+
+type BatchTaskOperation_UpdateTask struct {
+	UpdateTask *ControlServiceUpdateTaskRequest `protobuf:"bytes,2,opt,name=update_task,json=updateTask,proto3,oneof"`
+}
+
+type BatchTaskOperation_ActivateTask struct {
+	ActivateTask *ControlServiceActivateTaskRequest `protobuf:"bytes,3,opt,name=activate_task,json=activateTask,proto3,oneof"`
+}
+
+type BatchTaskOperation_SuspendTask struct {
+	SuspendTask *ControlServiceSuspendTaskRequest `protobuf:"bytes,4,opt,name=suspend_task,json=suspendTask,proto3,oneof"`
+}
+
+type BatchTaskOperation_DeleteTask struct {
+	DeleteTask *ControlServiceDeleteTaskRequest `protobuf:"bytes,5,opt,name=delete_task,json=deleteTask,proto3,oneof"`
+}
+
+func (*BatchTaskOperation_CreateTask) isBatchTaskOperation_Operation() {}
+
+func (*BatchTaskOperation_UpdateTask) isBatchTaskOperation_Operation() {}
+
+func (*BatchTaskOperation_ActivateTask) isBatchTaskOperation_Operation() {}
+
+func (*BatchTaskOperation_SuspendTask) isBatchTaskOperation_Operation() {}
+
+func (*BatchTaskOperation_DeleteTask) isBatchTaskOperation_Operation() {}
+
+type BatchTaskOperationResult struct {
+	state          protoimpl.MessageState   `protogen:"open.v1"`
+	OperationIndex uint32                   `protobuf:"varint,1,opt,name=operation_index,json=operationIndex,proto3" json:"operation_index,omitempty"`
+	Status         BatchTaskOperationStatus `protobuf:"varint,2,opt,name=status,proto3,enum=task.v1.BatchTaskOperationStatus" json:"status,omitempty"`
+	ErrorMessage   string                   `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	// Types that are valid to be assigned to Response:
+	//
+	//	*BatchTaskOperationResult_CreateTask
+	//	*BatchTaskOperationResult_UpdateTask
+	//	*BatchTaskOperationResult_ActivateTask
+	//	*BatchTaskOperationResult_SuspendTask
+	//	*BatchTaskOperationResult_DeleteTask
+	Response      isBatchTaskOperationResult_Response `protobuf_oneof:"response"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchTaskOperationResult) Reset() {
+	*x = BatchTaskOperationResult{}
+	mi := &file_task_v1_control_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchTaskOperationResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchTaskOperationResult) ProtoMessage() {}
+
+func (x *BatchTaskOperationResult) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchTaskOperationResult.ProtoReflect.Descriptor instead.
+func (*BatchTaskOperationResult) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *BatchTaskOperationResult) GetOperationIndex() uint32 {
+	if x != nil {
+		return x.OperationIndex
+	}
+	return 0
+}
+
+func (x *BatchTaskOperationResult) GetStatus() BatchTaskOperationStatus {
+	if x != nil {
+		return x.Status
+	}
+	return BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_UNSPECIFIED
+}
+
+func (x *BatchTaskOperationResult) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *BatchTaskOperationResult) GetResponse() isBatchTaskOperationResult_Response {
+	if x != nil {
+		return x.Response
+	}
+	return nil
+}
+
+func (x *BatchTaskOperationResult) GetCreateTask() *CreateTaskResponse {
+	if x != nil {
+		if x, ok := x.Response.(*BatchTaskOperationResult_CreateTask); ok {
+			return x.CreateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperationResult) GetUpdateTask() *UpdateTaskResponse {
+	if x != nil {
+		if x, ok := x.Response.(*BatchTaskOperationResult_UpdateTask); ok {
+			return x.UpdateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperationResult) GetActivateTask() *ActivateTaskResponse {
+	if x != nil {
+		if x, ok := x.Response.(*BatchTaskOperationResult_ActivateTask); ok {
+			return x.ActivateTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperationResult) GetSuspendTask() *SuspendTaskResponse {
+	if x != nil {
+		if x, ok := x.Response.(*BatchTaskOperationResult_SuspendTask); ok {
+			return x.SuspendTask
+		}
+	}
+	return nil
+}
+
+func (x *BatchTaskOperationResult) GetDeleteTask() *DeleteTaskResponse {
+	if x != nil {
+		if x, ok := x.Response.(*BatchTaskOperationResult_DeleteTask); ok {
+			return x.DeleteTask
+		}
+	}
+	return nil
+}
+
+type isBatchTaskOperationResult_Response interface {
+	isBatchTaskOperationResult_Response()
+}
+
+type BatchTaskOperationResult_CreateTask struct {
+	CreateTask *CreateTaskResponse `protobuf:"bytes,10,opt,name=create_task,json=createTask,proto3,oneof"`
+}
+
+type BatchTaskOperationResult_UpdateTask struct {
+	UpdateTask *UpdateTaskResponse `protobuf:"bytes,11,opt,name=update_task,json=updateTask,proto3,oneof"`
+}
+
+type BatchTaskOperationResult_ActivateTask struct {
+	ActivateTask *ActivateTaskResponse `protobuf:"bytes,12,opt,name=activate_task,json=activateTask,proto3,oneof"`
+}
+
+type BatchTaskOperationResult_SuspendTask struct {
+	SuspendTask *SuspendTaskResponse `protobuf:"bytes,13,opt,name=suspend_task,json=suspendTask,proto3,oneof"`
+}
+
+type BatchTaskOperationResult_DeleteTask struct {
+	DeleteTask *DeleteTaskResponse `protobuf:"bytes,14,opt,name=delete_task,json=deleteTask,proto3,oneof"`
+}
+
+func (*BatchTaskOperationResult_CreateTask) isBatchTaskOperationResult_Response() {}
+
+func (*BatchTaskOperationResult_UpdateTask) isBatchTaskOperationResult_Response() {}
+
+func (*BatchTaskOperationResult_ActivateTask) isBatchTaskOperationResult_Response() {}
+
+func (*BatchTaskOperationResult_SuspendTask) isBatchTaskOperationResult_Response() {}
+
+func (*BatchTaskOperationResult_DeleteTask) isBatchTaskOperationResult_Response() {}
+
+type BatchTaskOperationsResponse struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Results       []*BatchTaskOperationResult `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchTaskOperationsResponse) Reset() {
+	*x = BatchTaskOperationsResponse{}
+	mi := &file_task_v1_control_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchTaskOperationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchTaskOperationsResponse) ProtoMessage() {}
+
+func (x *BatchTaskOperationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_control_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchTaskOperationsResponse.ProtoReflect.Descriptor instead.
+func (*BatchTaskOperationsResponse) Descriptor() ([]byte, []int) {
+	return file_task_v1_control_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *BatchTaskOperationsResponse) GetResults() []*BatchTaskOperationResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
 }
 
 var File_task_v1_control_proto protoreflect.FileDescriptor
@@ -513,31 +1207,84 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"parameters\x18\x04 \x01(\v2\x17.task.v1.TaskParametersR\n" +
 	"parameters\"\x14\n" +
-	"\x12CreateTaskResponse\"e\n" +
+	"\x12CreateTaskResponse\"s\n" +
+	"\x1fControlServiceCreateTaskRequest\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +
+	"\arequest\x18\x02 \x01(\v2\x1a.task.v1.CreateTaskRequestR\arequest\"e\n" +
 	"\x11UpdateTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x127\n" +
 	"\n" +
 	"parameters\x18\x02 \x01(\v2\x17.task.v1.TaskParametersR\n" +
 	"parameters\"\x14\n" +
-	"\x12UpdateTaskResponse\".\n" +
+	"\x12UpdateTaskResponse\"s\n" +
+	"\x1fControlServiceUpdateTaskRequest\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +
+	"\arequest\x18\x02 \x01(\v2\x1a.task.v1.UpdateTaskRequestR\arequest\".\n" +
 	"\x13ActivateTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"\x16\n" +
-	"\x14ActivateTaskResponse\"-\n" +
+	"\x14ActivateTaskResponse\"w\n" +
+	"!ControlServiceActivateTaskRequest\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x126\n" +
+	"\arequest\x18\x02 \x01(\v2\x1c.task.v1.ActivateTaskRequestR\arequest\"-\n" +
 	"\x12SuspendTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"\x15\n" +
-	"\x13SuspendTaskResponse\",\n" +
+	"\x13SuspendTaskResponse\"u\n" +
+	" ControlServiceSuspendTaskRequest\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x125\n" +
+	"\arequest\x18\x02 \x01(\v2\x1b.task.v1.SuspendTaskRequestR\arequest\",\n" +
 	"\x11DeleteTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"\x14\n" +
-	"\x12DeleteTaskResponse2\xfc\x02\n" +
-	"\x0eControlService\x12E\n" +
+	"\x12DeleteTaskResponse\"s\n" +
+	"\x1fControlServiceDeleteTaskRequest\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +
+	"\arequest\x18\x02 \x01(\v2\x1a.task.v1.DeleteTaskRequestR\arequest\"Y\n" +
+	"\x1aBatchTaskOperationsRequest\x12;\n" +
 	"\n" +
-	"CreateTask\x12\x1a.task.v1.CreateTaskRequest\x1a\x1b.task.v1.CreateTaskResponse\x12E\n" +
+	"operations\x18\x01 \x03(\v2\x1b.task.v1.BatchTaskOperationR\n" +
+	"operations\"\xab\x03\n" +
+	"\x12BatchTaskOperation\x12K\n" +
+	"\vcreate_task\x18\x01 \x01(\v2(.task.v1.ControlServiceCreateTaskRequestH\x00R\n" +
+	"createTask\x12K\n" +
+	"\vupdate_task\x18\x02 \x01(\v2(.task.v1.ControlServiceUpdateTaskRequestH\x00R\n" +
+	"updateTask\x12Q\n" +
+	"\ractivate_task\x18\x03 \x01(\v2*.task.v1.ControlServiceActivateTaskRequestH\x00R\factivateTask\x12N\n" +
+	"\fsuspend_task\x18\x04 \x01(\v2).task.v1.ControlServiceSuspendTaskRequestH\x00R\vsuspendTask\x12K\n" +
+	"\vdelete_task\x18\x05 \x01(\v2(.task.v1.ControlServiceDeleteTaskRequestH\x00R\n" +
+	"deleteTaskB\v\n" +
+	"\toperation\"\xf8\x03\n" +
+	"\x18BatchTaskOperationResult\x12'\n" +
+	"\x0foperation_index\x18\x01 \x01(\rR\x0eoperationIndex\x129\n" +
+	"\x06status\x18\x02 \x01(\x0e2!.task.v1.BatchTaskOperationStatusR\x06status\x12#\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12>\n" +
+	"\vcreate_task\x18\n" +
+	" \x01(\v2\x1b.task.v1.CreateTaskResponseH\x00R\n" +
+	"createTask\x12>\n" +
+	"\vupdate_task\x18\v \x01(\v2\x1b.task.v1.UpdateTaskResponseH\x00R\n" +
+	"updateTask\x12D\n" +
+	"\ractivate_task\x18\f \x01(\v2\x1d.task.v1.ActivateTaskResponseH\x00R\factivateTask\x12A\n" +
+	"\fsuspend_task\x18\r \x01(\v2\x1c.task.v1.SuspendTaskResponseH\x00R\vsuspendTask\x12>\n" +
+	"\vdelete_task\x18\x0e \x01(\v2\x1b.task.v1.DeleteTaskResponseH\x00R\n" +
+	"deleteTaskB\n" +
 	"\n" +
-	"UpdateTask\x12\x1a.task.v1.UpdateTaskRequest\x1a\x1b.task.v1.UpdateTaskResponse\x12K\n" +
-	"\fActivateTask\x12\x1c.task.v1.ActivateTaskRequest\x1a\x1d.task.v1.ActivateTaskResponse\x12H\n" +
-	"\vSuspendTask\x12\x1b.task.v1.SuspendTaskRequest\x1a\x1c.task.v1.SuspendTaskResponse\x12E\n" +
+	"\bresponse\"Z\n" +
+	"\x1bBatchTaskOperationsResponse\x12;\n" +
+	"\aresults\x18\x01 \x03(\v2!.task.v1.BatchTaskOperationResultR\aresults*\xf7\x01\n" +
+	"\x18BatchTaskOperationStatus\x12+\n" +
+	"'BATCH_TASK_OPERATION_STATUS_UNSPECIFIED\x10\x00\x12'\n" +
+	"#BATCH_TASK_OPERATION_STATUS_APPLIED\x10\x01\x12)\n" +
+	"%BATCH_TASK_OPERATION_STATUS_DUPLICATE\x10\x02\x123\n" +
+	"/BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION\x10\x03\x12%\n" +
+	"!BATCH_TASK_OPERATION_STATUS_ERROR\x10\x042\xa4\x04\n" +
+	"\x0eControlService\x12S\n" +
 	"\n" +
-	"DeleteTask\x12\x1a.task.v1.DeleteTaskRequest\x1a\x1b.task.v1.DeleteTaskResponseB\x94\x01\n" +
+	"CreateTask\x12(.task.v1.ControlServiceCreateTaskRequest\x1a\x1b.task.v1.CreateTaskResponse\x12S\n" +
+	"\n" +
+	"UpdateTask\x12(.task.v1.ControlServiceUpdateTaskRequest\x1a\x1b.task.v1.UpdateTaskResponse\x12Y\n" +
+	"\fActivateTask\x12*.task.v1.ControlServiceActivateTaskRequest\x1a\x1d.task.v1.ActivateTaskResponse\x12V\n" +
+	"\vSuspendTask\x12).task.v1.ControlServiceSuspendTaskRequest\x1a\x1c.task.v1.SuspendTaskResponse\x12S\n" +
+	"\n" +
+	"DeleteTask\x12(.task.v1.ControlServiceDeleteTaskRequest\x1a\x1b.task.v1.DeleteTaskResponse\x12`\n" +
+	"\x13BatchTaskOperations\x12#.task.v1.BatchTaskOperationsRequest\x1a$.task.v1.BatchTaskOperationsResponseB\x94\x01\n" +
 	"\vcom.task.v1B\fControlProtoP\x01Z:github.com/futura-platform/f4a/internal/gen/task/v1;taskv1\xa2\x02\x03TXX\xaa\x02\aTask.V1\xca\x02\aTask\\V1\xe2\x02\x13Task\\V1\\GPBMetadata\xea\x02\bTask::V1b\x06proto3"
 
 var (
@@ -552,38 +1299,69 @@ func file_task_v1_control_proto_rawDescGZIP() []byte {
 	return file_task_v1_control_proto_rawDescData
 }
 
-var file_task_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_task_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_task_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_task_v1_control_proto_goTypes = []any{
-	(*TaskParameters)(nil),       // 0: task.v1.TaskParameters
-	(*CreateTaskRequest)(nil),    // 1: task.v1.CreateTaskRequest
-	(*CreateTaskResponse)(nil),   // 2: task.v1.CreateTaskResponse
-	(*UpdateTaskRequest)(nil),    // 3: task.v1.UpdateTaskRequest
-	(*UpdateTaskResponse)(nil),   // 4: task.v1.UpdateTaskResponse
-	(*ActivateTaskRequest)(nil),  // 5: task.v1.ActivateTaskRequest
-	(*ActivateTaskResponse)(nil), // 6: task.v1.ActivateTaskResponse
-	(*SuspendTaskRequest)(nil),   // 7: task.v1.SuspendTaskRequest
-	(*SuspendTaskResponse)(nil),  // 8: task.v1.SuspendTaskResponse
-	(*DeleteTaskRequest)(nil),    // 9: task.v1.DeleteTaskRequest
-	(*DeleteTaskResponse)(nil),   // 10: task.v1.DeleteTaskResponse
+	(BatchTaskOperationStatus)(0),             // 0: task.v1.BatchTaskOperationStatus
+	(*TaskParameters)(nil),                    // 1: task.v1.TaskParameters
+	(*CreateTaskRequest)(nil),                 // 2: task.v1.CreateTaskRequest
+	(*CreateTaskResponse)(nil),                // 3: task.v1.CreateTaskResponse
+	(*ControlServiceCreateTaskRequest)(nil),   // 4: task.v1.ControlServiceCreateTaskRequest
+	(*UpdateTaskRequest)(nil),                 // 5: task.v1.UpdateTaskRequest
+	(*UpdateTaskResponse)(nil),                // 6: task.v1.UpdateTaskResponse
+	(*ControlServiceUpdateTaskRequest)(nil),   // 7: task.v1.ControlServiceUpdateTaskRequest
+	(*ActivateTaskRequest)(nil),               // 8: task.v1.ActivateTaskRequest
+	(*ActivateTaskResponse)(nil),              // 9: task.v1.ActivateTaskResponse
+	(*ControlServiceActivateTaskRequest)(nil), // 10: task.v1.ControlServiceActivateTaskRequest
+	(*SuspendTaskRequest)(nil),                // 11: task.v1.SuspendTaskRequest
+	(*SuspendTaskResponse)(nil),               // 12: task.v1.SuspendTaskResponse
+	(*ControlServiceSuspendTaskRequest)(nil),  // 13: task.v1.ControlServiceSuspendTaskRequest
+	(*DeleteTaskRequest)(nil),                 // 14: task.v1.DeleteTaskRequest
+	(*DeleteTaskResponse)(nil),                // 15: task.v1.DeleteTaskResponse
+	(*ControlServiceDeleteTaskRequest)(nil),   // 16: task.v1.ControlServiceDeleteTaskRequest
+	(*BatchTaskOperationsRequest)(nil),        // 17: task.v1.BatchTaskOperationsRequest
+	(*BatchTaskOperation)(nil),                // 18: task.v1.BatchTaskOperation
+	(*BatchTaskOperationResult)(nil),          // 19: task.v1.BatchTaskOperationResult
+	(*BatchTaskOperationsResponse)(nil),       // 20: task.v1.BatchTaskOperationsResponse
 }
 var file_task_v1_control_proto_depIdxs = []int32{
-	0,  // 0: task.v1.CreateTaskRequest.parameters:type_name -> task.v1.TaskParameters
-	0,  // 1: task.v1.UpdateTaskRequest.parameters:type_name -> task.v1.TaskParameters
-	1,  // 2: task.v1.ControlService.CreateTask:input_type -> task.v1.CreateTaskRequest
-	3,  // 3: task.v1.ControlService.UpdateTask:input_type -> task.v1.UpdateTaskRequest
-	5,  // 4: task.v1.ControlService.ActivateTask:input_type -> task.v1.ActivateTaskRequest
-	7,  // 5: task.v1.ControlService.SuspendTask:input_type -> task.v1.SuspendTaskRequest
-	9,  // 6: task.v1.ControlService.DeleteTask:input_type -> task.v1.DeleteTaskRequest
-	2,  // 7: task.v1.ControlService.CreateTask:output_type -> task.v1.CreateTaskResponse
-	4,  // 8: task.v1.ControlService.UpdateTask:output_type -> task.v1.UpdateTaskResponse
-	6,  // 9: task.v1.ControlService.ActivateTask:output_type -> task.v1.ActivateTaskResponse
-	8,  // 10: task.v1.ControlService.SuspendTask:output_type -> task.v1.SuspendTaskResponse
-	10, // 11: task.v1.ControlService.DeleteTask:output_type -> task.v1.DeleteTaskResponse
-	7,  // [7:12] is the sub-list for method output_type
-	2,  // [2:7] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	1,  // 0: task.v1.CreateTaskRequest.parameters:type_name -> task.v1.TaskParameters
+	2,  // 1: task.v1.ControlServiceCreateTaskRequest.request:type_name -> task.v1.CreateTaskRequest
+	1,  // 2: task.v1.UpdateTaskRequest.parameters:type_name -> task.v1.TaskParameters
+	5,  // 3: task.v1.ControlServiceUpdateTaskRequest.request:type_name -> task.v1.UpdateTaskRequest
+	8,  // 4: task.v1.ControlServiceActivateTaskRequest.request:type_name -> task.v1.ActivateTaskRequest
+	11, // 5: task.v1.ControlServiceSuspendTaskRequest.request:type_name -> task.v1.SuspendTaskRequest
+	14, // 6: task.v1.ControlServiceDeleteTaskRequest.request:type_name -> task.v1.DeleteTaskRequest
+	18, // 7: task.v1.BatchTaskOperationsRequest.operations:type_name -> task.v1.BatchTaskOperation
+	4,  // 8: task.v1.BatchTaskOperation.create_task:type_name -> task.v1.ControlServiceCreateTaskRequest
+	7,  // 9: task.v1.BatchTaskOperation.update_task:type_name -> task.v1.ControlServiceUpdateTaskRequest
+	10, // 10: task.v1.BatchTaskOperation.activate_task:type_name -> task.v1.ControlServiceActivateTaskRequest
+	13, // 11: task.v1.BatchTaskOperation.suspend_task:type_name -> task.v1.ControlServiceSuspendTaskRequest
+	16, // 12: task.v1.BatchTaskOperation.delete_task:type_name -> task.v1.ControlServiceDeleteTaskRequest
+	0,  // 13: task.v1.BatchTaskOperationResult.status:type_name -> task.v1.BatchTaskOperationStatus
+	3,  // 14: task.v1.BatchTaskOperationResult.create_task:type_name -> task.v1.CreateTaskResponse
+	6,  // 15: task.v1.BatchTaskOperationResult.update_task:type_name -> task.v1.UpdateTaskResponse
+	9,  // 16: task.v1.BatchTaskOperationResult.activate_task:type_name -> task.v1.ActivateTaskResponse
+	12, // 17: task.v1.BatchTaskOperationResult.suspend_task:type_name -> task.v1.SuspendTaskResponse
+	15, // 18: task.v1.BatchTaskOperationResult.delete_task:type_name -> task.v1.DeleteTaskResponse
+	19, // 19: task.v1.BatchTaskOperationsResponse.results:type_name -> task.v1.BatchTaskOperationResult
+	4,  // 20: task.v1.ControlService.CreateTask:input_type -> task.v1.ControlServiceCreateTaskRequest
+	7,  // 21: task.v1.ControlService.UpdateTask:input_type -> task.v1.ControlServiceUpdateTaskRequest
+	10, // 22: task.v1.ControlService.ActivateTask:input_type -> task.v1.ControlServiceActivateTaskRequest
+	13, // 23: task.v1.ControlService.SuspendTask:input_type -> task.v1.ControlServiceSuspendTaskRequest
+	16, // 24: task.v1.ControlService.DeleteTask:input_type -> task.v1.ControlServiceDeleteTaskRequest
+	17, // 25: task.v1.ControlService.BatchTaskOperations:input_type -> task.v1.BatchTaskOperationsRequest
+	3,  // 26: task.v1.ControlService.CreateTask:output_type -> task.v1.CreateTaskResponse
+	6,  // 27: task.v1.ControlService.UpdateTask:output_type -> task.v1.UpdateTaskResponse
+	9,  // 28: task.v1.ControlService.ActivateTask:output_type -> task.v1.ActivateTaskResponse
+	12, // 29: task.v1.ControlService.SuspendTask:output_type -> task.v1.SuspendTaskResponse
+	15, // 30: task.v1.ControlService.DeleteTask:output_type -> task.v1.DeleteTaskResponse
+	20, // 31: task.v1.ControlService.BatchTaskOperations:output_type -> task.v1.BatchTaskOperationsResponse
+	26, // [26:32] is the sub-list for method output_type
+	20, // [20:26] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_task_v1_control_proto_init() }
@@ -591,18 +1369,33 @@ func file_task_v1_control_proto_init() {
 	if File_task_v1_control_proto != nil {
 		return
 	}
+	file_task_v1_control_proto_msgTypes[17].OneofWrappers = []any{
+		(*BatchTaskOperation_CreateTask)(nil),
+		(*BatchTaskOperation_UpdateTask)(nil),
+		(*BatchTaskOperation_ActivateTask)(nil),
+		(*BatchTaskOperation_SuspendTask)(nil),
+		(*BatchTaskOperation_DeleteTask)(nil),
+	}
+	file_task_v1_control_proto_msgTypes[18].OneofWrappers = []any{
+		(*BatchTaskOperationResult_CreateTask)(nil),
+		(*BatchTaskOperationResult_UpdateTask)(nil),
+		(*BatchTaskOperationResult_ActivateTask)(nil),
+		(*BatchTaskOperationResult_SuspendTask)(nil),
+		(*BatchTaskOperationResult_DeleteTask)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_task_v1_control_proto_rawDesc), len(file_task_v1_control_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   11,
+			NumEnums:      1,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_task_v1_control_proto_goTypes,
 		DependencyIndexes: file_task_v1_control_proto_depIdxs,
+		EnumInfos:         file_task_v1_control_proto_enumTypes,
 		MessageInfos:      file_task_v1_control_proto_msgTypes,
 	}.Build()
 	File_task_v1_control_proto = out.File
