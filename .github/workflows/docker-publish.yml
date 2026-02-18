@@ -21,11 +21,14 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish ${{ matrix.component }} image
+    name: Publish ${{ matrix.component }} image (${{ matrix.arch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        arch:
+          - amd64
+          - arm64
         include:
           - component: gateway
             image: f4a-gateway
@@ -70,6 +73,6 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
