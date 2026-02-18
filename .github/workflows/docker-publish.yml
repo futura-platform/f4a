@@ -21,21 +21,23 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish ${{ matrix.component }} image (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    name: Publish ${{ matrix.component.name }} image (${{ matrix.arch.name }})
+    runs-on: ${{ matrix.arch.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - amd64
-          - arm64
-        include:
-          - component: gateway
+        component:
+          - name: gateway
             image: f4a-gateway
             dockerfile: f4a/cmd/gateway/Dockerfile
-          - component: dispatch
+          - name: dispatch
             image: f4a-dispatch
             dockerfile: f4a/cmd/dispatch/Dockerfile
+        arch:
+          - name: amd64
+            runner: ubuntu-24.04
+          - name: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Prepare registry owner
@@ -62,7 +64,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ steps.owner.outputs.value }}/${{ matrix.image }}
+          images: ghcr.io/${{ steps.owner.outputs.value }}/${{ matrix.component.image }}
           tags: |
             type=ref,event=tag
             type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
@@ -71,8 +73,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: ${{ matrix.component.dockerfile }}
           push: true
-          platforms: linux/${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch.name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
