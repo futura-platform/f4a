@@ -26,7 +26,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
 		slog.String("task_id", string(runnable.Id())),
 		slog.String("callback_url", runnable.CallbackUrl().String()),
-		slog.Bool("error", taskErr != nil))
+		slog.Bool("task_error", taskErr != nil))
 	var body io.Reader
 	var contentType string
 	if taskErr != nil {
