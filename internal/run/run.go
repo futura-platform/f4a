@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
+	"github.com/futura-platform/futura/flog"
 )
 
 var (
@@ -98,7 +100,12 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			mu.Lock()
 			defer mu.Unlock()
 			watchCancel()
-			retryCallback(ctx, callback, result, err, callbackTimeout)
+			err = retryCallback(ctx, callback, result, err, callbackTimeout)
+			flog.FromContext(ctx).LogAttrs(
+				ctx, slog.LevelDebug, "delivered callback",
+				slog.String("task_id", string(r.Id())),
+				slog.Bool("error", err == nil),
+			)
 			success = true
 		}(marshalledInput, runCtx)
 	}
@@ -134,18 +141,17 @@ func retryCallback(
 	callback func(context.Context, []byte, error) error,
 	output []byte,
 	runErr error,
-	timeout time.Duration,
-) {
+	attemptTimeout time.Duration,
+) error {
 	delay := callbackRetryInitialDelay
 	for {
-		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
 		err := callback(attemptCtx, output, runErr)
 		cancel()
 		if err == nil {
-			return
-		}
-		if ctx.Err() != nil {
-			return
+			return nil
+		} else if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		callbackRetrySleep(delay)
 		delay *= 2
