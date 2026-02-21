@@ -94,8 +94,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.RunnableTask) error {
 	l := flog.FromContext(ctx)
 	l.LogAttrs(ctx, slog.LevelDebug, "deleting task after callback",
-		slog.String("task_id", string(runnable.Id())),
-		slog.String("callback_url", runnable.CallbackUrl().String()))
+		slog.String("task_id", string(runnable.Id())))
 	_, err := m.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		taskKey, err := m.taskDirectory.Open(tx, runnable.Id())
 		if err != nil {
