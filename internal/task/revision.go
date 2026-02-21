@@ -137,6 +137,21 @@ func (s RevisionStore) Apply(
 	return RevisionDecisionApplied, nil
 }
 
+// ApplyNext computes the next sequential revision for the given task and applies
+// the operation in the same transaction.
+func (s RevisionStore) ApplyNext(
+	tx fdb.Transaction,
+	id Id,
+	operation RevisionOperation,
+	apply func() error,
+) (RevisionDecision, error) {
+	currentRevision, err := s.lastAppliedRevision(tx, id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read current revision: %w", err)
+	}
+	return s.Apply(tx, id, currentRevision+1, operation, apply)
+}
+
 func (s RevisionStore) SweepExpiredTombstones(tx fdb.Transaction, now time.Time, limit int) (int, error) {
 	records, err := s.expiredTombstones(tx, now, limit)
 	if err != nil {

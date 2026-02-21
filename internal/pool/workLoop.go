@@ -24,7 +24,12 @@ var (
 
 type taskManager struct {
 	*runMap
-	c *http.Client
+	db            dbutil.DbRoot
+	runnerId      string
+	taskSet       *reliableset.Set
+	taskDirectory task.TasksDirectory
+	revisionStore task.RevisionStore
+	c             *http.Client
 }
 
 // RunWorkLoop handles the task execution management for a pool.
@@ -41,6 +46,14 @@ func RunWorkLoop(
 	taskSet *reliableset.Set,
 	router execute.Router,
 ) error {
+	taskDirectory, err := task.CreateOrOpenTasksDirectory(db)
+	if err != nil {
+		return fmt.Errorf("failed to open task directory: %w", err)
+	}
+	revisionStore, err := task.CreateOrOpenRevisionStore(db)
+	if err != nil {
+		return fmt.Errorf("failed to open revision store: %w", err)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 
 	var runErrOnce sync.Once
@@ -51,7 +64,12 @@ func RunWorkLoop(
 				runErrCh <- fmt.Errorf("%w: %s: %w", ErrRunFailed, id, err)
 			})
 		}),
-		c: http.DefaultClient,
+		db:            db,
+		runnerId:      runnerId,
+		taskSet:       taskSet,
+		taskDirectory: taskDirectory,
+		revisionStore: revisionStore,
+		c:             http.DefaultClient,
 	}
 	defer func() {
 		cancel()
@@ -148,6 +166,11 @@ func processRemovedBatch(taskManager *runMap, items mapset.Set[string]) error {
 		id := task.Id(item)
 		err := taskManager.cancel(id)
 		if err != nil {
+			if errors.Is(err, ErrRunNotFound) {
+				// No active local run for this task (already completed/canceled, or stale remove event).
+				// Treat remove as idempotent.
+				continue
+			}
 			return fmt.Errorf("failed to cancel task %s: %w", id, err)
 		}
 	}

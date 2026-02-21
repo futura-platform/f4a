@@ -1,6 +1,7 @@
 package task
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -148,5 +149,106 @@ func TestRevisionStoreSweepKeepsNewerRevisionMetadata(t *testing.T) {
 			return nil, nil
 		})
 		require.NoError(t, err)
+	})
+}
+
+func TestRevisionStoreApplyNext(t *testing.T) {
+	t.Run("increments revision and marks delete metadata", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			store, err := CreateOrOpenRevisionStore(db)
+			require.NoError(t, err)
+
+			id := Id("apply-next-delete")
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				decision, applyErr := store.ApplyNext(tx, id, RevisionOperationCreate, func() error { return nil })
+				if applyErr != nil {
+					return nil, applyErr
+				}
+				require.Equal(t, RevisionDecisionApplied, decision)
+
+				decision, applyErr = store.ApplyNext(tx, id, RevisionOperationDelete, func() error { return nil })
+				if applyErr != nil {
+					return nil, applyErr
+				}
+				require.Equal(t, RevisionDecisionApplied, decision)
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				revision, readErr := store.lastAppliedRevision(tx, id)
+				if readErr != nil {
+					return nil, readErr
+				}
+				deleted, readErr := store.deleted(tx, id)
+				if readErr != nil {
+					return nil, readErr
+				}
+				require.Equal(t, uint64(2), revision)
+				require.True(t, deleted)
+
+				begin, end := store.tombstones.FDBRangeKeys()
+				kvs, readErr := tx.GetRange(
+					fdb.KeyRange{Begin: begin, End: end},
+					fdb.RangeOptions{},
+				).GetSliceWithError()
+				if readErr != nil {
+					return nil, readErr
+				}
+				require.Len(t, kvs, 1)
+				return nil, nil
+			})
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("concurrent apply next operations remain sequential", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			require.NoError(t, db.Options().SetTransactionRetryLimit(50))
+
+			store, err := CreateOrOpenRevisionStore(db)
+			require.NoError(t, err)
+
+			id := Id("apply-next-concurrent")
+			const workers = 8
+			const opsPerWorker = 5
+			var wg sync.WaitGroup
+			errCh := make(chan error, workers*opsPerWorker)
+			for range workers {
+				wg.Go(func() {
+					for range opsPerWorker {
+						_, txErr := db.Transact(func(tx fdb.Transaction) (any, error) {
+							_, applyErr := store.ApplyNext(tx, id, RevisionOperationMutate, func() error {
+								return nil
+							})
+							return nil, applyErr
+						})
+						if txErr != nil {
+							errCh <- txErr
+						}
+					}
+				})
+			}
+			wg.Wait()
+			close(errCh)
+			for txErr := range errCh {
+				require.NoError(t, txErr)
+			}
+
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				revision, readErr := store.lastAppliedRevision(tx, id)
+				if readErr != nil {
+					return nil, readErr
+				}
+				deleted, readErr := store.deleted(tx, id)
+				if readErr != nil {
+					return nil, readErr
+				}
+				require.Equal(t, uint64(workers*opsPerWorker), revision)
+				require.False(t, deleted)
+				return nil, nil
+			})
+			require.NoError(t, err)
+		})
 	})
 }

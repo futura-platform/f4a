@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
@@ -36,6 +37,7 @@ func seedTask(
 	id task.Id,
 	executorId execute.ExecutorId,
 	callbackUrl string,
+	runnerId string,
 ) error {
 	t.Helper()
 
@@ -53,6 +55,8 @@ func seedTask(
 		taskDirectory.ExecutorId().Set(tx, executorId)
 		taskDirectory.CallbackUrl().Set(tx, callbackUrl)
 		taskDirectory.Input().Set(tx, []byte(id))
+		taskDirectory.RunnerId().Set(tx, runnerId)
+		taskDirectory.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
 		return nil, nil
 	})
 	return err
@@ -94,6 +98,35 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []tas
 		return nil, nil
 	})
 	require.NoError(t, err)
+}
+
+func waitForTaskDeletion(t testing.TB, db dbutil.DbRoot, id task.Id) {
+	t.Helper()
+
+	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+	require.NoError(t, err)
+
+	deadline := time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		exists := false
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			_, err := tasksDirectory.Open(tx, id)
+			if err != nil {
+				if errors.Is(err, directory.ErrDirNotExists) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			exists = true
+			return nil, nil
+		})
+		require.NoError(t, err)
+		if !exists {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for task deletion: %s", id)
 }
 
 func waitForTaskEvents(t *testing.T, ch <-chan task.Id, runErr <-chan error, ids []task.Id) {
@@ -157,7 +190,7 @@ func TestWorkLoop(t *testing.T) {
 			for range taskCount {
 				id := task.NewId()
 				taskIds = append(taskIds, id)
-				require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback"))
+				require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback", runnerId))
 			}
 
 			startedCh := make(chan task.Id, taskCount*2)
@@ -259,6 +292,8 @@ func TestWorkLoop(t *testing.T) {
 	})
 	t.Run("returns run failed error when a run fails", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
 			expectedErr := fmt.Errorf("%w: expected error", run.ErrRunFatal)
 			runWorkLoopErr := make(chan error, 1)
 			runnerId := "test-runner"
@@ -277,7 +312,7 @@ func TestWorkLoop(t *testing.T) {
 			}()
 
 			id := task.NewId()
-			require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback"))
+			require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback", runnerId))
 			addTasks(t, db, taskSet, []task.Id{id})
 
 			select {
@@ -292,6 +327,8 @@ func TestWorkLoop(t *testing.T) {
 	t.Run("the result is reliably delivered at least once to the callback url", func(t *testing.T) {
 		t.Run("when there are no errors", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				gotCallbackCh := make(chan struct{})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -322,7 +359,7 @@ func TestWorkLoop(t *testing.T) {
 				}()
 
 				id := task.NewId()
-				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL)))
+				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
 				addTasks(t, db, taskSet, []task.Id{id})
 				select {
 				case err := <-runWorkLoopErr:
@@ -331,10 +368,181 @@ func TestWorkLoop(t *testing.T) {
 					t.Fatal("timeout waiting for callback")
 				case <-gotCallbackCh:
 				}
+				waitForTaskDeletion(t, db, id)
+			})
+		})
+		t.Run("when delete fails transiently, callback is not reposted and delete is retried", func(t *testing.T) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
+				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
+				var callbackCalls atomic.Int32
+				gotCallbackCh := make(chan struct{}, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "POST", r.Method)
+					assert.Equal(t, "/callback", r.URL.Path)
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.Equal(t, expectedOutput, body)
+					if callbackCalls.Add(1) == 1 {
+						gotCallbackCh <- struct{}{}
+					}
+					w.WriteHeader(http.StatusAccepted)
+				}))
+				defer server.Close()
+
+				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
+				var deleteAttempts atomic.Int32
+				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+					if deleteAttempts.Add(1) == 1 {
+						return errors.New("transient delete failure")
+					}
+					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
+				}
+				defer func() {
+					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
+				}()
+
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				runWorkLoopErr := make(chan error, 1)
+				runnerId := "test-runner"
+				taskSet := openTaskSet(t, db, runnerId)
+
+				executor := &testutil.MockExecutor{
+					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+						return expectedOutput, nil
+					},
+				}
+				executorId := execute.ExecutorId("test-executor")
+				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
+
+				go func() {
+					runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
+				}()
+
+				id := task.NewId()
+				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
+				addTasks(t, db, taskSet, []task.Id{id})
+
+				select {
+				case err := <-runWorkLoopErr:
+					t.Fatalf("RunWorkLoop returned an error: %v", err)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for first callback")
+				case <-gotCallbackCh:
+				}
+
+				waitForTaskDeletion(t, db, id)
+				assert.GreaterOrEqual(t, deleteAttempts.Load(), int32(2))
+				assert.Equal(t, int32(1), callbackCalls.Load())
+
+				cancel()
+				select {
+				case err := <-runWorkLoopErr:
+					assert.ErrorIs(t, err, context.Canceled)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for worker shutdown")
+				}
+			})
+		})
+		t.Run("external delete race does not cause callback retry loop", func(t *testing.T) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
+				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
+				var callbackCalls atomic.Int32
+				gotCallbackCh := make(chan struct{}, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "POST", r.Method)
+					assert.Equal(t, "/callback", r.URL.Path)
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.Equal(t, expectedOutput, body)
+					if callbackCalls.Add(1) == 1 {
+						gotCallbackCh <- struct{}{}
+					}
+					w.WriteHeader(http.StatusAccepted)
+				}))
+				defer server.Close()
+
+				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
+				var externalDeleteStarted atomic.Bool
+				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+					if externalDeleteStarted.CompareAndSwap(false, true) {
+						_, err := manager.db.Transact(func(tx fdb.Transaction) (any, error) {
+							taskKey, err := manager.taskDirectory.Open(tx, runnable.Id())
+							if err != nil {
+								if errors.Is(err, directory.ErrDirNotExists) {
+									return nil, nil
+								}
+								return nil, err
+							}
+							if err := manager.taskSet.Remove(tx, []byte(runnable.Id())); err != nil {
+								return nil, err
+							}
+							if err := taskKey.Clear(tx); err != nil {
+								return nil, err
+							}
+							return nil, nil
+						})
+						if err != nil {
+							return err
+						}
+					}
+					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
+				}
+				defer func() {
+					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
+				}()
+
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				runWorkLoopErr := make(chan error, 1)
+				runnerId := "test-runner"
+				taskSet := openTaskSet(t, db, runnerId)
+
+				executor := &testutil.MockExecutor{
+					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+						return expectedOutput, nil
+					},
+				}
+				executorId := execute.ExecutorId("test-executor")
+				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
+
+				go func() {
+					runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
+				}()
+
+				id := task.NewId()
+				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
+				addTasks(t, db, taskSet, []task.Id{id})
+
+				select {
+				case err := <-runWorkLoopErr:
+					t.Fatalf("RunWorkLoop returned an error: %v", err)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for callback")
+				case <-gotCallbackCh:
+				}
+
+				waitForTaskDeletion(t, db, id)
+				assert.True(t, externalDeleteStarted.Load())
+				assert.Equal(t, int32(1), callbackCalls.Load())
+
+				cancel()
+				select {
+				case err := <-runWorkLoopErr:
+					assert.ErrorIs(t, err, context.Canceled)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for worker shutdown")
+				}
 			})
 		})
 		t.Run("when the loop fails during the callback, the next worker loop will retry the callback", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				callbackSuccessful := make(chan struct{})
 				var callCount atomic.Int32
@@ -378,7 +586,7 @@ func TestWorkLoop(t *testing.T) {
 				}()
 
 				id := task.NewId()
-				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL)))
+				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
 
 				addTasks(t, db, taskSet, []task.Id{id})
 				select {
