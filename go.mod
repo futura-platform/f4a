@@ -7,7 +7,7 @@ require (
 	connectrpc.com/connect v1.19.1
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250702211439-37fcf1c8ce08
 	github.com/deckarep/golang-set/v2 v2.8.0
-	github.com/futura-platform/futura v0.0.2
+	github.com/futura-platform/futura v0.0.3
 	github.com/google/uuid v1.6.0
 	github.com/mroth/weightedrand/v2 v2.1.0
 	github.com/stretchr/testify v1.11.1
