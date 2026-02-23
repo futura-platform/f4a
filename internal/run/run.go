@@ -104,7 +104,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			flog.FromContext(ctx).LogAttrs(
 				ctx, slog.LevelDebug, "delivered callback",
 				slog.String("task_id", string(r.Id())),
-				slog.Bool("error", err == nil),
+				slog.Bool("error", err != nil),
 			)
 			success = true
 		}(marshalledInput, runCtx)

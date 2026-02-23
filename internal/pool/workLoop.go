@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -133,6 +134,8 @@ func RunWorkLoop(
 	}
 }
 
+const logPreviewLength = 10
+
 func processAddedBatch(
 	ctx context.Context,
 	taskManager *taskManager,
@@ -141,8 +144,19 @@ func processAddedBatch(
 	items mapset.Set[string],
 ) error {
 	l := flog.FromContext(ctx)
+	previewTaskIds := items.ToSlice()
+	truncatedPreview := len(previewTaskIds) > logPreviewLength
+	if truncatedPreview {
+		previewTaskIds = previewTaskIds[:logPreviewLength]
+	}
+	previewTaskIdsString := strings.Join(previewTaskIds, ", ")
+	if truncatedPreview {
+		previewTaskIdsString += ", ..."
+	}
 	l.LogAttrs(ctx, slog.LevelDebug, "processing added batch",
-		slog.String("item_count", fmt.Sprintf("%d", items.Cardinality())))
+		slog.String("item_count", fmt.Sprintf("%d", items.Cardinality())),
+		slog.String("task_ids", previewTaskIdsString),
+	)
 
 	taskIds := make([]task.Id, items.Cardinality())
 	for i, item := range items.ToSlice() {

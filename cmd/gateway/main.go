@@ -21,6 +21,7 @@ import (
 // task control requests from clients and atomically handles them in a db transaction.
 
 func main() {
+	slog.Info("starting gateway")
 	if err := run(); err != nil {
 		slog.Error("fatal error", "error", err)
 		os.Exit(1)
@@ -52,6 +53,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	slog.Info("gateway listening", "port", port)
 	s.Addr = fmt.Sprintf(":%d", port)
 	mux.Handle(taskv1connect.NewControlServiceHandler(controller))
 

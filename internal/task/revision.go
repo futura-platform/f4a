@@ -39,12 +39,36 @@ const (
 	RevisionOperationDelete
 )
 
+func (o RevisionOperation) String() string {
+	switch o {
+	case RevisionOperationCreate:
+		return "create"
+	case RevisionOperationMutate:
+		return "mutate"
+	case RevisionOperationDelete:
+		return "delete"
+	default:
+		return fmt.Sprintf("unknown revision operation: %d", o)
+	}
+}
+
 type RevisionDecision byte
 
 const (
 	RevisionDecisionApplied RevisionDecision = iota
 	RevisionDecisionDuplicate
 )
+
+func (d RevisionDecision) String() string {
+	switch d {
+	case RevisionDecisionApplied:
+		return "applied"
+	case RevisionDecisionDuplicate:
+		return "duplicate"
+	default:
+		return fmt.Sprintf("unknown revision decision: %d", d)
+	}
+}
 
 type RevisionStore struct {
 	revisions  directory.DirectorySubspace

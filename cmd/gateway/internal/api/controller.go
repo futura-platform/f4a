@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -355,6 +356,12 @@ func (c *controller) applyRevisionedOperation(
 	if !ok {
 		return 0, fmt.Errorf("unexpected transaction result type: %T", result)
 	}
+	slog.Info("apply revisioned operation",
+		"task_id", id,
+		"revision", revision,
+		"operation", operation.String(),
+		"decision", decision.String(),
+	)
 	return decision, nil
 }
 
