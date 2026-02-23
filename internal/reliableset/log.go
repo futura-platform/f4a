@@ -25,7 +25,6 @@ var (
 )
 
 // Add adds a value to the set. This is gauranteed to be contention free.
-// (except for rare versionstamp collisions).
 func (s *Set) Add(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
@@ -34,7 +33,6 @@ func (s *Set) Add(tx fdb.Transaction, value []byte) error {
 }
 
 // Remove removes a value from the set. This is gauranteed to be contention free.
-// (except for rare versionstamp collisions).
 func (s *Set) Remove(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)

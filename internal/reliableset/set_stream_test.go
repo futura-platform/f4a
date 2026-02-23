@@ -108,6 +108,102 @@ func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 	})
 }
 
+func TestSetStreamEventsRawDuplicateAdds(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_events_raw_duplicate_adds")
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		_, events, errCh, err := set.StreamEvents(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, errCh)
+
+		payload := []byte("dup")
+		addBatch(t, db, set, [][]byte{payload, payload})
+
+		batch := readNextBatch(t, ctx, events, errCh)
+		require.Len(t, batch, 2)
+		require.Equal(t, LogOperationAdd, batch[0].Op)
+		require.Equal(t, payload, batch[0].Value)
+		require.Equal(t, LogOperationAdd, batch[1].Op)
+		require.Equal(t, payload, batch[1].Value)
+	})
+}
+
+func TestSetStreamDuplicateAddsCollapsed(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_duplicate_adds_collapsed")
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		_, events, errCh, err := set.Stream(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, errCh)
+
+		payload := []byte("dup")
+		addBatch(t, db, set, [][]byte{payload, payload})
+
+		batch := readNextBatch(t, ctx, events, errCh)
+		require.Len(t, batch, 1)
+		require.Equal(t, LogOperationAdd, batch[0].Op)
+		require.Equal(t, payload, batch[0].Value)
+
+		assertNoExtraBatch(t, ctx, events, errCh)
+	})
+}
+
+func TestSetStreamDuplicateRemovesCollapsed(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_duplicate_removes_collapsed")
+		payload := []byte("dup")
+		addItem(t, db, set, payload)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		_, events, errCh, err := set.Stream(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, errCh)
+
+		removeBatch(t, db, set, [][]byte{payload, payload})
+
+		batch := readNextBatch(t, ctx, events, errCh)
+		require.Len(t, batch, 1)
+		require.Equal(t, LogOperationRemove, batch[0].Op)
+		require.Equal(t, payload, batch[0].Value)
+
+		assertNoExtraBatch(t, ctx, events, errCh)
+	})
+}
+
+func TestSetStreamOpposingOperationsWithinSingleBatch(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_opposing_operations")
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		_, events, errCh, err := set.Stream(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, errCh)
+
+		payload := []byte("value")
+
+		// add then remove in the same transaction has no net effect.
+		applyLogBatch(t, db, set, []LogEntry{
+			{Op: LogOperationAdd, Value: payload},
+			{Op: LogOperationRemove, Value: payload},
+		})
+		assertNoExtraBatch(t, ctx, events, errCh)
+		requireSetMatchesDB(t, db, set, mapset.NewSet[string]())
+
+		// remove then add in the same transaction yields a net add on empty state.
+		applyLogBatch(t, db, set, []LogEntry{
+			{Op: LogOperationRemove, Value: payload},
+			{Op: LogOperationAdd, Value: payload},
+		})
+		batch := readNextBatch(t, ctx, events, errCh)
+		require.Len(t, batch, 1)
+		require.Equal(t, LogOperationAdd, batch[0].Op)
+		require.Equal(t, payload, batch[0].Value)
+		requireSetMatchesDB(t, db, set, mapset.NewSet[string](string(payload)))
+	})
+}
+
 func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_remove_batch")
@@ -504,6 +600,28 @@ func applyStreamBatch(current mapset.Set[string], batch []LogEntry) (mapset.Set[
 		}
 	}
 	return current, nil
+}
+
+func applyLogBatch(t testing.TB, db dbutil.DbRoot, set *Set, batch []LogEntry) {
+	t.Helper()
+	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+		for _, entry := range batch {
+			switch entry.Op {
+			case LogOperationAdd:
+				if err := set.Add(tx, entry.Value); err != nil {
+					return nil, err
+				}
+			case LogOperationRemove:
+				if err := set.Remove(tx, entry.Value); err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("unknown log operation: %d", entry.Op)
+			}
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
 }
 
 func awaitSetState(

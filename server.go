@@ -27,7 +27,7 @@ import (
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
 func Start(ctx context.Context, executors map[string]execute.Executor) error {
-	port, err := util.RequiredPort("WORKER_PORT")
+	port, err := util.RequiredPort(constants.WorkerPort)
 	if err != nil {
 		return err
 	}

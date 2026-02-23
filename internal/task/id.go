@@ -10,3 +10,7 @@ type Id string
 func NewId() Id {
 	return Id(uuid.New().String())
 }
+
+const (
+	MAX_ID_LENGTH = 32
+)

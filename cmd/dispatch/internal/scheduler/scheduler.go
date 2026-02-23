@@ -18,19 +18,24 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	"github.com/futura-platform/f4a/pkg/constants"
 	weightedrand "github.com/mroth/weightedrand/v2"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
-const maxAssignmentsPerSchedule = 64
-
-var errNotPending = errors.New("task not pending")
+const (
+	assignmentTxBudgetBytes = constants.MaxTransactionAffectedSizeBytes / 3
+	DefaultBatchParallelism = 4
+)
 
 type Config struct {
-	Namespace       string
-	StatefulSetName string
-	MetricsInterval time.Duration
-	ScoreAlpha      float64
-	Logger          *slog.Logger
+	Namespace          string
+	StatefulSetName    string
+	MetricsInterval    time.Duration
+	ScoreAlpha         float64
+	BatchTxParallelism int
+	Logger             *slog.Logger
 }
 
 type Scheduler struct {
@@ -58,6 +63,9 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if cfg.ScoreAlpha <= 0 || cfg.ScoreAlpha > 1 {
 		return fmt.Errorf("score EMA alpha must be between 0 and 1")
 	}
+	if cfg.BatchTxParallelism <= 0 {
+		return fmt.Errorf("batch tx parallelism must be greater than 0")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -84,24 +92,24 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	return s.run(ctx)
 }
 
+// run is the main loop of the scheduler. It is expected to run as a singleton scoped to the whole cluster.
+// It assigns tasks to the fittest workers exactly once per pending task.
+// It also periodically refreshes the worker scores to evaluate fitness.
 func (s *Scheduler) run(ctx context.Context) error {
 	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}
 
-	pending := mapset.NewSet[task.Id]()
-	if err := addInitialPending(pending, initialValues); err != nil {
-		return err
+	scores, err := s.refreshScores(ctx)
+	if err != nil {
+		s.logger.Error("failed to refresh worker scores", "error", err)
 	}
 
-	scores := make(map[string]float64)
-	if updated, err := s.refreshScores(ctx); err != nil {
-		s.logger.Error("failed to load initial worker scores", "error", err)
-	} else {
-		scores = updated
+	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores)
+	if err != nil {
+		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
-	s.assignPending(ctx, pending, scores)
 
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()
@@ -114,10 +122,17 @@ func (s *Scheduler) run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := applyPendingBatch(pending, batch); err != nil {
-				return err
+			newlyPending := mapset.NewSet[string]()
+			for _, entry := range batch {
+				if entry.Op != reliableset.LogOperationAdd {
+					continue
+				}
+				newlyPending.Add(string(entry.Value))
 			}
-			s.assignPending(ctx, pending, scores)
+			backlog, err = s.assignPending(ctx, backlog.Union(newlyPending).ToSlice(), scores)
+			if err != nil {
+				return fmt.Errorf("failed to assign pending tasks: %w", err)
+			}
 		case err, ok := <-streamErrCh:
 			if !ok {
 				return nil
@@ -132,7 +147,10 @@ func (s *Scheduler) run(ctx context.Context) error {
 				continue
 			}
 			scores = updated
-			s.assignPending(ctx, pending, scores)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores)
+			if err != nil {
+				return fmt.Errorf("failed to assign pending backlog: %w", err)
+			}
 		}
 	}
 }
@@ -168,92 +186,72 @@ func (s *Scheduler) ensureTaskSets(scores map[string]float64) map[string]float64
 	return scores
 }
 
-func (s *Scheduler) assignPending(ctx context.Context, pending mapset.Set[task.Id], scores map[string]float64) {
-	if pending.Cardinality() == 0 || len(scores) == 0 {
-		return
+// assignPending assigns all given tasks in the pending set to the most fit workers.
+// fitness is determines by selectWeightedWorker.
+func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scores map[string]float64) (couldntAssign mapset.Set[string], err error) {
+	activeTxSem := semaphore.NewWeighted(int64(s.cfg.BatchTxParallelism))
+
+	group, ctx := errgroup.WithContext(ctx)
+	couldntAssign = mapset.NewSet[string]()
+	for i := 0; i < len(pendingIds); i += s.cfg.BatchTxParallelism {
+		batch := pendingIds[i:min(i+s.cfg.BatchTxParallelism, len(pendingIds))]
+
+		err := activeTxSem.Acquire(ctx, 1)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				break
+			}
+			return nil, err
+		}
+		group.Go(func() error {
+			defer activeTxSem.Release(1)
+
+			worker, ok := selectWeightedWorker(scores)
+			if !ok {
+				couldntAssign.Append(batch...)
+				return nil
+			}
+
+			_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+				for _, id := range batch {
+					if err := s.assignTask(tx, task.Id(id), worker); err != nil {
+						return nil, err
+					}
+				}
+				return nil, nil
+			})
+			if err != nil {
+				couldntAssign.Append(batch...)
+			}
+			return err
+		})
 	}
 
-	assignments := 0
-	for _, id := range pending.ToSlice() {
-		if assignments >= maxAssignmentsPerSchedule {
-			return
-		}
-		worker, ok := selectWeightedWorker(scores)
-		if !ok {
-			return
-		}
-		err := s.assignTask(ctx, id, worker)
-		if err != nil {
-			if errors.Is(err, errNotPending) {
-				pending.Remove(id)
-				continue
-			}
-			s.logger.Error("failed to assign task", "task_id", string(id), "worker", worker, "error", err)
-			return
-		}
-		pending.Remove(id)
-		assignments++
-	}
+	return couldntAssign, group.Wait()
 }
 
-func (s *Scheduler) assignTask(ctx context.Context, id task.Id, worker string) error {
-	taskKey, err := s.taskDir.Open(s.db, id)
-	if err != nil {
-		return fmt.Errorf("failed to open task %s: %w", id, err)
-	}
-
+func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) error {
 	taskSet, ok := s.taskSets[worker]
 	if !ok {
 		return fmt.Errorf("task set missing for worker %q", worker)
 	}
 
-	_, err = s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
-		status := taskKey.LifecycleStatus().Get(tx).MustGet()
-		if status != task.LifecycleStatusPending {
-			return nil, errNotPending
-		}
-		taskKey.RunnerId().Set(tx, worker)
-		taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-		if err := taskSet.Add(tx, []byte(id)); err != nil {
-			return nil, err
-		}
-		if err := s.pendingSet.Remove(tx, []byte(id)); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	})
-	return err
-}
-
-func addInitialPending(pending mapset.Set[task.Id], initial mapset.Set[string]) error {
-	for _, item := range initial.ToSlice() {
-		pending.Add(task.Id(item))
-	}
-	return nil
-}
-
-func applyPendingBatch(pending mapset.Set[task.Id], batch []reliableset.LogEntry) error {
-	addedSet := mapset.NewSetWithSize[task.Id](len(batch))
-	removedSet := mapset.NewSetWithSize[task.Id](len(batch))
-	for _, entry := range batch {
-		id := task.Id(entry.Value)
-		switch entry.Op {
-		case reliableset.LogOperationAdd:
-			addedSet.Add(id)
-			removedSet.Remove(id)
-		case reliableset.LogOperationRemove:
-			removedSet.Add(id)
-			addedSet.Remove(id)
-		default:
-			return fmt.Errorf("unknown log operation: %d", entry.Op)
-		}
+	taskKey, err := s.taskDir.Open(s.db, id)
+	if err != nil {
+		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
-	for _, id := range addedSet.ToSlice() {
-		pending.Add(id)
+	status := taskKey.LifecycleStatus().Get(tx).MustGet()
+	if status != task.LifecycleStatusPending {
+		return fmt.Errorf("task %s is not pending", id)
 	}
-	for _, id := range removedSet.ToSlice() {
-		pending.Remove(id)
+	taskKey.RunnerId().Set(tx, worker)
+	taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
+	if err := taskSet.Add(tx, []byte(id)); err != nil {
+		return err
+	}
+	if err := s.pendingSet.Remove(tx, []byte(id)); err != nil {
+		return err
 	}
 	return nil
 }

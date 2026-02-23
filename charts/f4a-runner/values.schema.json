@@ -82,6 +82,11 @@
 					"minLength": 1,
 					"description": "EMA alpha for worker scoring, between 0 and 1."
 				},
+				"assignmentBatchParallelism": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Optional number of assignment batch transactions to execute in parallel. If omitted, dispatch uses the Go default."
+				},
 				"service": {
 					"type": "object",
 					"properties": {

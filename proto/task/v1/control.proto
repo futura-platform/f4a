@@ -11,7 +11,10 @@ message TaskParameters {
 message CreateTaskRequest {
   // This value should be randomly generated.
   // This is to reduce hotspots on the database.
-  string task_id = 1 [(buf.validate.field).string.max_len = 32];
+  string task_id = 1 [
+    // this value should be kept in sync with internal/task.MAX_ID_LENGTH
+    (buf.validate.field).string.max_len = 32
+  ];
   string executor_id = 2;
   string callback_url = 3;
   TaskParameters parameters = 4;

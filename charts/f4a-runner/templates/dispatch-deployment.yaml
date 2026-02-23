@@ -48,6 +48,10 @@ spec:
               value: {{ .Values.dispatch.metricsInterval | quote }}
             - name: SCORE_EMA_ALPHA
               value: {{ .Values.dispatch.scoreEmaAlpha | quote }}
+            {{- if .Values.dispatch.assignmentBatchParallelism }}
+            - name: ASSIGNMENT_BATCH_PARALLELISM
+              value: {{ .Values.dispatch.assignmentBatchParallelism | quote }}
+            {{- end }}
             - name: LEADER_ELECTION_NAME
               value: {{ include "f4a-runner.dispatchName" . | quote }}
             - name: FDB_CLUSTER_FILE

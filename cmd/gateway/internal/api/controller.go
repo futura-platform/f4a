@@ -334,6 +334,10 @@ func (c *controller) applyRevisionedOperation(
 	operation task.RevisionOperation,
 	apply func(t fdb.Transaction) error,
 ) (task.RevisionDecision, error) {
+	if len(id) > task.MAX_ID_LENGTH {
+		return 0, fmt.Errorf("task id is too long: %d > %d", len(id), task.MAX_ID_LENGTH)
+	}
+
 	result, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
 		decision, applyErr := c.revisionStore.Apply(
 			t,

@@ -64,7 +64,7 @@ func run() error {
 	}, func() int {
 		return http.StatusOK
 	})
-	port, err := util.RequiredPort("DISPATCH_PORT")
+	port, err := util.RequiredPort(constants.DispatchPort)
 	if err != nil {
 		return err
 	}
@@ -156,51 +156,63 @@ func runWithLeaderElection(
 func loadConfig() (scheduler.Config, string, error) {
 	namespace := resolveNamespace()
 	if namespace == "" {
-		return scheduler.Config{}, "", fmt.Errorf("NAMESPACE or POD_NAMESPACE is required")
+		return scheduler.Config{}, "", fmt.Errorf("%s or %s is required", constants.Namespace, constants.PodNamespace)
 	}
-	statefulSetName := strings.TrimSpace(os.Getenv("STATEFULSET_NAME"))
+	statefulSetName := strings.TrimSpace(os.Getenv(constants.StatefulSetName))
 	if statefulSetName == "" {
-		return scheduler.Config{}, "", fmt.Errorf("STATEFULSET_NAME is required")
+		return scheduler.Config{}, "", fmt.Errorf("%s is required", constants.StatefulSetName)
 	}
-	leaderElectionName := strings.TrimSpace(os.Getenv("LEADER_ELECTION_NAME"))
+	leaderElectionName := strings.TrimSpace(os.Getenv(constants.LeaderElectionName))
 	if leaderElectionName == "" {
-		return scheduler.Config{}, "", fmt.Errorf("LEADER_ELECTION_NAME is required")
+		return scheduler.Config{}, "", fmt.Errorf("%s is required", constants.LeaderElectionName)
 	}
 
-	metricsIntervalValue := strings.TrimSpace(os.Getenv("METRICS_INTERVAL"))
+	metricsIntervalValue := strings.TrimSpace(os.Getenv(constants.MetricsInterval))
 	if metricsIntervalValue == "" {
-		return scheduler.Config{}, "", fmt.Errorf("METRICS_INTERVAL is required")
+		return scheduler.Config{}, "", fmt.Errorf("%s is required", constants.MetricsInterval)
 	}
 	metricsInterval, err := time.ParseDuration(metricsIntervalValue)
 	if err != nil {
-		return scheduler.Config{}, "", fmt.Errorf("invalid METRICS_INTERVAL: %w", err)
+		return scheduler.Config{}, "", fmt.Errorf("invalid %s: %w", constants.MetricsInterval, err)
 	}
 
-	scoreAlphaValue := strings.TrimSpace(os.Getenv("SCORE_EMA_ALPHA"))
+	scoreAlphaValue := strings.TrimSpace(os.Getenv(constants.ScoreEmaAlpha))
 	if scoreAlphaValue == "" {
-		return scheduler.Config{}, "", fmt.Errorf("SCORE_EMA_ALPHA is required")
+		return scheduler.Config{}, "", fmt.Errorf("%s is required", constants.ScoreEmaAlpha)
 	}
 	scoreAlpha, err := strconv.ParseFloat(scoreAlphaValue, 64)
 	if err != nil {
-		return scheduler.Config{}, "", fmt.Errorf("invalid SCORE_EMA_ALPHA: %w", err)
+		return scheduler.Config{}, "", fmt.Errorf("invalid %s: %w", constants.ScoreEmaAlpha, err)
+	}
+
+	batchTxParallelism := scheduler.DefaultBatchParallelism
+	if value := strings.TrimSpace(os.Getenv(constants.AssignmentBatchParallelism)); value != "" {
+		batchTxParallelism, err = strconv.Atoi(value)
+		if err != nil {
+			return scheduler.Config{}, "", fmt.Errorf("invalid %s: %w", constants.AssignmentBatchParallelism, err)
+		}
+		if batchTxParallelism < 1 {
+			return scheduler.Config{}, "", fmt.Errorf("invalid %s: must be at least 1", constants.AssignmentBatchParallelism)
+		}
 	}
 
 	cfg := scheduler.Config{
-		Namespace:       namespace,
-		StatefulSetName: statefulSetName,
-		MetricsInterval: metricsInterval,
-		ScoreAlpha:      scoreAlpha,
-		Logger:          slog.Default(),
+		Namespace:          namespace,
+		StatefulSetName:    statefulSetName,
+		MetricsInterval:    metricsInterval,
+		ScoreAlpha:         scoreAlpha,
+		BatchTxParallelism: batchTxParallelism,
+		Logger:             slog.Default(),
 	}
 
 	return cfg, leaderElectionName, nil
 }
 
 func resolveNamespace() string {
-	if value := strings.TrimSpace(os.Getenv("NAMESPACE")); value != "" {
+	if value := strings.TrimSpace(os.Getenv(constants.Namespace)); value != "" {
 		return value
 	}
-	if value := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); value != "" {
+	if value := strings.TrimSpace(os.Getenv(constants.PodNamespace)); value != "" {
 		return value
 	}
 	return ""

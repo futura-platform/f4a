@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/futura-platform/f4a/pkg/constants"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -16,7 +17,7 @@ type Clients struct {
 }
 
 func LoadConfig() (*rest.Config, error) {
-	if env := os.Getenv("KUBECONFIG"); env != "" {
+	if env := os.Getenv(constants.Kubeconfig); env != "" {
 		return clientcmd.BuildConfigFromFlags("", env)
 	}
 

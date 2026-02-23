@@ -49,7 +49,7 @@ func run() error {
 	s.RegisterOnShutdown(cancelGC)
 	go task.RunRevisionGCLoop(gcCtx, dbRoot)
 
-	port, err := util.RequiredPort("GATEWAY_PORT")
+	port, err := util.RequiredPort(constants.GatewayPort)
 	if err != nil {
 		return err
 	}
