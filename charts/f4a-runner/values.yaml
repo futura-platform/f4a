@@ -28,6 +28,8 @@ worker:
   replicas: 1
   service:
     port: 8081
+  # Additional Kubernetes EnvVar entries appended to the worker container.
+  env: []
   resources:
     requests:
       cpu: 100m

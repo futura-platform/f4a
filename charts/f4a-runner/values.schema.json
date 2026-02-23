@@ -89,6 +89,27 @@
 					},
 					"required": ["port"]
 				},
+				"env": {
+					"type": "array",
+					"description": "Additional Kubernetes EnvVar entries appended to the worker container.",
+					"items": {
+						"type": "object",
+						"properties": {
+							"name": {
+								"type": "string",
+								"minLength": 1
+							},
+							"value": {
+								"type": "string"
+							},
+							"valueFrom": {
+								"type": "object"
+							}
+						},
+						"required": ["name"],
+						"additionalProperties": true
+					}
+				},
 				"resources": {
 					"type": "object"
 				}

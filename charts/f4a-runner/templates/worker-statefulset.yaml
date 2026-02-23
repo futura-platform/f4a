@@ -40,6 +40,9 @@ spec:
               value: {{ .Values.worker.service.port | quote }}
             - name: FDB_CLUSTER_FILE
               value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+            {{- if .Values.worker.env }}
+              {{- toYaml .Values.worker.env | nindent 12 }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
