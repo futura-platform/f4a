@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/score"
@@ -26,7 +27,17 @@ import (
 
 const (
 	assignmentTxBudgetBytes = constants.MaxTransactionAffectedSizeBytes / 3
-	DefaultBatchParallelism = 4
+	// Per task assignment we touch more than one reliable set log append:
+	//   1) worker queue Add: log entry write + epoch increment
+	//   2) pending queue Remove: log entry write + epoch increment
+	// plus task metadata writes (runner_id, lifecycle_status) and a lifecycle read.
+	//
+	// This 1KiB heuristic intentionally stays conservative so batch transactions
+	// remain below FDB's affected-size limit across schema/runtime variations.
+	perTaskEstimatedTxnOverheadBytes = 1024
+	DefaultBatchParallelism          = 4
+
+	assignmentBatchSize = assignmentTxBudgetBytes / (task.MAX_ID_LENGTH + perTaskEstimatedTxnOverheadBytes)
 )
 
 type Config struct {
@@ -122,14 +133,16 @@ func (s *Scheduler) run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			newlyPending := mapset.NewSet[string]()
+
 			for _, entry := range batch {
-				if entry.Op != reliableset.LogOperationAdd {
-					continue
+				switch entry.Op {
+				case reliableset.LogOperationAdd:
+					backlog.Add(string(entry.Value))
+				case reliableset.LogOperationRemove:
+					backlog.Remove(string(entry.Value))
 				}
-				newlyPending.Add(string(entry.Value))
 			}
-			backlog, err = s.assignPending(ctx, backlog.Union(newlyPending).ToSlice(), scores)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores)
 			if err != nil {
 				return fmt.Errorf("failed to assign pending tasks: %w", err)
 			}
@@ -187,14 +200,15 @@ func (s *Scheduler) ensureTaskSets(scores map[string]float64) map[string]float64
 }
 
 // assignPending assigns all given tasks in the pending set to the most fit workers.
-// fitness is determines by selectWeightedWorker.
-func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scores map[string]float64) (couldntAssign mapset.Set[string], err error) {
+// Fitness is determines by selectWeightedWorker.
+// If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
+func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scores map[string]float64) (retryAssignLater mapset.Set[string], err error) {
 	activeTxSem := semaphore.NewWeighted(int64(s.cfg.BatchTxParallelism))
 
 	group, ctx := errgroup.WithContext(ctx)
-	couldntAssign = mapset.NewSet[string]()
-	for i := 0; i < len(pendingIds); i += s.cfg.BatchTxParallelism {
-		batch := pendingIds[i:min(i+s.cfg.BatchTxParallelism, len(pendingIds))]
+	retryAssignLater = mapset.NewSet[string]()
+	for i := 0; i < len(pendingIds); i += assignmentBatchSize {
+		batch := pendingIds[i:min(i+assignmentBatchSize, len(pendingIds))]
 
 		err := activeTxSem.Acquire(ctx, 1)
 		if err != nil {
@@ -205,30 +219,40 @@ func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scor
 		}
 		group.Go(func() error {
 			defer activeTxSem.Release(1)
-
-			worker, ok := selectWeightedWorker(scores)
-			if !ok {
-				couldntAssign.Append(batch...)
-				return nil
-			}
-
+			var txScopedRetryAssignLater mapset.Set[string]
 			_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+				txScopedRetryAssignLater = mapset.NewSet[string]()
 				for _, id := range batch {
+					worker, ok := selectWeightedWorker(scores)
+					if !ok {
+						txScopedRetryAssignLater.Add(id)
+						continue
+					}
+
 					if err := s.assignTask(tx, task.Id(id), worker); err != nil {
+						if errors.Is(err, ErrTaskNotInAssignableState) {
+							continue
+						}
 						return nil, err
 					}
 				}
 				return nil, nil
 			})
 			if err != nil {
-				couldntAssign.Append(batch...)
+				retryAssignLater.Append(batch...)
+			} else {
+				retryAssignLater = retryAssignLater.Union(txScopedRetryAssignLater)
 			}
 			return err
 		})
 	}
 
-	return couldntAssign, group.Wait()
+	return retryAssignLater, group.Wait()
 }
+
+var (
+	ErrTaskNotInAssignableState = errors.New("task not in assignable state")
+)
 
 func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) error {
 	taskSet, ok := s.taskSets[worker]
@@ -238,12 +262,15 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) er
 
 	taskKey, err := s.taskDir.Open(s.db, id)
 	if err != nil {
+		if errors.Is(err, directory.ErrDirNotExists) {
+			return ErrTaskNotInAssignableState
+		}
 		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
 	status := taskKey.LifecycleStatus().Get(tx).MustGet()
 	if status != task.LifecycleStatusPending {
-		return fmt.Errorf("task %s is not pending", id)
+		return ErrTaskNotInAssignableState
 	}
 	taskKey.RunnerId().Set(tx, worker)
 	taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
