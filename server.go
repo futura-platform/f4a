@@ -169,6 +169,13 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 							}
 							return nil, fmt.Errorf("failed to open task: %w", err)
 						}
+
+						taskRunnerId := tkey.RunnerId().Get(tx).MustGet()
+						if taskRunnerId != nil && *taskRunnerId != runnerId {
+							// Task has been moved off this runner already. skip idempotently.
+							continue
+						}
+
 						err = taskSet.Remove(tx, []byte(taskID))
 						if err != nil {
 							return nil, fmt.Errorf("failed to remove task from task set: %w", err)
