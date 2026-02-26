@@ -77,6 +77,7 @@ func WatchCh[T any](
 			_, err := db.Transact(func(tr fdb.Transaction) (any, error) {
 				watchMu.Lock()
 				if ctx.Err() != nil {
+					watchMu.Unlock()
 					return nil, ctx.Err()
 				}
 				watch = tr.Watch(initialKey)
