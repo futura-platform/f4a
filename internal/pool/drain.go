@@ -106,5 +106,6 @@ func DrainTaskRunner(
 		}
 		hangingTasks.RemoveAll(currentBatch.ToSlice()...)
 	}
-	return err
+
+	return taskSet.Clear()
 }

@@ -14,6 +14,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/score"
+	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -63,6 +64,10 @@ type Scheduler struct {
 	scoreCache *scoreCache
 	logger     *slog.Logger
 }
+
+const (
+	reaperPollInterval = 10 * time.Second
+)
 
 func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients) error {
 	if cfg.Namespace == "" {
@@ -133,6 +138,12 @@ func (s *Scheduler) run(ctx context.Context) error {
 		return fmt.Errorf("failed to watch active runner sets: %w", err)
 	}
 	defer cancel()
+
+	cancelReaper, err := reaper.SpawnReaperRoutine(s.db, activeRunnerSets, reaperPollInterval)
+	if err != nil {
+		return fmt.Errorf("failed to spawn reaper routine: %w", err)
+	}
+	defer cancelReaper()
 
 	scores, err := s.refreshScores(ctx)
 	if err != nil {
