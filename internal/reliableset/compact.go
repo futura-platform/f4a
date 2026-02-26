@@ -3,6 +3,7 @@ package reliableset
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -26,8 +27,7 @@ func (s *Set) runCompactionLoop() error {
 				return nil, s.compactLog(tx)
 			})
 			if err != nil {
-				// TODO: handle this logging more gracefully
-				fmt.Printf("failed to compact log: %v\n", err)
+				slog.Error("reliableset: failed to compact log", "error", err)
 				continue
 			}
 		}
