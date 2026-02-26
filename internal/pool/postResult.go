@@ -109,22 +109,17 @@ func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.
 			}
 			return nil, fmt.Errorf("failed to open task: %w", err)
 		}
-		lifecycleStatus, err := taskKey.LifecycleStatus().Get(tx).Get()
+		assignmentState, err := task.ReadAssignmentState(tx, taskKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read task lifecycle status: %w", err)
+			return nil, err
 		}
-		if lifecycleStatus != task.LifecycleStatusRunning {
-			return nil, nil
+		if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+			return nil, fmt.Errorf("task assignment invariant violation: %w", err)
 		}
-		runnerId, err := taskKey.RunnerId().Get(tx).Get()
+		isRunningOnThisRunner, err := assignmentState.IsRunningOn(m.runnerId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read task runner id: %w", err)
-		} else if runnerId == nil {
-			return nil, fmt.Errorf("running task has no runner id (invariant violation)")
-		}
-		if *runnerId != m.runnerId {
-			// task has been reassigned to a different runner,
-			// it is no longer our responsibility to clean it up
+			return nil, err
+		} else if !isRunningOnThisRunner {
 			return nil, nil
 		}
 

@@ -170,8 +170,18 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 							return nil, fmt.Errorf("failed to open task: %w", err)
 						}
 
-						taskRunnerId := tkey.RunnerId().Get(tx).MustGet()
-						if taskRunnerId == nil || *taskRunnerId != runnerId {
+						assignmentState, err := task.ReadAssignmentState(tx, tkey)
+						if err != nil {
+							return nil, fmt.Errorf("failed to read task assignment state: %w", err)
+						}
+						if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+							return nil, fmt.Errorf("task assignment invariant violation: %w", err)
+						}
+						isRunningOnThisRunner, err := assignmentState.IsRunningOn(runnerId)
+						if err != nil {
+							return nil, err
+						}
+						if !isRunningOnThisRunner {
 							// Task has been moved off this runner already. skip idempotently.
 							continue
 						}

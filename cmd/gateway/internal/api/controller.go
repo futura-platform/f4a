@@ -160,8 +160,8 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 }
 
 var (
-	ErrNotInAnyQueue       = errors.New("task is not in any queue")
 	ErrMissingInnerRequest = errors.New("missing revisioned request payload")
+	ErrMissingParameters   = errors.New("missing task parameters")
 	// ErrRunningTaskQueueInvariant is returned when a task is marked running but
 	// task has no runner id, or the corresponding runner queue does not exist.
 	ErrRunningTaskQueueInvariant = errors.New("running task queue invariant violated")
@@ -174,6 +174,10 @@ func (c *controller) createTaskRevisioned(
 	inner := req.GetRequest()
 	if inner == nil {
 		return nil, 0, ErrMissingInnerRequest
+	}
+	parameters := inner.GetParameters()
+	if parameters == nil {
+		return nil, 0, ErrMissingParameters
 	}
 
 	decision, err := c.applyRevisionedOperation(
@@ -190,7 +194,7 @@ func (c *controller) createTaskRevisioned(
 			}
 			tkey.ExecutorId().Set(t, execute.ExecutorId(inner.GetExecutorId()))
 			tkey.CallbackUrl().Set(t, inner.CallbackUrl)
-			tkey.Input().Set(t, inner.GetParameters().GetInput())
+			tkey.Input().Set(t, parameters.GetInput())
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
 			return c.suspendedSet.Add(t, []byte(tkey.Id()))
 		},
@@ -209,6 +213,10 @@ func (c *controller) updateTaskRevisioned(
 	if inner == nil {
 		return nil, 0, ErrMissingInnerRequest
 	}
+	parameters := inner.GetParameters()
+	if parameters == nil {
+		return nil, 0, ErrMissingParameters
+	}
 
 	decision, err := c.applyRevisionedOperation(
 		task.Id(inner.GetTaskId()),
@@ -219,7 +227,7 @@ func (c *controller) updateTaskRevisioned(
 			if err != nil {
 				return fmt.Errorf("failed to open task: %w", err)
 			}
-			tkey.Input().Set(t, inner.GetParameters().GetInput())
+			tkey.Input().Set(t, parameters.GetInput())
 			return nil
 		},
 	)
@@ -248,15 +256,25 @@ func (c *controller) activateTaskRevisioned(
 			if err != nil {
 				return fmt.Errorf("failed to open task: %w", err)
 			}
-			currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-			switch currentStatus {
+			state, err := task.ReadAssignmentState(t, tkey)
+			if err != nil {
+				return err
+			}
+			if err := state.ValidateRunnerLifecycleInvariant(); err != nil {
+				return ErrRunningTaskQueueInvariant
+			}
+			lifecycleStatus, err := state.LifecycleStatusFuture.Get()
+			if err != nil {
+				return fmt.Errorf("failed to get task lifecycle status: %w", err)
+			}
+			switch lifecycleStatus {
 			case task.LifecycleStatusPending, task.LifecycleStatusRunning:
 				return nil
 			}
 
 			// move to pending queue
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
-			if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
+			if err := c.removeFromCurrentQueue(t, tkey); err != nil {
 				return fmt.Errorf("failed to remove task from current queue: %w", err)
 			}
 			return c.pendingSet.Add(t, []byte(tkey.Id()))
@@ -287,13 +305,23 @@ func (c *controller) suspendTaskRevisioned(
 			if err != nil {
 				return fmt.Errorf("failed to open task: %w", err)
 			}
-			currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-			if currentStatus == task.LifecycleStatusSuspended {
+			state, err := task.ReadAssignmentState(t, tkey)
+			if err != nil {
+				return err
+			}
+			if err := state.ValidateRunnerLifecycleInvariant(); err != nil {
+				return ErrRunningTaskQueueInvariant
+			}
+			lifecycleStatus, err := state.LifecycleStatusFuture.Get()
+			if err != nil {
+				return fmt.Errorf("failed to get task lifecycle status: %w", err)
+			}
+			if lifecycleStatus == task.LifecycleStatusSuspended {
 				return nil
 			}
 
 			// move to suspended queue if not there already
-			if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
+			if err := c.removeFromCurrentQueue(t, tkey); err != nil {
 				return fmt.Errorf("failed to remove task from current queue: %w", err)
 			}
 			if err := c.suspendedSet.Add(t, []byte(tkey.Id())); err != nil {
@@ -330,9 +358,7 @@ func (c *controller) deleteTaskRevisioned(
 				}
 				return fmt.Errorf("failed to open task: %w", err)
 			}
-			currentStatus := tkey.LifecycleStatus().Get(t).MustGet()
-			if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil &&
-				!errors.Is(err, ErrNotInAnyQueue) {
+			if err := c.removeFromCurrentQueue(t, tkey); err != nil {
 				return fmt.Errorf("failed to remove task from current queue: %w", err)
 			}
 			return tkey.Clear(t)
@@ -397,24 +423,35 @@ func classifyBatchResult(decision task.RevisionDecision, err error) (taskv1.Batc
 		errors.Is(err, task.ErrCreateRevisionMustBeOne) ||
 		errors.Is(err, task.ErrRevisionGap) ||
 		errors.Is(err, directory.ErrDirNotExists) ||
-		errors.Is(err, ErrMissingInnerRequest) {
+		errors.Is(err, ErrMissingInnerRequest) ||
+		errors.Is(err, ErrMissingParameters) {
 		return taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, err.Error()
 	}
 	return taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_ERROR, err.Error()
 }
 
-// removeFromCurrentQueue removes the task from the current queue.
-// If the task is not in any queue, it returns ErrNotInAnyQueue.
-func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey, currentStatus task.LifecycleStatus) error {
-	switch currentStatus {
+// removeFromCurrentQueue removes the task from whichever queue is implied by its lifecycle state.
+func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey) error {
+	state, err := task.ReadAssignmentState(t, tkey)
+	if err != nil {
+		return err
+	}
+	if err := state.ValidateRunnerLifecycleInvariant(); err != nil {
+		return ErrRunningTaskQueueInvariant
+	}
+	lifecycleStatus, err := state.LifecycleStatusFuture.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get task lifecycle status: %w", err)
+	}
+	switch lifecycleStatus {
 	case task.LifecycleStatusRunning:
 		// Lifecycle invariant: a running task must be in its runner queue.
 		// If the queue is missing, surface this as an invariant violation.
-		runnerId := tkey.RunnerId().Get(t).MustGet()
-		if runnerId == nil {
-			return ErrRunningTaskQueueInvariant
+		runnerID, err := state.RunnerIDFuture.Get()
+		if err != nil {
+			return fmt.Errorf("failed to get task runner id: %w", err)
 		}
-		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, *runnerId)
+		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, *runnerID)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				return ErrRunningTaskQueueInvariant
@@ -437,7 +474,7 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 			return fmt.Errorf("failed to remove task from suspended set: %w", err)
 		}
 	default:
-		return fmt.Errorf("unknown status '%s'", currentStatus)
+		return fmt.Errorf("unknown status '%s'", lifecycleStatus)
 	}
 	return nil
 }

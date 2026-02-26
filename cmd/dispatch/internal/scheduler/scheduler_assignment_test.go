@@ -71,6 +71,33 @@ func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 	})
 }
 
+func TestAssignPendingFailsInvariantViolation(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, "worker-2")
+		taskID := task.Id("pending-task-invalid-runner")
+		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+
+		taskKey, err := tasksDir.Open(db, taskID)
+		require.NoError(t, err)
+		staleRunner := "stale-runner"
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			taskKey.RunnerId().Set(tx, &staleRunner)
+			taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		_, err = s.assignPending(
+			t.Context(),
+			[]string{string(taskID)},
+			scoresMap(map[string]float64{"worker-2": 0.7}),
+			activeRunnerSets,
+		)
+		require.Error(t, err)
+		require.ErrorIs(t, err, task.ErrNonRunningTaskHasRunnerID)
+	})
+}
+
 func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Scheduler, task.TasksDirectory, *reliableset.Set, *xsync.Map[string, *reliableset.Set]) {
 	t.Helper()
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)

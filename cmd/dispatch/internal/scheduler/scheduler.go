@@ -308,8 +308,18 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
-	status := taskKey.LifecycleStatus().Get(tx).MustGet()
-	if status != task.LifecycleStatusPending {
+	assignmentState, err := task.ReadAssignmentState(tx, taskKey)
+	if err != nil {
+		return err
+	}
+	if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+		return fmt.Errorf("task assignment invariant violation: %w", err)
+	}
+	lifecycleStatus, err := assignmentState.LifecycleStatusFuture.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get task lifecycle status: %w", err)
+	}
+	if lifecycleStatus != task.LifecycleStatusPending {
 		return ErrTaskNotInAssignableState
 	}
 	// Preserve lifecycle invariant atomically: running status implies queue membership.

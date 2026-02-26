@@ -310,7 +310,7 @@ func TestControllerActivateTask_RunningTaskIsNoOp(t *testing.T) {
 		taskID := "activate-running-noop"
 
 		mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
-		setTaskLifecycleStatus(t, db, taskID, task.LifecycleStatusRunning)
+		setTaskRunnerAndLifecycleStatus(t, db, taskID, "runner-a", task.LifecycleStatusRunning)
 		mustActivateTask(t, c, 2, taskID)
 
 		state, exists := readTaskState(t, db, taskID)
@@ -388,6 +388,39 @@ func TestControllerRevisionRules(t *testing.T) {
 			state, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
 			require.Equal(t, []byte("v2"), state.Input)
+		})
+	})
+}
+
+func TestControllerRejectsMissingParameters(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+
+		t.Run("create requires parameters", func(t *testing.T) {
+			callbackURL := "https://example.com/a"
+			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+				Revision: 1,
+				Request: &taskv1.CreateTaskRequest{
+					TaskId:      "missing-create-params",
+					ExecutorId:  "executor-a",
+					CallbackUrl: &callbackURL,
+					Parameters:  nil,
+				},
+			})
+			require.ErrorIs(t, err, ErrMissingParameters)
+		})
+
+		t.Run("update requires parameters", func(t *testing.T) {
+			taskID := "missing-update-params"
+			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
+				Revision: 2,
+				Request: &taskv1.UpdateTaskRequest{
+					TaskId:     taskID,
+					Parameters: nil,
+				},
+			})
+			require.ErrorIs(t, err, ErrMissingParameters)
 		})
 	})
 }
