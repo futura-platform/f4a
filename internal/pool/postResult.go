@@ -37,10 +37,16 @@ func (m *taskManager) run(ctx context.Context, r run.RunnableTask) error {
 }
 
 func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask, output []byte, taskErr error) error {
+	callbackUrl := runnable.CallbackUrl()
 	l := flog.FromContext(ctx)
+	if callbackUrl == nil {
+		l.LogAttrs(ctx, slog.LevelDebug, "no callback url, skipping result delivery",
+			slog.String("task_id", string(runnable.Id())))
+		return nil
+	}
 	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
 		slog.String("task_id", string(runnable.Id())),
-		slog.String("callback_url", runnable.CallbackUrl().String()),
+		slog.String("callback_url", callbackUrl.String()),
 		slog.Bool("task_error", taskErr != nil))
 	var body io.Reader
 	var contentType string
@@ -69,7 +75,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
-		runnable.CallbackUrl().String(),
+		callbackUrl.String(),
 		body,
 	)
 	if err != nil {

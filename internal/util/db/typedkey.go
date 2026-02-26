@@ -20,7 +20,12 @@ func (k TypedKey[T]) Get(tx fdb.ReadTransaction) *Future[T] {
 }
 
 func (k TypedKey[T]) Set(tx fdb.Transaction, v T) {
-	tx.Set(k.key, k.Serializer.Marshal(v))
+	bytes := k.Serializer.Marshal(v)
+	if bytes == nil {
+		tx.Clear(k.key)
+	} else {
+		tx.Set(k.key, bytes)
+	}
 }
 
 func (k TypedKey[T]) Key() fdb.KeyConvertible {

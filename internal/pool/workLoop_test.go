@@ -53,7 +53,7 @@ func seedTask(
 
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskDirectory.ExecutorId().Set(tx, executorId)
-		taskDirectory.CallbackUrl().Set(tx, callbackUrl)
+		taskDirectory.CallbackUrl().Set(tx, &callbackUrl)
 		taskDirectory.Input().Set(tx, []byte(id))
 		taskDirectory.RunnerId().Set(tx, runnerId)
 		taskDirectory.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)

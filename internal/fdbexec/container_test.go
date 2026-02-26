@@ -13,6 +13,7 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/futura-platform/futura/moment"
+	"github.com/futura-platform/futura/privateencoding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,7 @@ func TestExecutionContainer(t *testing.T) {
 				errSentinel := errors.New("boom")
 
 				err := container.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
+					privateencoding.Register[struct{}]()
 					testMoment := moment.NewMoment(
 						moment.NewFn[struct{}, struct{}](func(ctx context.Context, args struct{}) (struct{}, error) {
 							return struct{}{}, nil

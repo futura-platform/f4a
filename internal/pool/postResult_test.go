@@ -50,7 +50,7 @@ func loadRunnableTask(t *testing.T, db dbutil.DbRoot, callbackURL string) run.Ru
 	}
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskDirectory.ExecutorId().Set(tx, executorId)
-		taskDirectory.CallbackUrl().Set(tx, callbackURL)
+		taskDirectory.CallbackUrl().Set(tx, &callbackURL)
 		taskDirectory.Input().Set(tx, []byte(id))
 		return nil, nil
 	})

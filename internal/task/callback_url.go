@@ -1,8 +1,6 @@
 package task
 
 import (
-	"errors"
-
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
@@ -10,19 +8,23 @@ import (
 type callbackUrlSerializer struct{}
 
 // Marshal implements dbutil.serializable.
-func (s callbackUrlSerializer) Marshal(v string) []byte {
-	return []byte(v)
+func (s callbackUrlSerializer) Marshal(v *string) []byte {
+	if v == nil {
+		return nil
+	}
+	return []byte(*v)
 }
 
 // Unmarshal implements dbutil.serializable.
-func (s callbackUrlSerializer) Unmarshal(bytes []byte) (string, error) {
+func (s callbackUrlSerializer) Unmarshal(bytes []byte) (*string, error) {
 	if bytes == nil {
-		return "", errors.New("missing callback url")
+		return nil, nil
 	}
-	return string(bytes), nil
+	v := string(bytes)
+	return &v, nil
 }
 
-func (k TaskKey) CallbackUrl() dbutil.TypedKey[string] {
+func (k TaskKey) CallbackUrl() dbutil.TypedKey[*string] {
 	return dbutil.NewTypedKey(
 		k.d.Pack(tuple.Tuple{string(k.id), "callback_url"}),
 		callbackUrlSerializer{},

@@ -11,9 +11,9 @@ func TestCallbackUrlSerializerRoundTrip(t *testing.T) {
 	serializer := callbackUrlSerializer{}
 	original := "https://example.com/callback?mode=fast"
 
-	marshalled := serializer.Marshal(original)
+	marshalled := serializer.Marshal(&original)
 	decoded, err := serializer.Unmarshal(marshalled)
 
 	require.NoError(t, err)
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, original, *decoded)
 }

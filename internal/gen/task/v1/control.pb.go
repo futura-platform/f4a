@@ -127,7 +127,7 @@ type CreateTaskRequest struct {
 	// This is to reduce hotspots on the database.
 	TaskId        string          `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	ExecutorId    string          `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	CallbackUrl   string          `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	CallbackUrl   *string         `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl,proto3,oneof" json:"callback_url,omitempty"`
 	Parameters    *TaskParameters `protobuf:"bytes,4,opt,name=parameters,proto3" json:"parameters,omitempty"` // todo: add the ability to connect this task to a trace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -178,8 +178,8 @@ func (x *CreateTaskRequest) GetExecutorId() string {
 }
 
 func (x *CreateTaskRequest) GetCallbackUrl() string {
-	if x != nil {
-		return x.CallbackUrl
+	if x != nil && x.CallbackUrl != nil {
+		return *x.CallbackUrl
 	}
 	return ""
 }
@@ -1198,15 +1198,16 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"\x15task/v1/control.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\"&\n" +
 	"\x0eTaskParameters\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\fR\x05input\"\xb2\x01\n" +
+	"\x05input\x18\x01 \x01(\fR\x05input\"\xc8\x01\n" +
 	"\x11CreateTaskRequest\x12 \n" +
 	"\atask_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18 R\x06taskId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
-	"executorId\x12!\n" +
-	"\fcallback_url\x18\x03 \x01(\tR\vcallbackUrl\x127\n" +
+	"executorId\x12&\n" +
+	"\fcallback_url\x18\x03 \x01(\tH\x00R\vcallbackUrl\x88\x01\x01\x127\n" +
 	"\n" +
 	"parameters\x18\x04 \x01(\v2\x17.task.v1.TaskParametersR\n" +
-	"parameters\"\x14\n" +
+	"parametersB\x0f\n" +
+	"\r_callback_url\"\x14\n" +
 	"\x12CreateTaskResponse\"s\n" +
 	"\x1fControlServiceCreateTaskRequest\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +
@@ -1369,6 +1370,7 @@ func file_task_v1_control_proto_init() {
 	if File_task_v1_control_proto != nil {
 		return
 	}
+	file_task_v1_control_proto_msgTypes[1].OneofWrappers = []any{}
 	file_task_v1_control_proto_msgTypes[17].OneofWrappers = []any{
 		(*BatchTaskOperation_CreateTask)(nil),
 		(*BatchTaskOperation_UpdateTask)(nil),

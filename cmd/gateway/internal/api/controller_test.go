@@ -27,7 +27,7 @@ func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
 
 type taskState struct {
 	ExecutorID      string
-	CallbackURL     string
+	CallbackURL     *string
 	Input           []byte
 	LifecycleStatus task.LifecycleStatus
 }
@@ -45,7 +45,7 @@ func mustCreateTask(
 		Request: &taskv1.CreateTaskRequest{
 			TaskId:      taskID,
 			ExecutorId:  executorID,
-			CallbackUrl: callbackURL,
+			CallbackUrl: &callbackURL,
 			Parameters:  &taskv1.TaskParameters{Input: input},
 		},
 	})
@@ -153,13 +153,14 @@ func TestControllerCreateTask(t *testing.T) {
 		t.Run("functionality", func(t *testing.T) {
 			// Intentionally sequential: idempotency subtest reuses this state.
 			taskID := "create-functional"
+			callbackURL := "https://example.com/a"
 			expected := taskState{
 				ExecutorID:      "executor-a",
-				CallbackURL:     "https://example.com/a",
+				CallbackURL:     &callbackURL,
 				Input:           []byte("payload-a"),
 				LifecycleStatus: task.LifecycleStatusSuspended,
 			}
-			mustCreateTask(t, c, 1, taskID, expected.ExecutorID, expected.CallbackURL, expected.Input)
+			mustCreateTask(t, c, 1, taskID, expected.ExecutorID, callbackURL, expected.Input)
 
 			state, exists := readTaskState(t, db, taskID)
 			require.True(t, exists)
@@ -190,7 +191,7 @@ func TestControllerUpdateTask(t *testing.T) {
 			require.True(t, exists)
 			require.Equal(t, []byte("after"), expected.Input)
 			require.Equal(t, "executor-a", expected.ExecutorID)
-			require.Equal(t, "https://example.com/a", expected.CallbackURL)
+			require.Equal(t, "https://example.com/a", *expected.CallbackURL)
 			require.Equal(t, task.LifecycleStatusSuspended, expected.LifecycleStatus)
 
 			t.Run("idempotency", func(t *testing.T) {
@@ -299,12 +300,13 @@ func TestControllerRevisionRules(t *testing.T) {
 		c := newTestController(t, db)
 
 		t.Run("create revision must be one", func(t *testing.T) {
+			callbackURL := "https://example.com/a"
 			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 				Revision: 2,
 				Request: &taskv1.CreateTaskRequest{
 					TaskId:      "bad-create-revision",
 					ExecutorId:  "executor-a",
-					CallbackUrl: "https://example.com/a",
+					CallbackUrl: &callbackURL,
 					Parameters:  &taskv1.TaskParameters{Input: []byte("payload")},
 				},
 			})
@@ -352,6 +354,8 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
 
+		callbackUrlA := "https://example.com/a"
+		callbackUrlB := "https://example.com/b"
 		resp, err := c.BatchTaskOperations(context.Background(), &taskv1.BatchTaskOperationsRequest{
 			Operations: []*taskv1.BatchTaskOperation{
 				{
@@ -361,7 +365,7 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 							Request: &taskv1.CreateTaskRequest{
 								TaskId:      "batch-task-a",
 								ExecutorId:  "executor-a",
-								CallbackUrl: "https://example.com/a",
+								CallbackUrl: &callbackUrlA,
 								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
 							},
 						},
@@ -374,7 +378,7 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 							Request: &taskv1.CreateTaskRequest{
 								TaskId:      "batch-task-b",
 								ExecutorId:  "executor-b",
-								CallbackUrl: "https://example.com/b",
+								CallbackUrl: &callbackUrlB,
 								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
 							},
 						},

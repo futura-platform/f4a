@@ -29,9 +29,7 @@ func setTaskMetadata(
 		if executorId != nil {
 			taskKey.ExecutorId().Set(tx, *executorId)
 		}
-		if callbackUrl != nil {
-			taskKey.CallbackUrl().Set(tx, *callbackUrl)
-		}
+		taskKey.CallbackUrl().Set(tx, callbackUrl)
 		return nil, nil
 	})
 	require.NoError(t, err)

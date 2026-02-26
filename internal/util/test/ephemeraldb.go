@@ -84,7 +84,7 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 	// clear this path from any previous tests
 	_, err = directory.Root().Remove(db, path)
 	require.NoError(t, err)
-	err = db.Options().SetTransactionRetryLimit(0)
+	err = db.Options().SetTransactionRetryLimit(2)
 	require.NoError(t, err)
 	err = db.Options().SetTransactionTimeout(10000)
 	require.NoError(t, err)

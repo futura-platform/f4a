@@ -15,9 +15,12 @@ import (
 
 type RunnableTask struct {
 	Runnable
+	// BE AWARE: this value is nullable
 	callbackUrl *url.URL
 }
 
+// CallbackUrl returns the callback url for the task.
+// This is nullable, and should be checked before using.
 func (r RunnableTask) CallbackUrl() *url.URL {
 	return r.callbackUrl
 }
@@ -31,7 +34,7 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 	}
 
 	executorIdFutures := make([]*dbutil.Future[execute.ExecutorId], len(ids))
-	callbackUrlFutures := make([]*dbutil.Future[string], len(ids))
+	callbackUrlFutures := make([]*dbutil.Future[*string], len(ids))
 	taskKeys := make([]task.TaskKey, len(ids))
 	for i, id := range ids {
 		tkey, err := tasksDirectory.Open(db, id)
@@ -76,12 +79,15 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 				mu.Unlock()
 				return
 			}
-			callbackUrl, err := url.Parse(callbackUrlValue)
-			if err != nil {
-				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", id, err))
-				mu.Unlock()
-				return
+			var callbackUrl *url.URL
+			if callbackUrlValue != nil {
+				callbackUrl, err = url.Parse(*callbackUrlValue)
+				if err != nil {
+					mu.Lock()
+					failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", id, err))
+					mu.Unlock()
+					return
+				}
 			}
 
 			tkey := taskKeys[i]

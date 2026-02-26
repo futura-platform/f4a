@@ -182,7 +182,7 @@ func (c *controller) createTaskRevisioned(
 				return fmt.Errorf("failed to create task: %w", err)
 			}
 			tkey.ExecutorId().Set(t, execute.ExecutorId(inner.GetExecutorId()))
-			tkey.CallbackUrl().Set(t, inner.GetCallbackUrl())
+			tkey.CallbackUrl().Set(t, inner.CallbackUrl)
 			tkey.Input().Set(t, inner.GetParameters().GetInput())
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
 			return c.suspendedSet.Add(t, []byte(tkey.Id()))
