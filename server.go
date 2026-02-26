@@ -171,7 +171,7 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 						}
 
 						taskRunnerId := tkey.RunnerId().Get(tx).MustGet()
-						if taskRunnerId != nil && *taskRunnerId != runnerId {
+						if taskRunnerId == nil || *taskRunnerId != runnerId {
 							// Task has been moved off this runner already. skip idempotently.
 							continue
 						}
