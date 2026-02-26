@@ -23,8 +23,9 @@ func setPath(db dbutil.DbRoot, name string) []string {
 
 func newSet(t testing.TB, db dbutil.DbRoot, name string) *Set {
 	t.Helper()
-	set, err := Create(db, setPath(db, name))
+	set, cancelSet, err := Create(db, setPath(db, name))
 	require.NoError(t, err)
+	t.Cleanup(cancelSet)
 	return set
 }
 
@@ -114,13 +115,15 @@ func TestSetAddRemove(t *testing.T) {
 func TestSetCreateOrOpenReusesPath(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		path := setPath(db, "reopen")
-		set1, err := Create(db, path)
+		set1, cancelSet1, err := Create(db, path)
 		require.NoError(t, err)
+		t.Cleanup(cancelSet1)
 
 		addItem(t, db, set1, []byte("payload"))
 
-		set2, err := Open(db, path)
+		set2, cancelSet2, err := Open(db, path)
 		require.NoError(t, err)
+		t.Cleanup(cancelSet2)
 
 		items := readSetValues(t, db, set2)
 		require.True(t, stateSetsEqual(items, mapset.NewSet[string]("payload")))
@@ -129,11 +132,13 @@ func TestSetCreateOrOpenReusesPath(t *testing.T) {
 
 func TestSetCreateOrOpenPathIsolation(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		setA, err := CreateOrOpen(db, setPath(db, "isolation_a"))
+		setA, cancelSetA, err := CreateOrOpen(db, setPath(db, "isolation_a"))
 		require.NoError(t, err)
+		t.Cleanup(cancelSetA)
 
-		setB, err := CreateOrOpen(db, setPath(db, "isolation_b"))
+		setB, cancelSetB, err := CreateOrOpen(db, setPath(db, "isolation_b"))
 		require.NoError(t, err)
+		t.Cleanup(cancelSetB)
 
 		addItem(t, db, setA, []byte("alpha"))
 		addItem(t, db, setB, []byte("bravo"))
@@ -154,11 +159,12 @@ func TestSetCreateOrOpenPathIsolation(t *testing.T) {
 	})
 }
 
-func TestSetCloseRemovesDirectories(t *testing.T) {
+func TestSetClearRemovesDirectories(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		path := setPath(db, "close_cleanup")
-		set, err := CreateOrOpen(db, path)
+		set, cancelSet, err := CreateOrOpen(db, path)
 		require.NoError(t, err)
+		t.Cleanup(cancelSet)
 
 		addItem(t, db, set, []byte("payload"))
 
@@ -166,17 +172,18 @@ func TestSetCloseRemovesDirectories(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, exists)
 
-		require.NoError(t, set.Close())
-		require.NoError(t, set.Close())
+		require.NoError(t, set.Clear())
+		require.NoError(t, set.Clear())
 
 		exists, err = db.Root.Exists(db, path)
 		require.NoError(t, err)
 		require.False(t, exists)
 
-		reopened, err := CreateOrOpen(db, path)
+		reopened, cancelReopened, err := CreateOrOpen(db, path)
 		require.NoError(t, err)
+		t.Cleanup(cancelReopened)
 		require.Empty(t, readSetValues(t, db, reopened).ToSlice())
-		require.NoError(t, reopened.Close())
+		require.NoError(t, reopened.Clear())
 	})
 }
 

@@ -129,7 +129,10 @@ func (q *FIFO) Stream(ctx context.Context) (
 			// is an intentional design decision to maximize batching opportunities.
 			// Since our algorithm gaurantees eventual consistency, waiting more between events raises the probability of batching more items.
 			select {
-			case c := <-onEpochCh:
+			case c, ok := <-onEpochCh:
+				if !ok {
+					return
+				}
 				// enqueue all new items
 				if len(c.enqueued) > 0 {
 					currentKvs = append(currentKvs, c.enqueued...)
@@ -149,7 +152,10 @@ func (q *FIFO) Stream(ctx context.Context) (
 				}
 
 				// error handling, errors are fatal and will cancel the stream
-			case err := <-onEpochErrCh:
+			case err, ok := <-onEpochErrCh:
+				if !ok {
+					return
+				}
 				_errCh <- err
 				return
 			}

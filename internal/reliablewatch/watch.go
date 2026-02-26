@@ -126,32 +126,26 @@ func Watch[T any](
 	wctx, cancel := context.WithCancel(ctx)
 
 	ch, errCh := WatchCh(wctx, db, key, initialValue, initialWatch, getValue)
-	var mu sync.Mutex
-	var onChangeErr error
 	return func(onChange func(T) error) error {
 		defer cancel()
-		for {
+		for ch != nil || errCh != nil {
 			select {
-			case value := <-ch:
-				go func() {
-					err := onChange(value)
-					if err != nil {
-						mu.Lock()
-						onChangeErr = err
-						mu.Unlock()
-						cancel()
-					}
-				}()
-			case err := <-errCh:
-				a := ctx
-				a.Err()
-				mu.Lock()
-				if onChangeErr != nil {
-					return onChangeErr
+			case value, ok := <-ch:
+				if !ok {
+					ch = nil
+					continue
 				}
-				mu.Unlock()
+				if err := onChange(value); err != nil {
+					return err
+				}
+			case err, ok := <-errCh:
+				if !ok {
+					errCh = nil
+					continue
+				}
 				return err
 			}
 		}
+		return nil
 	}
 }

@@ -17,7 +17,7 @@ import (
 func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
 	t.Helper()
 
-	handler, err := NewController(db)
+	handler, _, err := NewController(db)
 	require.NoError(t, err)
 
 	c, ok := handler.(*controller)

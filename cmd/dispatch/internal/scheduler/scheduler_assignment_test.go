@@ -66,20 +66,23 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Sche
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
 
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
 	require.NoError(t, err)
+	t.Cleanup(pendingSetCancel)
 
-	workerSet, err := pool.CreateOrOpenTaskSetForRunner(db, workerID)
+	workerSet, workerSetCancel, err := pool.CreateOrOpenTaskSetForRunner(db, workerID)
 	require.NoError(t, err)
+	t.Cleanup(workerSetCancel)
 
 	s := &Scheduler{
 		cfg: Config{
 			BatchTxParallelism: 1,
 			Logger:             slog.Default(),
 		},
-		db:         db,
-		taskDir:    tasksDir,
-		pendingSet: pendingSet,
+		db:               db,
+		taskDir:          tasksDir,
+		pendingSet:       pendingSet,
+		pendingSetCancel: pendingSetCancel,
 		taskSets: map[string]*reliableset.Set{
 			workerID: workerSet,
 		},

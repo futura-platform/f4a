@@ -34,16 +34,19 @@ func run() error {
 		return fmt.Errorf("failed to create or open default db root: %w", err)
 	}
 
-	controller, err := api.NewController(dbRoot)
+	controller, releaseController, err := api.NewController(dbRoot)
 	if err != nil {
 		return fmt.Errorf("failed to create controller: %w", err)
 	}
+	defer releaseController()
 
 	s, mux := serverutil.NewBaseK8sService(dbRoot, func() int {
 		return http.StatusOK
 	}, func() int {
 		return http.StatusOK
 	})
+	s.RegisterOnShutdown(releaseController)
+
 	gcCtx, cancelGC := context.WithCancel(context.Background())
 	defer cancelGC()
 	s.RegisterOnShutdown(cancelGC)

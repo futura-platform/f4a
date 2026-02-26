@@ -387,8 +387,9 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 				readerCancels = append(readerCancels, streamCancel)
 				readerCancelMu.Unlock()
 
-				readerSet, err := Open(db, setPath(db, "stream_fuzz_concurrent"))
+				readerSet, cancelReaderSet, err := Open(db, setPath(db, "stream_fuzz_concurrent"))
 				require.NoError(t, err)
+				t.Cleanup(cancelReaderSet)
 				initialValues, events, streamErrCh, err := readerSet.Stream(streamCtx)
 				require.NoError(t, err)
 

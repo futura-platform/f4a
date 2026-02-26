@@ -20,30 +20,34 @@ import (
 
 func NewController(
 	db dbutil.DbRoot,
-) (taskv1connect.ControlServiceHandler, error) {
+) (taskv1connect.ControlServiceHandler, context.CancelFunc, error) {
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or open tasks directory: %v", err)
+		return nil, nil, fmt.Errorf("failed to create or open tasks directory: %v", err)
 	}
 	revisionStore, err := task.CreateOrOpenRevisionStore(db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or open revision store: %v", err)
+		return nil, nil, fmt.Errorf("failed to create or open revision store: %v", err)
 	}
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or open pending set: %v", err)
+		return nil, nil, fmt.Errorf("failed to create or open pending set: %v", err)
 	}
-	suspendedSet, err := servicestate.CreateOrOpenSuspendedSet(db)
+	suspendedSet, suspendedSetCancel, err := servicestate.CreateOrOpenSuspendedSet(db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or open suspended set: %v", err)
+		pendingSetCancel()
+		return nil, nil, fmt.Errorf("failed to create or open suspended set: %v", err)
 	}
 	return &controller{
-		db:            db,
-		taskDir:       taskDir,
-		revisionStore: revisionStore,
-		pendingSet:    pendingSet,
-		suspendedSet:  suspendedSet,
-	}, nil
+			db:            db,
+			taskDir:       taskDir,
+			revisionStore: revisionStore,
+			pendingSet:    pendingSet,
+			suspendedSet:  suspendedSet,
+		}, func() {
+			pendingSetCancel()
+			suspendedSetCancel()
+		}, nil
 }
 
 type controller struct {
@@ -236,6 +240,7 @@ func (c *controller) activateTaskRevisioned(
 		req.GetRevision(),
 		task.RevisionOperationMutate,
 		func(t fdb.Transaction) error {
+			// check if task is already pending or running
 			tkey, err := openTask(t, c.taskDir, inner)
 			if err != nil {
 				return fmt.Errorf("failed to open task: %w", err)
@@ -245,7 +250,12 @@ func (c *controller) activateTaskRevisioned(
 			case task.LifecycleStatusPending, task.LifecycleStatusRunning:
 				return nil
 			}
+
+			// move to pending queue
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
+			if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
+				return fmt.Errorf("failed to remove task from current queue: %w", err)
+			}
 			return c.pendingSet.Add(t, []byte(tkey.Id()))
 		},
 	)
@@ -269,6 +279,7 @@ func (c *controller) suspendTaskRevisioned(
 		req.GetRevision(),
 		task.RevisionOperationMutate,
 		func(t fdb.Transaction) error {
+			// check if task is already suspended
 			tkey, err := openTask(t, c.taskDir, inner)
 			if err != nil {
 				return fmt.Errorf("failed to open task: %w", err)
@@ -277,6 +288,8 @@ func (c *controller) suspendTaskRevisioned(
 			if currentStatus == task.LifecycleStatusSuspended {
 				return nil
 			}
+
+			// move to suspended queue if not there already
 			if err := c.removeFromCurrentQueue(t, tkey, currentStatus); err != nil {
 				return fmt.Errorf("failed to remove task from current queue: %w", err)
 			}
@@ -393,10 +406,11 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 	switch currentStatus {
 	case task.LifecycleStatusRunning:
 		runnerId := tkey.RunnerId().Get(t).MustGet()
-		taskSet, err := pool.CreateOrOpenTaskSetForRunner(c.db, runnerId)
+		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, runnerId)
 		if err != nil {
-			return fmt.Errorf("failed to create or open task set: %v", err)
+			return fmt.Errorf("failed to open task set: %v", err)
 		}
+		defer cancelTaskSet()
 		if err := taskSet.Remove(t, []byte(tkey.Id())); err != nil {
 			return fmt.Errorf("failed to remove task from task set: %v", err)
 		}
@@ -405,7 +419,9 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 			return fmt.Errorf("failed to remove task from ready set: %v", err)
 		}
 	case task.LifecycleStatusSuspended:
-		return ErrNotInAnyQueue
+		if err := c.suspendedSet.Remove(t, []byte(tkey.Id())); err != nil {
+			return fmt.Errorf("failed to remove task from suspended set: %v", err)
+		}
 	default:
 		return fmt.Errorf("unknown status '%s'", currentStatus)
 	}

@@ -51,11 +51,12 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg        Config
-	db         dbutil.DbRoot
-	taskDir    task.TasksDirectory
-	pendingSet *reliableset.Set
-	clients    *k8s.Clients
+	cfg              Config
+	db               dbutil.DbRoot
+	taskDir          task.TasksDirectory
+	pendingSet       *reliableset.Set
+	pendingSetCancel context.CancelFunc
+	clients          *k8s.Clients
 
 	scoreCache *scoreCache
 	taskSets   map[string]*reliableset.Set
@@ -86,20 +87,21 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
 	}
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
 	if err != nil {
 		return fmt.Errorf("failed to open pending set: %w", err)
 	}
 
 	s := &Scheduler{
-		cfg:        cfg,
-		db:         db,
-		taskDir:    taskDir,
-		pendingSet: pendingSet,
-		clients:    clients,
-		scoreCache: newScoreCache(cfg.ScoreAlpha),
-		taskSets:   make(map[string]*reliableset.Set),
-		logger:     cfg.Logger,
+		cfg:              cfg,
+		db:               db,
+		taskDir:          taskDir,
+		pendingSet:       pendingSet,
+		pendingSetCancel: pendingSetCancel,
+		clients:          clients,
+		scoreCache:       newScoreCache(cfg.ScoreAlpha),
+		taskSets:         make(map[string]*reliableset.Set),
+		logger:           cfg.Logger,
 	}
 	return s.run(ctx)
 }
@@ -108,6 +110,8 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 // It assigns tasks to the fittest workers exactly once per pending task.
 // It also periodically refreshes the worker scores to evaluate fitness.
 func (s *Scheduler) run(ctx context.Context) error {
+	defer s.pendingSetCancel()
+
 	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
@@ -186,17 +190,26 @@ func (s *Scheduler) refreshScores(ctx context.Context) (map[string]float64, erro
 }
 
 func (s *Scheduler) ensureTaskSets(scores map[string]float64) map[string]float64 {
+	unseenWorkers := mapset.NewSetFromMapKeys(s.taskSets)
 	for worker := range scores {
+		unseenWorkers.Remove(worker)
+
 		if _, ok := s.taskSets[worker]; ok {
 			continue
 		}
-		taskSet, err := pool.CreateOrOpenTaskSetForRunner(s.db, worker)
+		taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(s.db, worker)
 		if err != nil {
 			s.logger.Error("failed to open worker task set", "worker", worker, "error", err)
 			delete(scores, worker)
 			continue
 		}
+		// we dont need to be maintaining compaction from the scheduler. Let workers do that
+		cancelTaskSet()
 		s.taskSets[worker] = taskSet
+	}
+	// purge unseen workers
+	for worker := range unseenWorkers.Iter() {
+		delete(s.taskSets, worker)
 	}
 	return scores
 }

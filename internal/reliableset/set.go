@@ -35,39 +35,35 @@ type Set struct {
 	compactionLock    *reliablelock.Lock[string]
 	compactionDone    chan struct{}
 
-	closeOnce sync.Once
-	closeErr  error
+	releaseOnce sync.Once
+	clearOnce   sync.Once
+	clearErr    error
+	clearFunc   func() (bool, error)
 }
 type setDirectories struct {
-	rootSubspace     directory.DirectorySubspace
 	snapshotSubspace directory.DirectorySubspace
 	logSubspace      directory.DirectorySubspace
 	cursorSubspace   directory.DirectorySubspace
 	metadataSubspace directory.DirectorySubspace
 }
 
-func newSetDirectories[T fdb.ReadTransaction](
-	tx T,
+func newSetDirectories(
 	path []string,
-	directoryConstructor func(t T, path []string, layer []byte) (directory.DirectorySubspace, error),
+	directoryConstructor func(path []string) (directory.DirectorySubspace, error),
 ) (d setDirectories, err error) {
-	d.rootSubspace, err = directoryConstructor(tx, path, nil)
-	if err != nil {
-		return d, fmt.Errorf("failed to open root set directory: %w", err)
-	}
-	d.snapshotSubspace, err = directoryConstructor(tx, append(path, "snapshot"), nil)
+	d.snapshotSubspace, err = directoryConstructor(append(append([]string{}, path...), "snapshot"))
 	if err != nil {
 		return d, fmt.Errorf("failed to create snapshot subspace: %w", err)
 	}
-	d.logSubspace, err = directoryConstructor(tx, append(path, "log"), nil)
+	d.logSubspace, err = directoryConstructor(append(append([]string{}, path...), "log"))
 	if err != nil {
 		return d, fmt.Errorf("failed to create log subspace: %w", err)
 	}
-	d.cursorSubspace, err = directoryConstructor(tx, append(path, "cursor"), nil)
+	d.cursorSubspace, err = directoryConstructor(append(append([]string{}, path...), "cursor"))
 	if err != nil {
 		return d, fmt.Errorf("failed to create cursor subspace: %w", err)
 	}
-	d.metadataSubspace, err = directoryConstructor(tx, append(path, "metadata"), nil)
+	d.metadataSubspace, err = directoryConstructor(append(append([]string{}, path...), "metadata"))
 	if err != nil {
 		return d, fmt.Errorf("failed to create metadata subspace: %w", err)
 	}
@@ -75,45 +71,61 @@ func newSetDirectories[T fdb.ReadTransaction](
 }
 
 func constructWith(
-	db fdb.Transactor,
+	db dbutil.DbRoot,
 	path []string,
-	directoryConstructor func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error),
-) (*Set, error) {
-	var s *Set
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		dirs, err := newSetDirectories(tx, path, directoryConstructor)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create directories: %w", err)
-		}
-		s = &Set{
-			db:             tx.GetDatabase(),
-			setDirectories: dirs,
-		}
-		return nil, nil
-	})
+	directoryConstructor func(path []string) (directory.DirectorySubspace, error),
+	clearFunc func() (bool, error),
+) (*Set, context.CancelFunc, error) {
+	dirs, err := newSetDirectories(path, directoryConstructor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create set: %w", err)
+		return nil, nil, fmt.Errorf("failed to create directories: %w", err)
+	}
+	s := &Set{
+		db:             db.Database,
+		setDirectories: dirs,
+		clearFunc:      clearFunc,
 	}
 	s.initRuntime()
-	return s, nil
+	return s, s.releaseRuntime, nil
 }
 
-func Create(db dbutil.DbRoot, path []string) (*Set, error) {
-	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
-		return db.Root.Create(t, path, layer)
-	})
+func Create(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+	return constructWith(
+		db,
+		path,
+		func(path []string) (directory.DirectorySubspace, error) {
+			return db.Root.Create(db, path, nil)
+		},
+		func() (bool, error) {
+			return db.Root.Remove(db, path)
+		},
+	)
 }
 
-func Open(db dbutil.DbRoot, path []string) (*Set, error) {
-	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
-		return db.Root.Open(t, path, layer)
-	})
+func Open(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+	return constructWith(
+		db,
+		path,
+		func(path []string) (directory.DirectorySubspace, error) {
+			return db.Root.Open(db, path, nil)
+		},
+		func() (bool, error) {
+			return db.Root.Remove(db, path)
+		},
+	)
 }
 
-func CreateOrOpen(db dbutil.DbRoot, path []string) (*Set, error) {
-	return constructWith(db, path, func(t fdb.Transaction, path []string, layer []byte) (directory.DirectorySubspace, error) {
-		return db.Root.CreateOrOpen(t, path, layer)
-	})
+func CreateOrOpen(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+	return constructWith(
+		db,
+		path,
+		func(path []string) (directory.DirectorySubspace, error) {
+			return db.Root.CreateOrOpen(db, path, nil)
+		},
+		func() (bool, error) {
+			return db.Root.Remove(db, path)
+		},
+	)
 }
 
 func (s *Set) initRuntime() {
@@ -133,6 +145,13 @@ func (s *Set) initRuntime() {
 		defer close(s.compactionDone)
 		_ = s.runCompactionLoop()
 	}()
+}
+
+func (s *Set) releaseRuntime() {
+	s.releaseOnce.Do(func() {
+		s.compactionCancel()
+		<-s.compactionDone
+	})
 }
 
 func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
@@ -160,21 +179,20 @@ func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.
 	return snapshot, tail, nil
 }
 
-// Close stops background runtime and removes this set directory recursively.
+// Clear stops background runtime and removes this set directory recursively.
 // It is idempotent.
-func (s *Set) Close() error {
-	s.closeOnce.Do(func() {
-		s.compactionCancel()
-		<-s.compactionDone
-
-		removed, err := s.rootSubspace.Remove(s.db, []string{})
+func (s *Set) Clear() error {
+	s.clearOnce.Do(func() {
+		s.releaseRuntime()
+		removed, err := s.clearFunc()
 		if err != nil {
-			s.closeErr = fmt.Errorf("failed to remove set directory: %w", err)
+			s.clearErr = fmt.Errorf("failed to remove set directory: %w", err)
 			return
 		}
 		if !removed {
-			s.closeErr = fmt.Errorf("failed to remove set directory: not found")
+			// Already removed; treat as idempotent success.
+			return
 		}
 	})
-	return s.closeErr
+	return s.clearErr
 }

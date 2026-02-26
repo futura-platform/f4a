@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync/atomic"
 
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/util"
@@ -53,10 +54,11 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	if err != nil {
 		return err
 	}
-	taskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, runnerId)
+	taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, runnerId)
 	if err != nil {
 		return err
 	}
+	defer cancelTaskSet()
 
 	group, ctx := errgroup.WithContext(ctx)
 	router := execute.NewRouter()
@@ -70,9 +72,11 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		}
 		router = execute.NewRouter(routes...)
 	}
+	var workLoopInitiatedShutdown atomic.Bool
 
 	group.Go(func() error {
 		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, router)
+		workLoopInitiatedShutdown.Store(true)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.SHUTDOWN_TIMEOUT)
 		defer cancel()
@@ -84,13 +88,14 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	})
 	group.Go(func() error {
 		err := serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
-		if err != nil {
-			if errors.Is(err, http.ErrServerClosed) {
-				return taskSet.Close()
+		if errors.Is(err, http.ErrServerClosed) {
+			if workLoopInitiatedShutdown.Load() {
+				// Work loop requested shutdown (e.g. internal error). Do not clear queue assignment state.
+				return nil
 			}
-			return err
+			return taskSet.Clear()
 		}
-		return nil
+		return err
 	})
 
 	return group.Wait()
