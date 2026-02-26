@@ -90,16 +90,24 @@ func RunWorkLoop(
 		}
 	}
 
-	for {
+	for eventsCh != nil || streamErrCh != nil {
 		select {
 		case err := <-runErrCh:
 			return err
-		case err := <-streamErrCh:
+		case err, ok := <-streamErrCh:
+			if !ok {
+				streamErrCh = nil
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("task set failed: %w", err)
 			}
 			return nil
-		case b := <-eventsCh:
+		case b, ok := <-eventsCh:
+			if !ok {
+				eventsCh = nil
+				continue
+			}
 			// record all the changes that happened in this batch
 			// (a key can either be in the added set or the removed set, but NOT both)
 			addedSet := mapset.NewSetWithSize[string](len(b))
@@ -133,6 +141,7 @@ func RunWorkLoop(
 			}
 		}
 	}
+	return nil
 }
 
 const logPreviewLength = 10
