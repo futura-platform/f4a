@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
+	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/flog"
@@ -144,15 +144,7 @@ func processAddedBatch(
 	items mapset.Set[string],
 ) error {
 	l := flog.FromContext(ctx)
-	previewTaskIds := items.ToSlice()
-	truncatedPreview := len(previewTaskIds) > logPreviewLength
-	if truncatedPreview {
-		previewTaskIds = previewTaskIds[:logPreviewLength]
-	}
-	previewTaskIdsString := strings.Join(previewTaskIds, ", ")
-	if truncatedPreview {
-		previewTaskIdsString += ", ..."
-	}
+	previewTaskIdsString := util.JoinWithMaxPreview(items.ToSlice(), logPreviewLength)
 	l.LogAttrs(ctx, slog.LevelDebug, "processing added batch",
 		slog.String("item_count", fmt.Sprintf("%d", items.Cardinality())),
 		slog.String("task_ids", previewTaskIdsString),
