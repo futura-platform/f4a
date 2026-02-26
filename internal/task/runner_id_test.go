@@ -11,8 +11,8 @@ func TestRunnerIdSerializerRoundTrip(t *testing.T) {
 	serializer := runnerIdSerializer{}
 	original := "runner-id"
 
-	marshalled := serializer.Marshal(original)
+	marshalled := serializer.Marshal(&original)
 	decoded, err := serializer.Unmarshal(marshalled)
 	require.NoError(t, err)
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, original, *decoded)
 }

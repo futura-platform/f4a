@@ -162,6 +162,9 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 var (
 	ErrNotInAnyQueue       = errors.New("task is not in any queue")
 	ErrMissingInnerRequest = errors.New("missing revisioned request payload")
+	// ErrRunningTaskQueueInvariant is returned when a task is marked running but
+	// task has no runner id, or the corresponding runner queue does not exist.
+	ErrRunningTaskQueueInvariant = errors.New("running task queue invariant violated")
 )
 
 func (c *controller) createTaskRevisioned(
@@ -405,22 +408,33 @@ func classifyBatchResult(decision task.RevisionDecision, err error) (taskv1.Batc
 func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey, currentStatus task.LifecycleStatus) error {
 	switch currentStatus {
 	case task.LifecycleStatusRunning:
+		// Lifecycle invariant: a running task must be in its runner queue.
+		// If the queue is missing, surface this as an invariant violation.
 		runnerId := tkey.RunnerId().Get(t).MustGet()
-		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, runnerId)
+		if runnerId == nil {
+			return ErrRunningTaskQueueInvariant
+		}
+		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, *runnerId)
 		if err != nil {
-			return fmt.Errorf("failed to open task set: %v", err)
+			if errors.Is(err, directory.ErrDirNotExists) {
+				return ErrRunningTaskQueueInvariant
+			}
+			return fmt.Errorf("failed to open task set: %w", err)
 		}
 		defer cancelTaskSet()
 		if err := taskSet.Remove(t, []byte(tkey.Id())); err != nil {
-			return fmt.Errorf("failed to remove task from task set: %v", err)
+			return fmt.Errorf("failed to remove task from task set: %w", err)
 		}
+
+		// now that the task is removed from the runner's queue, we must also clear the task's runner_id state
+		tkey.RunnerId().Set(t, nil)
 	case task.LifecycleStatusPending:
 		if err := c.pendingSet.Remove(t, []byte(tkey.Id())); err != nil {
-			return fmt.Errorf("failed to remove task from ready set: %v", err)
+			return fmt.Errorf("failed to remove task from ready set: %w", err)
 		}
 	case task.LifecycleStatusSuspended:
 		if err := c.suspendedSet.Remove(t, []byte(tkey.Id())); err != nil {
-			return fmt.Errorf("failed to remove task from suspended set: %v", err)
+			return fmt.Errorf("failed to remove task from suspended set: %w", err)
 		}
 	default:
 		return fmt.Errorf("unknown status '%s'", currentStatus)

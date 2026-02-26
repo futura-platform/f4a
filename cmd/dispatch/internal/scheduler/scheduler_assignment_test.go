@@ -99,7 +99,7 @@ func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirector
 
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-		taskKey.RunnerId().Set(tx, "")
+		taskKey.RunnerId().Set(tx, nil)
 		if err := pendingSet.Add(tx, []byte(id)); err != nil {
 			return nil, err
 		}
@@ -117,7 +117,7 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory,
 	var runnerID string
 	_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 		status = taskKey.LifecycleStatus().Get(tx).MustGet()
-		runnerID = taskKey.RunnerId().Get(tx).MustGet()
+		runnerID = *taskKey.RunnerId().Get(tx).MustGet()
 		return nil, nil
 	})
 	require.NoError(t, err)

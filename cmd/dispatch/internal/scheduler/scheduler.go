@@ -295,7 +295,8 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) er
 	if status != task.LifecycleStatusPending {
 		return ErrTaskNotInAssignableState
 	}
-	taskKey.RunnerId().Set(tx, worker)
+	// Preserve lifecycle invariant atomically: running status implies queue membership.
+	taskKey.RunnerId().Set(tx, &worker)
 	taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
 	if err := taskSet.Add(tx, []byte(id)); err != nil {
 		return err

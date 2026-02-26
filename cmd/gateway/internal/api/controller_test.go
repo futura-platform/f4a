@@ -146,6 +146,30 @@ func setTaskLifecycleStatus(t *testing.T, db dbutil.DbRoot, taskID string, statu
 	require.NoError(t, err)
 }
 
+func setTaskRunnerAndLifecycleStatus(
+	t *testing.T,
+	db dbutil.DbRoot,
+	taskID string,
+	runnerID string,
+	status task.LifecycleStatus,
+) {
+	t.Helper()
+
+	taskDir, err := task.CreateOrOpenTasksDirectory(db)
+	require.NoError(t, err)
+
+	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+		tkey, err := taskDir.Open(tx, task.Id(taskID))
+		if err != nil {
+			return nil, err
+		}
+		tkey.RunnerId().Set(tx, &runnerID)
+		tkey.LifecycleStatus().Set(tx, status)
+		return nil, nil
+	})
+	require.NoError(t, err)
+}
+
 func TestControllerCreateTask(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
@@ -292,6 +316,24 @@ func TestControllerActivateTask_RunningTaskIsNoOp(t *testing.T) {
 		state, exists := readTaskState(t, db, taskID)
 		require.True(t, exists)
 		require.Equal(t, task.LifecycleStatusRunning, state.LifecycleStatus)
+	})
+}
+
+func TestControllerSuspendTask_RunningTaskMissingQueueIsInvariantViolation(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		taskID := "suspend-running-missing-queue"
+
+		mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
+		setTaskRunnerAndLifecycleStatus(t, db, taskID, "missing-runner", task.LifecycleStatusRunning)
+
+		_, err := c.SuspendTask(context.Background(), &taskv1.ControlServiceSuspendTaskRequest{
+			Revision: 2,
+			Request: &taskv1.SuspendTaskRequest{
+				TaskId: taskID,
+			},
+		})
+		require.ErrorIs(t, err, ErrRunningTaskQueueInvariant)
 	})
 }
 

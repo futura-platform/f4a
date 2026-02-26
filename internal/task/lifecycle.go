@@ -12,9 +12,13 @@ type LifecycleStatus byte
 const (
 	// LifecycleStatusSuspended means the task is suspended, and waiting to be activated.
 	LifecycleStatusSuspended LifecycleStatus = iota
+
 	// LifecycleStatusPending means the task is activated, and waiting to be assigned to a runner.
 	LifecycleStatusPending
+
 	// LifecycleStatusRunning means the task is currently assigned to a runner.
+	// When a task is in this state, it MUST have a non-empty runner_id and it MUST
+	// exist in that runner's task queue.
 	LifecycleStatusRunning
 )
 

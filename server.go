@@ -93,6 +93,8 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 				// Work loop requested shutdown (e.g. internal error). Do not clear queue assignment state.
 				return nil
 			}
+			// Queue clear is part of intentional worker teardown. Other components
+			// assume running tasks always have an existing runner queue.
 			return taskSet.Clear()
 		}
 		return err

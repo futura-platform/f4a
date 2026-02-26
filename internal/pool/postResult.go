@@ -119,8 +119,12 @@ func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.
 		runnerId, err := taskKey.RunnerId().Get(tx).Get()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read task runner id: %w", err)
+		} else if runnerId == nil {
+			return nil, fmt.Errorf("running task has no runner id (invariant violation)")
 		}
-		if runnerId != m.runnerId {
+		if *runnerId != m.runnerId {
+			// task has been reassigned to a different runner,
+			// it is no longer our responsibility to clean it up
 			return nil, nil
 		}
 
