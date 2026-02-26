@@ -122,6 +122,15 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 			var hangingTasks mapset.Set[string]
 			_, err := dbr.Transact(func(tx fdb.Transaction) (any, error) {
 				activeRunners.SetActive(tx, runnerId, false)
+				return nil, nil
+			})
+			if err != nil {
+				return fmt.Errorf("failed to mark runner as inactive: %w", err)
+			}
+
+			// fetch the task set items to be drained, in a separate transaction,
+			// so failures here do not block the runner from being marked as inactive.
+			_, err = dbr.Transact(func(tx fdb.Transaction) (any, error) {
 				// since the task set is unbounded, this can overload the tx size limit.
 				// this is an acceptable compromise for now.
 				// TODO: implement an iterator in reliableset so cases like this can be properly handled.
