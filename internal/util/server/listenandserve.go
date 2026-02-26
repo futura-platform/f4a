@@ -13,6 +13,7 @@ import (
 )
 
 // K8sAwareListenAndServe wraps the ListenAndServe method of the http.Server to add a shutdown signal handler for SIGTERM and SIGINT.
+// In the event is a cancellation signal, the drain function is called, and this function will block until the drain function returns successfully (if it is not nil).
 func K8sAwareListenAndServe(s *http.Server, shutdownTimeout time.Duration, drain func() error) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)

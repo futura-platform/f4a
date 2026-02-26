@@ -9,7 +9,11 @@ import (
 	"sync/atomic"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/servicestate"
+	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
@@ -87,8 +91,10 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return fmt.Errorf("failed to mark runner as active: %w", err)
 	}
 
+	workLoopCtx, cancelWorkLoop := context.WithCancel(ctx)
+	defer cancelWorkLoop()
 	group.Go(func() error {
-		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, router)
+		err := pool.RunWorkLoop(workLoopCtx, runnerId, dbr, taskSet, router)
 		workLoopInitiatedShutdown.Store(true)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.SHUTDOWN_TIMEOUT)
@@ -100,15 +106,78 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return err
 	})
 	group.Go(func() error {
-		err := serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func() error {
+		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(dbr)
+		if err != nil {
+			return fmt.Errorf("failed to open pending set: %w", err)
+		}
+		cancelPendingSet()
+		taskDir, err := task.CreateOrOpenTasksDirectory(dbr)
+		if err != nil {
+			return fmt.Errorf("failed to open task directory: %w", err)
+		}
+		err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func() error {
+			cancelWorkLoop()
+
 			// immediately mark runner as inactive when draining the pod.
+			var hangingTasks mapset.Set[string]
 			_, err := dbr.Transact(func(tx fdb.Transaction) (any, error) {
 				activeRunners.SetActive(tx, runnerId, false)
+				// since the task set is unbounded, this can overload the tx size limit.
+				// this is an acceptable compromise for now.
+				// TODO: implement an iterator in reliableset so cases like this can be properly handled.
+				tasks, _, err := taskSet.Items(tx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get task set items: %w", err)
+				}
+				hangingTasks = tasks
 				return nil, nil
 			})
+			if err != nil {
+				return fmt.Errorf("failed to mark runner as inactive: %w", err)
+			}
 
 			// tasks that remain on this instance will be re-assigned to a different instance by the dispatch service.
-			// TODO: implement draining in the dispatch service.
+			// TODO: implement draining in the dispatch service. consider extracting the drain logic into a shared helper function.
+
+			// but for now, we will do a best effort to drain the task set.
+			const drainBatchSize = 256
+			for hangingTasks.Cardinality() > 0 {
+				currentBatch := mapset.NewSet[string]()
+				for range drainBatchSize {
+					taskID, ok := hangingTasks.Pop()
+					if !ok {
+						break
+					}
+					currentBatch.Add(taskID)
+				}
+				_, err = dbr.Transact(func(tx fdb.Transaction) (any, error) {
+					for taskID := range currentBatch.Iter() {
+						tkey, err := taskDir.Open(tx, task.Id(taskID))
+						if err != nil {
+							if errors.Is(err, directory.ErrDirNotExists) {
+								// Task already completed/deleted while draining; skip idempotently.
+								continue
+							}
+							return nil, fmt.Errorf("failed to open task: %w", err)
+						}
+						err = taskSet.Remove(tx, []byte(taskID))
+						if err != nil {
+							return nil, fmt.Errorf("failed to remove task from task set: %w", err)
+						}
+						err = pendingSet.Add(tx, []byte(taskID))
+						if err != nil {
+							return nil, fmt.Errorf("failed to add task to pending set: %w", err)
+						}
+						tkey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
+						tkey.RunnerId().Set(tx, nil)
+					}
+					return nil, nil
+				})
+				if err != nil {
+					return fmt.Errorf("failed to clear task set: %w", err)
+				}
+				hangingTasks.RemoveAll(currentBatch.ToSlice()...)
+			}
 			return err
 		})
 		return resolveServerLoopExit(err, workLoopInitiatedShutdown.Load())
