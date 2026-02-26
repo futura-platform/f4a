@@ -286,7 +286,7 @@ func (s *Scheduler) assignPending(
 			if err != nil {
 				retryAssignLater.Append(batch...)
 			} else {
-				retryAssignLater = retryAssignLater.Union(txScopedRetryAssignLater)
+				retryAssignLater.Append(txScopedRetryAssignLater.ToSlice()...)
 			}
 			return err
 		})
