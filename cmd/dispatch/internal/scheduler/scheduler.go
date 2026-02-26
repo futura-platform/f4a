@@ -18,6 +18,7 @@ import (
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
+	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/constants"
 	weightedrand "github.com/mroth/weightedrand/v2"
@@ -154,6 +155,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 				return fmt.Errorf("pending set stream failed: %w", err)
 			}
 		case <-ticker.C:
+			slog.Info("refreshing worker scores")
 			updated, err := s.refreshScores(ctx)
 			if err != nil {
 				s.logger.Error("failed to refresh worker scores", "error", err)
@@ -203,6 +205,14 @@ func (s *Scheduler) ensureTaskSets(scores map[string]float64) map[string]float64
 // Fitness is determines by selectWeightedWorker.
 // If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
 func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scores map[string]float64) (retryAssignLater mapset.Set[string], err error) {
+	defer func() {
+		slog.Info("assigned pending tasks",
+			"pendingIds", util.JoinWithMaxPreview(pendingIds, 5),
+			"scores", scores,
+			"retryAssignLater", util.JoinWithMaxPreview(retryAssignLater.ToSlice(), 5),
+			"err", err,
+		)
+	}()
 	activeTxSem := semaphore.NewWeighted(int64(s.cfg.BatchTxParallelism))
 
 	group, ctx := errgroup.WithContext(ctx)
