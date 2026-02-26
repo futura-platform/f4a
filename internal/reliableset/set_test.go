@@ -127,6 +127,59 @@ func TestSetCreateOrOpenReusesPath(t *testing.T) {
 	})
 }
 
+func TestSetCreateOrOpenPathIsolation(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		setA, err := CreateOrOpen(db, setPath(db, "isolation_a"))
+		require.NoError(t, err)
+
+		setB, err := CreateOrOpen(db, setPath(db, "isolation_b"))
+		require.NoError(t, err)
+
+		addItem(t, db, setA, []byte("alpha"))
+		addItem(t, db, setB, []byte("bravo"))
+
+		itemsA := readSetValues(t, db, setA)
+		require.True(
+			t,
+			stateSetsEqual(itemsA, mapset.NewSet[string]("alpha")),
+			"set A should not include values from set B",
+		)
+
+		itemsB := readSetValues(t, db, setB)
+		require.True(
+			t,
+			stateSetsEqual(itemsB, mapset.NewSet[string]("bravo")),
+			"set B should not include values from set A",
+		)
+	})
+}
+
+func TestSetCloseRemovesDirectories(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		path := setPath(db, "close_cleanup")
+		set, err := CreateOrOpen(db, path)
+		require.NoError(t, err)
+
+		addItem(t, db, set, []byte("payload"))
+
+		exists, err := db.Root.Exists(db, path)
+		require.NoError(t, err)
+		require.True(t, exists)
+
+		require.NoError(t, set.Close())
+		require.NoError(t, set.Close())
+
+		exists, err = db.Root.Exists(db, path)
+		require.NoError(t, err)
+		require.False(t, exists)
+
+		reopened, err := CreateOrOpen(db, path)
+		require.NoError(t, err)
+		require.Empty(t, readSetValues(t, db, reopened).ToSlice())
+		require.NoError(t, reopened.Close())
+	})
+}
+
 func TestSetEpochKeyChangesOnOperations(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "epoch_key_invariant")

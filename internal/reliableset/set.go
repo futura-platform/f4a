@@ -3,6 +3,7 @@ package reliableset
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -32,8 +33,13 @@ type Set struct {
 	compactionContext context.Context
 	compactionCancel  context.CancelFunc
 	compactionLock    *reliablelock.Lock[string]
+	compactionDone    chan struct{}
+
+	closeOnce sync.Once
+	closeErr  error
 }
 type setDirectories struct {
+	rootSubspace     directory.DirectorySubspace
 	snapshotSubspace directory.DirectorySubspace
 	logSubspace      directory.DirectorySubspace
 	cursorSubspace   directory.DirectorySubspace
@@ -45,23 +51,23 @@ func newSetDirectories[T fdb.ReadTransaction](
 	path []string,
 	directoryConstructor func(t T, path []string, layer []byte) (directory.DirectorySubspace, error),
 ) (d setDirectories, err error) {
-	d.snapshotSubspace, err = directoryConstructor(tx, path, nil)
+	d.rootSubspace, err = directoryConstructor(tx, path, nil)
 	if err != nil {
-		return d, fmt.Errorf("failed to create set directory: %w", err)
+		return d, fmt.Errorf("failed to open root set directory: %w", err)
 	}
-	d.snapshotSubspace, err = directoryConstructor(tx, []string{"snapshot"}, nil)
+	d.snapshotSubspace, err = directoryConstructor(tx, append(path, "snapshot"), nil)
 	if err != nil {
 		return d, fmt.Errorf("failed to create snapshot subspace: %w", err)
 	}
-	d.logSubspace, err = directoryConstructor(tx, []string{"log"}, nil)
+	d.logSubspace, err = directoryConstructor(tx, append(path, "log"), nil)
 	if err != nil {
 		return d, fmt.Errorf("failed to create log subspace: %w", err)
 	}
-	d.cursorSubspace, err = directoryConstructor(tx, []string{"cursor"}, nil)
+	d.cursorSubspace, err = directoryConstructor(tx, append(path, "cursor"), nil)
 	if err != nil {
 		return d, fmt.Errorf("failed to create cursor subspace: %w", err)
 	}
-	d.metadataSubspace, err = directoryConstructor(tx, []string{"metadata"}, nil)
+	d.metadataSubspace, err = directoryConstructor(tx, append(path, "metadata"), nil)
 	if err != nil {
 		return d, fmt.Errorf("failed to create metadata subspace: %w", err)
 	}
@@ -114,6 +120,7 @@ func (s *Set) initRuntime() {
 	s.epochKey = s.metadataSubspace.Pack(tuple.Tuple{"epoch"})
 	s.consumerID, s.consumerHint = newConsumerID()
 	s.compactionContext, s.compactionCancel = context.WithCancel(context.Background())
+	s.compactionDone = make(chan struct{})
 	s.compactionLock = reliablelock.NewLock[string](
 		s.db,
 		s.metadataSubspace.Pack(tuple.Tuple{"compactionLock"}),
@@ -122,7 +129,10 @@ func (s *Set) initRuntime() {
 		reliablelock.WithRefreshInterval(compactionInterval/2),
 	)
 
-	go s.runCompactionLoop()
+	go func() {
+		defer close(s.compactionDone)
+		_ = s.runCompactionLoop()
+	}()
 }
 
 func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
@@ -148,4 +158,23 @@ func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.
 		tail = l.key
 	}
 	return snapshot, tail, nil
+}
+
+// Close stops background runtime and removes this set directory recursively.
+// It is idempotent.
+func (s *Set) Close() error {
+	s.closeOnce.Do(func() {
+		s.compactionCancel()
+		<-s.compactionDone
+
+		removed, err := s.rootSubspace.Remove(s.db, []string{})
+		if err != nil {
+			s.closeErr = fmt.Errorf("failed to remove set directory: %w", err)
+			return
+		}
+		if !removed {
+			s.closeErr = fmt.Errorf("failed to remove set directory: not found")
+		}
+	})
+	return s.closeErr
 }

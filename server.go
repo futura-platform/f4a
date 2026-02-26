@@ -34,7 +34,7 @@ func Start(ctx context.Context, executors map[string]execute.Executor) error {
 	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors)
 }
 
-func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor) error {
+func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor) (err error) {
 	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return err
@@ -53,7 +53,6 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	if err != nil {
 		return err
 	}
-
 	taskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, runnerId)
 	if err != nil {
 		return err
@@ -85,7 +84,10 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	})
 	group.Go(func() error {
 		err := serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				return taskSet.Close()
+			}
 			return err
 		}
 		return nil
