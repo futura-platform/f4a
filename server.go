@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -74,6 +75,18 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	}
 	var workLoopInitiatedShutdown atomic.Bool
 
+	activeRunners, err := pool.CreateOrOpenActiveRunners(dbr)
+	if err != nil {
+		return err
+	}
+	_, err = dbr.Transact(func(tx fdb.Transaction) (any, error) {
+		activeRunners.SetActive(tx, runnerId, true)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to mark runner as active: %w", err)
+	}
+
 	group.Go(func() error {
 		err := pool.RunWorkLoop(ctx, runnerId, dbr, taskSet, router)
 		workLoopInitiatedShutdown.Store(true)
@@ -87,18 +100,32 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return err
 	})
 	group.Go(func() error {
-		err := serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
-		if errors.Is(err, http.ErrServerClosed) {
-			if workLoopInitiatedShutdown.Load() {
-				// Work loop requested shutdown (e.g. internal error). Do not clear queue assignment state.
-				return nil
-			}
-			// Queue clear is part of intentional worker teardown. Other components
-			// assume running tasks always have an existing runner queue.
-			return taskSet.Clear()
-		}
-		return err
+		err := serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func() error {
+			// immediately mark runner as inactive when draining the pod.
+			_, err := dbr.Transact(func(tx fdb.Transaction) (any, error) {
+				activeRunners.SetActive(tx, runnerId, false)
+				return nil, nil
+			})
+
+			// tasks that remain on this instance will be re-assigned to a different instance by the dispatch service.
+			// TODO: implement draining in the dispatch service.
+			return err
+		})
+		return resolveServerLoopExit(err, workLoopInitiatedShutdown.Load())
 	})
 
 	return group.Wait()
+}
+
+func resolveServerLoopExit(err error, workLoopInitiatedShutdown bool) error {
+	if !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	if workLoopInitiatedShutdown {
+		// Work loop requested shutdown (e.g. internal error). Preserve the work-loop error.
+		return nil
+	}
+	// HTTP server closed externally (e.g. SIGTERM). Cancel the work loop context
+	// via errgroup without deleting queue assignment state.
+	return context.Canceled
 }

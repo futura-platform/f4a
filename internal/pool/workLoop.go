@@ -39,6 +39,7 @@ type taskManager struct {
 // and starts and stops the execution of tasks as needed.
 // It runs a runnable in a separate goroutine for each new task,
 // and stops them when they are no longer assigned to the pool.
+// It MUST ONLY run as a singleton scoped to a single runner.
 // TODO: add options to this function (first need the ability attach a logger)
 func RunWorkLoop(
 	ctx context.Context,

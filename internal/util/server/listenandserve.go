@@ -5,20 +5,41 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/cenkalti/backoff/v4"
 )
 
-// ListenAndServe wraps the ListenAndServe method of the http.Server to add a shutdown signal handler for SIGTERM and SIGINT.
-func ListenAndServe(s *http.Server, shutdownTimeout time.Duration) error {
-	go func() {
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
-		<-signals
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		// we ignore the error since this is a graceful shutdown, which doesn't necessarily need to be successful
-		_ = s.Shutdown(ctx)
-	}()
-	return s.ListenAndServe()
+// K8sAwareListenAndServe wraps the ListenAndServe method of the http.Server to add a shutdown signal handler for SIGTERM and SIGINT.
+func K8sAwareListenAndServe(s *http.Server, shutdownTimeout time.Duration, drain func() error) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(signals)
+
+	stopWatcher := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		select {
+		case <-signals:
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			// We ignore shutdown errors here because the caller is responsible for
+			// classifying ListenAndServe's return value.
+			_ = s.Shutdown(ctx)
+			if drain != nil {
+				backoff.Retry(drain, backoff.NewExponentialBackOff())
+			}
+		case <-stopWatcher:
+			// Server stopped via a non-signal path (e.g. context/work-loop shutdown).
+		}
+	})
+
+	err := s.ListenAndServe()
+	close(stopWatcher)
+
+	// wait for the shutdown watcher to finish
+	wg.Wait()
+	return err
 }

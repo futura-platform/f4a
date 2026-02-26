@@ -15,6 +15,7 @@ type WorkerUtilization struct {
 	Memory float64
 }
 
+// WorkerUtilizationSnapshot returns the utilization of workers in the ready state within the given stateful set.
 func WorkerUtilizationSnapshot(
 	ctx context.Context,
 	clients *Clients,

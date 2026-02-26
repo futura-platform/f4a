@@ -86,7 +86,7 @@ func run() error {
 		return err
 	})
 	group.Go(func() error {
-		err := serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
+		err := serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, nil)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

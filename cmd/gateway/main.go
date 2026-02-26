@@ -60,7 +60,7 @@ func run() error {
 	s.Addr = fmt.Sprintf(":%d", port)
 	mux.Handle(taskv1connect.NewControlServiceHandler(controller))
 
-	err = serverutil.ListenAndServe(s, constants.SHUTDOWN_TIMEOUT)
+	err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, nil)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("failed to listen and serve: %w", err)
 	}

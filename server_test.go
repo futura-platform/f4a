@@ -159,3 +159,27 @@ func waitForServerDown(t *testing.T, client *http.Client, url string) {
 	}
 	t.Fatalf("server still responding on %s", url)
 }
+
+func TestResolveServerLoopExit(t *testing.T) {
+	t.Run("passes through non server-closed errors", func(t *testing.T) {
+		errSentinel := errors.New("boom")
+		err := resolveServerLoopExit(errSentinel, false)
+		if !errors.Is(err, errSentinel) {
+			t.Fatalf("expected sentinel error, got %v", err)
+		}
+	})
+
+	t.Run("returns nil when work loop initiated shutdown", func(t *testing.T) {
+		err := resolveServerLoopExit(http.ErrServerClosed, true)
+		if err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("returns context canceled when server closed externally", func(t *testing.T) {
+		err := resolveServerLoopExit(http.ErrServerClosed, false)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled, got %v", err)
+		}
+	})
+}

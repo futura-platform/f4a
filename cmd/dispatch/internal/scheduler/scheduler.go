@@ -22,6 +22,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/constants"
 	weightedrand "github.com/mroth/weightedrand/v2"
+	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -53,13 +54,13 @@ type Config struct {
 type Scheduler struct {
 	cfg              Config
 	db               dbutil.DbRoot
+	activeRunners    pool.ActiveRunners
 	taskDir          task.TasksDirectory
 	pendingSet       *reliableset.Set
 	pendingSetCancel context.CancelFunc
 	clients          *k8s.Clients
 
 	scoreCache *scoreCache
-	taskSets   map[string]*reliableset.Set
 	logger     *slog.Logger
 }
 
@@ -91,16 +92,20 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open pending set: %w", err)
 	}
+	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
+	if err != nil {
+		return fmt.Errorf("failed to open active runners: %w", err)
+	}
 
 	s := &Scheduler{
 		cfg:              cfg,
 		db:               db,
+		activeRunners:    activeRunners,
 		taskDir:          taskDir,
 		pendingSet:       pendingSet,
 		pendingSetCancel: pendingSetCancel,
 		clients:          clients,
 		scoreCache:       newScoreCache(cfg.ScoreAlpha),
-		taskSets:         make(map[string]*reliableset.Set),
 		logger:           cfg.Logger,
 	}
 	return s.run(ctx)
@@ -117,12 +122,24 @@ func (s *Scheduler) run(ctx context.Context) error {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}
 
+	activeRunnerSets, cancel, err := liveActiveRunnerSets(
+		ctx,
+		s.db,
+		s.clients,
+		s.cfg.Namespace,
+		s.cfg.StatefulSetName,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to watch active runner sets: %w", err)
+	}
+	defer cancel()
+
 	scores, err := s.refreshScores(ctx)
 	if err != nil {
 		s.logger.Error("failed to refresh worker scores", "error", err)
 	}
 
-	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores)
+	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores, activeRunnerSets)
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
@@ -147,7 +164,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 					backlog.Remove(string(entry.Value))
 				}
 			}
-			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores, activeRunnerSets)
 			if err != nil {
 				return fmt.Errorf("failed to assign pending tasks: %w", err)
 			}
@@ -166,7 +183,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 				continue
 			}
 			scores = updated
-			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores, activeRunnerSets)
 			if err != nil {
 				return fmt.Errorf("failed to assign pending backlog: %w", err)
 			}
@@ -174,50 +191,29 @@ func (s *Scheduler) run(ctx context.Context) error {
 	}
 }
 
-func (s *Scheduler) refreshScores(ctx context.Context) (map[string]float64, error) {
+func (s *Scheduler) refreshScores(ctx context.Context) (*xsync.Map[string, float64], error) {
 	utilization, err := k8s.WorkerUtilizationSnapshot(ctx, s.clients, s.cfg.Namespace, s.cfg.StatefulSetName)
 	if err != nil {
 		return nil, err
 	}
 
-	snapshot := make(map[string]float64, len(utilization))
+	snapshot := xsync.NewMap[string, float64](xsync.WithPresize(len(utilization)))
 	for worker, util := range utilization {
-		snapshot[worker] = score.WorkerUtilizationScore(util.CPU, util.Memory)
+		snapshot.Store(worker, score.WorkerUtilizationScore(util.CPU, util.Memory))
 	}
 
-	snapshot = s.ensureTaskSets(snapshot)
 	return s.scoreCache.Update(snapshot), nil
-}
-
-func (s *Scheduler) ensureTaskSets(scores map[string]float64) map[string]float64 {
-	unseenWorkers := mapset.NewSetFromMapKeys(s.taskSets)
-	for worker := range scores {
-		unseenWorkers.Remove(worker)
-
-		if _, ok := s.taskSets[worker]; ok {
-			continue
-		}
-		taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(s.db, worker)
-		if err != nil {
-			s.logger.Error("failed to open worker task set", "worker", worker, "error", err)
-			delete(scores, worker)
-			continue
-		}
-		// we dont need to be maintaining compaction from the scheduler. Let workers do that
-		cancelTaskSet()
-		s.taskSets[worker] = taskSet
-	}
-	// purge unseen workers
-	for worker := range unseenWorkers.Iter() {
-		delete(s.taskSets, worker)
-	}
-	return scores
 }
 
 // assignPending assigns all given tasks in the pending set to the most fit workers.
 // Fitness is determines by selectWeightedWorker.
 // If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
-func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scores map[string]float64) (retryAssignLater mapset.Set[string], err error) {
+func (s *Scheduler) assignPending(
+	ctx context.Context,
+	pendingIds []string,
+	scores *xsync.Map[string, float64],
+	activeRunnerSets *xsync.Map[string, *reliableset.Set],
+) (retryAssignLater mapset.Set[string], err error) {
 	defer func() {
 		slog.Info("assigned pending tasks",
 			"pendingIds", util.JoinWithMaxPreview(pendingIds, 5),
@@ -243,16 +239,42 @@ func (s *Scheduler) assignPending(ctx context.Context, pendingIds []string, scor
 		group.Go(func() error {
 			defer activeTxSem.Release(1)
 			var txScopedRetryAssignLater mapset.Set[string]
+
+			// store a JIT snapshot of runner active states to skip assignment for inactive runners
+			// and avoid querying the database for each task assignment.
+			txRunnerActiveStates := make(map[string]bool)
 			_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 				txScopedRetryAssignLater = mapset.NewSet[string]()
 				for _, id := range batch {
-					worker, ok := selectWeightedWorker(scores)
+				retryRunnerSelection:
+					runnerId, ok := selectWeightedRunner(scores)
 					if !ok {
 						txScopedRetryAssignLater.Add(id)
 						continue
 					}
 
-					if err := s.assignTask(tx, task.Id(id), worker); err != nil {
+					runnerState, ok := txRunnerActiveStates[runnerId]
+					if !ok {
+						// initialize the runner states JIT
+						runnerState = s.activeRunners.IsActive(tx, runnerId).MustGet()
+						txRunnerActiveStates[runnerId] = runnerState
+					}
+					if !runnerState {
+						// this runner is no longer active, skip assignment for it.
+						scores.Delete(runnerId)
+						// then retry the assignment for this task.
+						goto retryRunnerSelection
+					}
+
+					runnerSet, ok := activeRunnerSets.Load(runnerId)
+					if !ok {
+						// Pod readiness can change between score snapshots.
+						// Drop this runner and retry selection for the current task.
+						scores.Delete(runnerId)
+						goto retryRunnerSelection
+					}
+
+					if err := s.assignTask(tx, task.Id(id), runnerId, runnerSet); err != nil {
 						if errors.Is(err, ErrTaskNotInAssignableState) {
 							continue
 						}
@@ -277,12 +299,7 @@ var (
 	ErrTaskNotInAssignableState = errors.New("task not in assignable state")
 )
 
-func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) error {
-	taskSet, ok := s.taskSets[worker]
-	if !ok {
-		return fmt.Errorf("task set missing for worker %q", worker)
-	}
-
+func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, runnerSet *reliableset.Set) error {
 	taskKey, err := s.taskDir.Open(s.db, id)
 	if err != nil {
 		if errors.Is(err, directory.ErrDirNotExists) {
@@ -296,9 +313,9 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) er
 		return ErrTaskNotInAssignableState
 	}
 	// Preserve lifecycle invariant atomically: running status implies queue membership.
-	taskKey.RunnerId().Set(tx, &worker)
+	taskKey.RunnerId().Set(tx, &runnerId)
 	taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-	if err := taskSet.Add(tx, []byte(id)); err != nil {
+	if err := runnerSet.Add(tx, []byte(id)); err != nil {
 		return err
 	}
 	if err := s.pendingSet.Remove(tx, []byte(id)); err != nil {
@@ -307,25 +324,30 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, worker string) er
 	return nil
 }
 
-func selectWeightedWorker(scores map[string]float64) (string, bool) {
-	if len(scores) == 0 {
+func selectWeightedRunner(scores *xsync.Map[string, float64]) (string, bool) {
+	if scores.Size() == 0 {
 		return "", false
 	}
 
-	keys := make([]string, 0, len(scores))
+	keys := make([]string, 0, scores.Size())
 	maxScore := math.Inf(-1)
-	for worker, scoreValue := range scores {
+	scores.Range(func(worker string, scoreValue float64) bool {
 		keys = append(keys, worker)
 		if scoreValue > maxScore {
 			maxScore = scoreValue
 		}
-	}
+		return true
+	})
 	sort.Strings(keys)
 
 	const weightScale = 1000.0
 	choices := make([]weightedrand.Choice[string, uint], 0, len(keys))
 	for _, worker := range keys {
-		delta := maxScore - scores[worker]
+		scoreVal, ok := scores.Load(worker)
+		if !ok {
+			continue
+		}
+		delta := maxScore - scoreVal
 		if delta < 0 {
 			delta = 0
 		}

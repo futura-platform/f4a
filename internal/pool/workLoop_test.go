@@ -55,7 +55,7 @@ func seedTask(
 		taskDirectory.ExecutorId().Set(tx, executorId)
 		taskDirectory.CallbackUrl().Set(tx, &callbackUrl)
 		taskDirectory.Input().Set(tx, []byte(id))
-		taskDirectory.RunnerId().Set(tx, runnerId)
+		taskDirectory.RunnerId().Set(tx, &runnerId)
 		taskDirectory.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
 		return nil, nil
 	})
