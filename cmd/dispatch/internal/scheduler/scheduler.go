@@ -311,7 +311,7 @@ var (
 )
 
 func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, runnerSet *reliableset.Set) error {
-	taskKey, err := s.taskDir.Open(s.db, id)
+	taskKey, err := s.taskDir.Open(tx, id)
 	if err != nil {
 		if errors.Is(err, directory.ErrDirNotExists) {
 			return ErrTaskNotInAssignableState
