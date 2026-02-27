@@ -93,9 +93,9 @@ func constructWith(
 	return s, s.releaseRuntime, nil
 }
 
-func Create(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
-		db,
+		tr,
 		path,
 		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
 			return db.Root.Create(t, path, nil)
@@ -106,9 +106,9 @@ func Create(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	)
 }
 
-func Open(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+func Open(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
-		db,
+		tr,
 		path,
 		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
 			return db.Root.Open(t, path, nil)
@@ -119,9 +119,9 @@ func Open(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	)
 }
 
-func CreateOrOpen(db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
-		db,
+		tr,
 		path,
 		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
 			return db.Root.CreateOrOpen(t, path, nil)

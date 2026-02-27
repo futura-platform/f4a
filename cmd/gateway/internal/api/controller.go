@@ -29,11 +29,11 @@ func NewController(
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create or open revision store: %v", err)
 	}
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create or open pending set: %v", err)
 	}
-	suspendedSet, suspendedSetCancel, err := servicestate.CreateOrOpenSuspendedSet(db)
+	suspendedSet, suspendedSetCancel, err := servicestate.CreateOrOpenSuspendedSet(db, db)
 	if err != nil {
 		pendingSetCancel()
 		return nil, nil, fmt.Errorf("failed to create or open suspended set: %v", err)
@@ -451,7 +451,7 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		if err != nil {
 			return fmt.Errorf("failed to get task runner id: %w", err)
 		}
-		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, *runnerID)
+		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, c.db, *runnerID)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				return ErrRunningTaskQueueInvariant

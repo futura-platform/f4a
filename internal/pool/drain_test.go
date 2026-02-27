@@ -221,11 +221,11 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, runnerID)
+		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
 		defer cancelTaskSet()
 
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db)
+		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 		require.NoError(t, err)
 		defer cancelPendingSet()
 
@@ -267,11 +267,11 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, runnerID)
+		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
 		defer cancelTaskSet()
 
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db)
+		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 		require.NoError(t, err)
 		defer cancelPendingSet()
 
@@ -366,16 +366,16 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 				runnerID := fmt.Sprintf("runner-a-%d", round)
 				reassignedRunnerID := fmt.Sprintf("runner-b-%d", round)
 
-				taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, runnerID)
+				taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 				require.NoError(t, err)
 				defer cancelTaskSet()
 
-				reassignedTaskSet, cancelReassignedTaskSet, err := CreateOrOpenTaskSetForRunner(db, reassignedRunnerID)
+				reassignedTaskSet, cancelReassignedTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, reassignedRunnerID)
 				require.NoError(t, err)
 				defer cancelReassignedTaskSet()
 
 				pendingSetPath := []string{"drain_test_pending", fmt.Sprintf("round-%d", round)}
-				pendingSet, cancelPendingSet, err := reliableset.CreateOrOpen(db, pendingSetPath)
+				pendingSet, cancelPendingSet, err := reliableset.CreateOrOpen(db, db, pendingSetPath)
 				require.NoError(t, err)
 				defer cancelPendingSet()
 

@@ -57,7 +57,7 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	if err != nil {
 		return err
 	}
-	taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, runnerId)
+	taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, dbr, runnerId)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return err
 	})
 	group.Go(func() error {
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(dbr)
+		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(dbr, dbr)
 		if err != nil {
 			return fmt.Errorf("failed to open pending set: %w", err)
 		}

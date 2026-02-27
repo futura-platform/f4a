@@ -59,7 +59,7 @@ func liveActiveRunnerSets(
 	reconciler := newRunnerSetReconciler(
 		activeRunnerSets,
 		func(runnerID string) (*reliableset.Set, error) {
-			set, cancelCompaction, err := pool.OpenTaskSetForRunner(db, runnerID)
+			set, cancelCompaction, err := pool.OpenTaskSetForRunner(db, db, runnerID)
 			if err != nil {
 				return nil, err
 			}

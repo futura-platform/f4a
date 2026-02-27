@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
 	}
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
 	if err != nil {
 		return fmt.Errorf("failed to open pending set: %w", err)
 	}

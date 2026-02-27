@@ -37,7 +37,7 @@ func SpawnReaperRoutine(
 		return nil, fmt.Errorf("failed to create or open active runners: %w", err)
 	}
 
-	pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or open pending set: %w", err)
 	}
@@ -105,7 +105,7 @@ func reapForRunner(
 	taskDirectory task.TasksDirectory,
 	runnerId string,
 ) error {
-	taskSet, cancel, err := pool.CreateOrOpenTaskSetForRunner(db, runnerId)
+	taskSet, cancel, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 	if err != nil {
 		return err
 	}

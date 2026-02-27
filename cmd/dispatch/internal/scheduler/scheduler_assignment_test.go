@@ -103,11 +103,11 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Sche
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
 
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db)
+	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
 	require.NoError(t, err)
 	t.Cleanup(pendingSetCancel)
 
-	workerSet, workerSetCancel, err := pool.CreateOrOpenTaskSetForRunner(db, workerID)
+	workerSet, workerSetCancel, err := pool.CreateOrOpenTaskSetForRunner(db, db, workerID)
 	require.NoError(t, err)
 	t.Cleanup(workerSetCancel)
 
