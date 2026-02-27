@@ -1,7 +1,6 @@
 package reliableset
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -9,7 +8,6 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/reliablelock"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -30,15 +28,11 @@ type Set struct {
 	consumerID   string
 	consumerHint string
 
-	compactionContext context.Context
-	compactionCancel  context.CancelFunc
-	compactionLock    *reliablelock.Lock[string]
-	compactionDone    chan struct{}
+	compactor *setCompactor
 
-	releaseOnce sync.Once
-	clearLock   sync.Mutex
-	clearOnce   sync.Once
-	clearFunc   func() (bool, error)
+	clearLock sync.Mutex
+	clearOnce sync.Once
+	clearFunc func() (bool, error)
 }
 type setDirectories struct {
 	snapshotSubspace directory.DirectorySubspace
@@ -77,86 +71,90 @@ func constructWith[T fdb.ReadTransactor](
 	path []string,
 	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
 	clearFunc func() (bool, error),
-) (*Set, context.CancelFunc, error) {
+) (*Set, error) {
 	dirs, err := newSetDirectories(tr, path, directoryConstructor)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create directories: %w", err)
+		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
+	consumerID, consumerHint := newConsumerID()
 	s := &Set{
 		db:             db,
+		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
 		setDirectories: dirs,
+		consumerID:     consumerID,
+		consumerHint:   consumerHint,
 		clearFunc:      clearFunc,
 	}
-	s.initRuntime()
-	return s, s.releaseRuntime, nil
+	s.compactor = newSetCompactor(s)
+	return s, nil
 }
 
-func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
-	return constructWith(
-		db.Database,
-		tr,
-		path,
-		func(tr fdb.Transactor, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.Create(tr, path, nil)
-		},
-		func() (bool, error) {
-			return db.Root.Remove(db, path)
-		},
-	)
+func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
+	var set *Set
+	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
+		var err error
+		set, err = constructWith(
+			db.Database,
+			t,
+			path,
+			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
+				return db.Root.Create(tr, path, nil)
+			},
+			func() (bool, error) {
+				return db.Root.Remove(db, path)
+			},
+		)
+		return nil, err
+	})
+	return set, err
 }
 
-func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
-	return constructWith(
-		db.Database,
-		tr,
-		path,
-		func(tr fdb.ReadTransactor, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.Open(tr, path, nil)
-		},
-		func() (bool, error) {
-			return db.Root.Remove(db, path)
-		},
-	)
+func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, error) {
+	var set *Set
+	_, err := tr.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
+		var err error
+		set, err = constructWith(
+			db.Database,
+			t,
+			path,
+			func(tr fdb.ReadTransaction, path []string) (directory.DirectorySubspace, error) {
+				return db.Root.Open(tr, path, nil)
+			},
+			func() (bool, error) {
+				return db.Root.Remove(db, path)
+			},
+		)
+		return nil, err
+	})
+	return set, err
 }
 
-func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
-	return constructWith(
-		db.Database,
-		tr,
-		path,
-		func(tr fdb.Transactor, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.CreateOrOpen(tr, path, nil)
-		},
-		func() (bool, error) {
-			return db.Root.Remove(db, path)
-		},
-	)
+func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
+	var set *Set
+	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
+		var err error
+		set, err = constructWith(
+			db.Database,
+			t,
+			path,
+			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
+				return db.Root.CreateOrOpen(tr, path, nil)
+			},
+			func() (bool, error) {
+				return db.Root.Remove(db, path)
+			},
+		)
+		return nil, err
+	})
+	return set, err
 }
 
-func (s *Set) initRuntime() {
-	s.epochKey = s.metadataSubspace.Pack(tuple.Tuple{"epoch"})
-	s.consumerID, s.consumerHint = newConsumerID()
-	s.compactionContext, s.compactionCancel = context.WithCancel(context.Background())
-	s.compactionDone = make(chan struct{})
-	s.compactionLock = reliablelock.NewLock[string](
-		s.db,
-		s.metadataSubspace.Pack(tuple.Tuple{"compactionLock"}),
-		s.consumerID,
-		reliablelock.WithLeaseDuration(2*compactionInterval),
-		reliablelock.WithRefreshInterval(compactionInterval/2),
-	)
-
-	go func() {
-		defer close(s.compactionDone)
-		_ = s.runCompactionLoop()
-	}()
+func (s *Set) RunCompactor() (cancel func()) {
+	return s.compactor.Run()
 }
 
 func (s *Set) releaseRuntime() {
-	s.releaseOnce.Do(func() {
-		s.compactionCancel()
-		<-s.compactionDone
-	})
+	s.compactor.release()
 }
 
 func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {

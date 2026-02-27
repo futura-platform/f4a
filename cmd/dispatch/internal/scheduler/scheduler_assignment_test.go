@@ -177,13 +177,11 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
 
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
+	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 	require.NoError(t, err)
-	t.Cleanup(pendingSetCancel)
 
-	workerSet, workerSetCancel, err := pool.CreateOrOpenTaskSetForRunner(db, db, workerID)
+	workerSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, workerID)
 	require.NoError(t, err)
-	t.Cleanup(workerSetCancel)
 
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
 	require.NoError(t, err)
@@ -198,12 +196,11 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 			BatchTxParallelism: 1,
 			Logger:             slog.Default(),
 		},
-		db:               db,
-		taskDir:          tasksDir,
-		pendingSet:       pendingSet,
-		activeRunners:    activeRunners,
-		pendingSetCancel: pendingSetCancel,
-		logger:           slog.Default(),
+		db:            db,
+		taskDir:       tasksDir,
+		pendingSet:    pendingSet,
+		activeRunners: activeRunners,
+		logger:        slog.Default(),
 	}
 	return s, tasksDir, pendingSet, newMockedRunnerSetCache(db, map[string]*reliableset.Set{workerID: workerSet})
 }

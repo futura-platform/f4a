@@ -57,11 +57,12 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	if err != nil {
 		return err
 	}
-	taskSet, cancelTaskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, dbr, runnerId)
+	taskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, dbr, runnerId)
 	if err != nil {
 		return err
 	}
-	defer cancelTaskSet()
+	cancelTaskSetCompaction := taskSet.RunCompactor()
+	defer cancelTaskSetCompaction()
 
 	group, ctx := errgroup.WithContext(ctx)
 	router := execute.NewRouter()
@@ -104,11 +105,10 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return err
 	})
 	group.Go(func() error {
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(dbr, dbr)
+		pendingSet, err := servicestate.CreateOrOpenReadySet(dbr, dbr)
 		if err != nil {
 			return fmt.Errorf("failed to open pending set: %w", err)
 		}
-		cancelPendingSet()
 		taskDir, err := task.CreateOrOpenTasksDirectory(dbr)
 		if err != nil {
 			return fmt.Errorf("failed to open task directory: %w", err)

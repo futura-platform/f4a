@@ -114,7 +114,6 @@ func TestRunnerSetCacheDeleteInvalidatesOnDeletedFinalStateUnknown(t *testing.T)
 func ensureRunnerTaskSetExists(t *testing.T, db dbutil.DbRoot, runnerID string) {
 	t.Helper()
 
-	_, cancelCompaction, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+	_, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 	require.NoError(t, err)
-	cancelCompaction()
 }

@@ -16,15 +16,19 @@ const (
 )
 
 func (s *Set) runCompactionLoop() error {
+	return s.compactor.runCompactionLoop()
+}
+
+func (c *setCompactor) runCompactionLoop() error {
 	ticker := time.NewTicker(compactionInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-s.compactionContext.Done():
+		case <-c.runCtx.Done():
 			return nil
 		case <-ticker.C:
-			_, err := s.db.Transact(func(tx fdb.Transaction) (any, error) {
-				return nil, s.compactLog(tx)
+			_, err := c.set.db.Transact(func(tx fdb.Transaction) (any, error) {
+				return nil, c.compactLog(tx)
 			})
 			if err != nil {
 				slog.Error("reliableset: failed to compact log", "error", err)
@@ -36,17 +40,24 @@ func (s *Set) runCompactionLoop() error {
 
 // compactLog compacts the current log into the snapshot.
 func (s *Set) compactLog(tx fdb.Transaction) error {
+	return s.compactor.compactLog(tx)
+}
+
+// compactLog compacts the current log into the snapshot.
+func (c *setCompactor) compactLog(tx fdb.Transaction) error {
+	c.ensureLock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.compactionLock.Acquire(ctx); err != nil {
+	if err := c.lock.Acquire(ctx); err != nil {
 		return fmt.Errorf("failed to acquire compaction lock: %w", err)
 	}
-	defer s.compactionLock.Release()
+	defer c.lock.Release()
 
-	begin, end := s.logSubspace.FDBRangeKeys()
+	begin, end := c.set.logSubspace.FDBRangeKeys()
 	clearEnd := end
 	now := time.Now()
-	index, err := s.cursorIndex(tx)
+	index, err := c.set.cursorIndex(tx)
 	if err != nil {
 		return err
 	}
@@ -76,9 +87,9 @@ func (s *Set) compactLog(tx fdb.Transaction) error {
 		}
 		switch entry.Op {
 		case LogOperationAdd:
-			tx.Set(s.snapshotSubspace.Pack(tuple.Tuple{entry.Value}), entry.Value)
+			tx.Set(c.set.snapshotSubspace.Pack(tuple.Tuple{entry.Value}), entry.Value)
 		case LogOperationRemove:
-			tx.Clear(s.snapshotSubspace.Pack(tuple.Tuple{entry.Value}))
+			tx.Clear(c.set.snapshotSubspace.Pack(tuple.Tuple{entry.Value}))
 		default:
 			return fmt.Errorf("invalid log operation: %d", entry.Op)
 		}

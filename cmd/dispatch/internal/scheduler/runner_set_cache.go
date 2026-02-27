@@ -26,12 +26,11 @@ func (r *runnerSetCache) open(runnerId string) (*reliableset.Set, error) {
 	set, err, _ := r.accessFlight.Do(runnerId, func() (any, error) {
 		var loadErr error
 		set, _ := r.activeSets.LoadOrCompute(runnerId, func() (newValue *reliableset.Set, cancel bool) {
-			set, cancelCompaction, err := pool.OpenTaskSetForRunner(r.db, r.db, runnerId)
+			set, err := pool.OpenTaskSetForRunner(r.db, r.db, runnerId)
 			if err != nil {
 				loadErr = err
 				return nil, true
 			}
-			cancelCompaction()
 			return set, false
 		})
 		return set, loadErr

@@ -221,13 +221,11 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+		taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
-		defer cancelTaskSet()
 
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+		pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 		require.NoError(t, err)
-		defer cancelPendingSet()
 
 		taskDir, err := task.CreateOrOpenTasksDirectory(db)
 		require.NoError(t, err)
@@ -267,13 +265,11 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+		taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
-		defer cancelTaskSet()
 
-		pendingSet, cancelPendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+		pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 		require.NoError(t, err)
-		defer cancelPendingSet()
 
 		taskDir, err := task.CreateOrOpenTasksDirectory(db)
 		require.NoError(t, err)
@@ -366,18 +362,15 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 				runnerID := fmt.Sprintf("runner-a-%d", round)
 				reassignedRunnerID := fmt.Sprintf("runner-b-%d", round)
 
-				taskSet, cancelTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+				taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
 				require.NoError(t, err)
-				defer cancelTaskSet()
 
-				reassignedTaskSet, cancelReassignedTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, reassignedRunnerID)
+				reassignedTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, reassignedRunnerID)
 				require.NoError(t, err)
-				defer cancelReassignedTaskSet()
 
 				pendingSetPath := []string{"drain_test_pending", fmt.Sprintf("round-%d", round)}
-				pendingSet, cancelPendingSet, err := reliableset.CreateOrOpen(db, db, pendingSetPath)
+				pendingSet, err := reliableset.CreateOrOpen(db, db, pendingSetPath)
 				require.NoError(t, err)
-				defer cancelPendingSet()
 
 				setRunnerActive(t, db, activeRunners, runnerID, true)
 

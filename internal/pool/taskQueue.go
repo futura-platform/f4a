@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"context"
 	"errors"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -18,11 +17,11 @@ func taskSetPath(runnerId string) []string {
 	return append(taskSetRootPath(), runnerId)
 }
 
-func OpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, context.CancelFunc, error) {
+func OpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, error) {
 	return reliableset.Open(tr, db, taskSetPath(runnerId))
 }
 
-func CreateOrOpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, context.CancelFunc, error) {
+func CreateOrOpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, error) {
 	return reliableset.CreateOrOpen(tr, db, taskSetPath(runnerId))
 }
 

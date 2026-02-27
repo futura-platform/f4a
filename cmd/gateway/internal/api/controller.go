@@ -29,25 +29,22 @@ func NewController(
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create or open revision store: %v", err)
 	}
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
+	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create or open pending set: %v", err)
 	}
-	suspendedSet, suspendedSetCancel, err := servicestate.CreateOrOpenSuspendedSet(db, db)
+	suspendedSet, err := servicestate.CreateOrOpenSuspendedSet(db, db)
 	if err != nil {
-		pendingSetCancel()
 		return nil, nil, fmt.Errorf("failed to create or open suspended set: %v", err)
 	}
+	cancelSuspendedSetCompaction := suspendedSet.RunCompactor()
 	return &controller{
-			db:            db,
-			taskDir:       taskDir,
-			revisionStore: revisionStore,
-			pendingSet:    pendingSet,
-			suspendedSet:  suspendedSet,
-		}, func() {
-			pendingSetCancel()
-			suspendedSetCancel()
-		}, nil
+		db:            db,
+		taskDir:       taskDir,
+		revisionStore: revisionStore,
+		pendingSet:    pendingSet,
+		suspendedSet:  suspendedSet,
+	}, cancelSuspendedSetCompaction, nil
 }
 
 type controller struct {
@@ -451,14 +448,13 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		if err != nil {
 			return fmt.Errorf("failed to get task runner id: %w", err)
 		}
-		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(t, c.db, *runnerID)
+		taskSet, err := pool.OpenTaskSetForRunner(t, c.db, *runnerID)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				return ErrRunningTaskQueueInvariant
 			}
 			return fmt.Errorf("failed to open task set: %w", err)
 		}
-		defer cancelTaskSet()
 		if err := taskSet.Remove(t, []byte(tkey.Id())); err != nil {
 			return fmt.Errorf("failed to remove task from task set: %w", err)
 		}

@@ -25,8 +25,7 @@ func TestList(t *testing.T) {
 		runnerId := "test-runner"
 		t.Run("after a task set has been created", func(t *testing.T) {
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskSet, cancel, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
-				cancel()
+				taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 				assert.NoError(t, err)
 				assert.NotNil(t, taskSet)
 
@@ -40,8 +39,7 @@ func TestList(t *testing.T) {
 
 		t.Run("after a task set has been deleted", func(t *testing.T) {
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskSet, cancel, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
-				cancel()
+				taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 				assert.NoError(t, err)
 				assert.NotNil(t, taskSet)
 

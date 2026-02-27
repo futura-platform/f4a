@@ -53,13 +53,12 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg              Config
-	db               dbutil.DbRoot
-	activeRunners    pool.ActiveRunners
-	taskDir          task.TasksDirectory
-	pendingSet       *reliableset.Set
-	pendingSetCancel context.CancelFunc
-	clients          *k8s.Clients
+	cfg           Config
+	db            dbutil.DbRoot
+	activeRunners pool.ActiveRunners
+	taskDir       task.TasksDirectory
+	pendingSet    *reliableset.Set
+	clients       *k8s.Clients
 
 	scoreCache *scoreCache
 	logger     *slog.Logger
@@ -93,7 +92,7 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
 	}
-	pendingSet, pendingSetCancel, err := servicestate.CreateOrOpenReadySet(db, db)
+	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
 	if err != nil {
 		return fmt.Errorf("failed to open pending set: %w", err)
 	}
@@ -103,15 +102,14 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	}
 
 	s := &Scheduler{
-		cfg:              cfg,
-		db:               db,
-		activeRunners:    activeRunners,
-		taskDir:          taskDir,
-		pendingSet:       pendingSet,
-		pendingSetCancel: pendingSetCancel,
-		clients:          clients,
-		scoreCache:       newScoreCache(cfg.ScoreAlpha),
-		logger:           cfg.Logger,
+		cfg:           cfg,
+		db:            db,
+		activeRunners: activeRunners,
+		taskDir:       taskDir,
+		pendingSet:    pendingSet,
+		clients:       clients,
+		scoreCache:    newScoreCache(cfg.ScoreAlpha),
+		logger:        cfg.Logger,
 	}
 	return s.run(ctx)
 }
@@ -120,7 +118,8 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 // It assigns tasks to the fittest workers exactly once per pending task.
 // It also periodically refreshes the worker scores to evaluate fitness.
 func (s *Scheduler) run(ctx context.Context) error {
-	defer s.pendingSetCancel()
+	cancelPendingCompaction := s.pendingSet.RunCompactor()
+	defer cancelPendingCompaction()
 
 	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
 	if err != nil {

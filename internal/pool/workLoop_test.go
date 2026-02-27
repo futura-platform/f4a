@@ -67,9 +67,8 @@ func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *reliableset.S
 
 	path := append([]string{}, db.Root.GetPath()...)
 	path = append(path, "task_queue", runnerId)
-	set, cancelSet, err := reliableset.CreateOrOpen(db, db, path)
+	set, err := reliableset.CreateOrOpen(db, db, path)
 	require.NoError(t, err)
-	t.Cleanup(cancelSet)
 	return set
 }
 
