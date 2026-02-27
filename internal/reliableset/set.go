@@ -47,40 +47,38 @@ type setDirectories struct {
 	metadataSubspace directory.DirectorySubspace
 }
 
-func newSetDirectories(
-	db fdb.Transactor,
+func newSetDirectories[T fdb.ReadTransactor](
+	tr T,
 	path []string,
-	directoryConstructor func(tx fdb.Transaction, path []string) (directory.DirectorySubspace, error),
+	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
 ) (d setDirectories, err error) {
-	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		d.snapshotSubspace, err = directoryConstructor(tx, append(append([]string{}, path...), "snapshot"))
-		if err != nil {
-			return d, fmt.Errorf("failed to create snapshot subspace: %w", err)
-		}
-		d.logSubspace, err = directoryConstructor(tx, append(append([]string{}, path...), "log"))
-		if err != nil {
-			return d, fmt.Errorf("failed to create log subspace: %w", err)
-		}
-		d.cursorSubspace, err = directoryConstructor(tx, append(append([]string{}, path...), "cursor"))
-		if err != nil {
-			return d, fmt.Errorf("failed to create cursor subspace: %w", err)
-		}
-		d.metadataSubspace, err = directoryConstructor(tx, append(append([]string{}, path...), "metadata"))
-		if err != nil {
-			return d, fmt.Errorf("failed to create metadata subspace: %w", err)
-		}
-		return d, nil
-	})
+	d.snapshotSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "snapshot"))
+	if err != nil {
+		return d, fmt.Errorf("failed to create snapshot subspace: %w", err)
+	}
+	d.logSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "log"))
+	if err != nil {
+		return d, fmt.Errorf("failed to create log subspace: %w", err)
+	}
+	d.cursorSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "cursor"))
+	if err != nil {
+		return d, fmt.Errorf("failed to create cursor subspace: %w", err)
+	}
+	d.metadataSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "metadata"))
+	if err != nil {
+		return d, fmt.Errorf("failed to create metadata subspace: %w", err)
+	}
 	return d, err
 }
 
-func constructWith(
-	db fdb.Transactor,
+func constructWith[T fdb.ReadTransactor](
+	db fdb.Database,
+	tr T,
 	path []string,
-	directoryConstructor func(tx fdb.Transaction, path []string) (directory.DirectorySubspace, error),
+	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
 	clearFunc func() (bool, error),
 ) (*Set, context.CancelFunc, error) {
-	dirs, err := newSetDirectories(db, path, directoryConstructor)
+	dirs, err := newSetDirectories(tr, path, directoryConstructor)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create directories: %w", err)
 	}
@@ -95,10 +93,11 @@ func constructWith(
 
 func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
+		db.Database,
 		tr,
 		path,
-		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.Create(t, path, nil)
+		func(tr fdb.Transactor, path []string) (directory.DirectorySubspace, error) {
+			return db.Root.Create(tr, path, nil)
 		},
 		func() (bool, error) {
 			return db.Root.Remove(db, path)
@@ -106,12 +105,13 @@ func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.C
 	)
 }
 
-func Open(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
+func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
+		db.Database,
 		tr,
 		path,
-		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.Open(t, path, nil)
+		func(tr fdb.ReadTransactor, path []string) (directory.DirectorySubspace, error) {
+			return db.Root.Open(tr, path, nil)
 		},
 		func() (bool, error) {
 			return db.Root.Remove(db, path)
@@ -121,10 +121,11 @@ func Open(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.Can
 
 func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, context.CancelFunc, error) {
 	return constructWith(
+		db.Database,
 		tr,
 		path,
-		func(t fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
-			return db.Root.CreateOrOpen(t, path, nil)
+		func(tr fdb.Transactor, path []string) (directory.DirectorySubspace, error) {
+			return db.Root.CreateOrOpen(tr, path, nil)
 		},
 		func() (bool, error) {
 			return db.Root.Remove(db, path)
