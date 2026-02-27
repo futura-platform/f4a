@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 	"github.com/futura-platform/futura/flog"
 )
@@ -21,22 +23,20 @@ var (
 	ErrRunFatal = errors.New("run encountered fatal error")
 )
 
-const (
-	callbackRetryInitialDelay = 100 * time.Millisecond
-	callbackRetryMaxDelay     = 30 * time.Second
-	callbackTimeout           = 10 * time.Second
-)
-
-var callbackRetrySleep = time.Sleep
-
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
 // This uses reliablelock to ensure that only one instance of the runnable is executed at a time.
 // It will re execute the runnable with the new input if the input changes.
-// It will only return if either:
+// It will only return if:
 // 1. The execution finishes successfully and the callback succeeds at least once
-// 2. The execution fails and the callback succeeds at least once with the error
-// 3. the watch fails
-func (r Runnable) Run(ctx context.Context, runnerId string, callback func(context.Context, []byte, error) error) error {
+// 2. The execution fails and the callback succeeds at least once (delivering the error)
+// 3. The callback fails to deliver the result within the callback timeout (treated as non-fatal, Run will return nil)
+// 4. The watch fails
+func (r Runnable) Run(
+	ctx context.Context,
+	runnerId string,
+	callback func(context.Context, []byte, error) error,
+	callbackTimeout time.Duration,
+) error {
 	if callback == nil {
 		return errors.New("callback is required")
 	}
@@ -69,8 +69,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	var runErr error
 	var execWg sync.WaitGroup
 
-	executionFinished := make(chan struct{})
-
+	var executionResultDeliveryFinished atomic.Bool
 	startExecution := func(marshalledInput []byte) {
 		mu.Lock()
 		if cancelPrevious != nil {
@@ -103,20 +102,33 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			mu.Lock()
 			defer mu.Unlock()
 			watchCancel()
-			err = retryCallback(ctx, callback, result, err, callbackTimeout)
+			timeout, cancel := context.WithTimeout(watchCtx, callbackTimeout)
+			defer cancel()
+			err = backoff.RetryNotify(
+				func() error {
+					return callback(timeout, result, err)
+				},
+				backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(callbackTimeout)),
+				func(err error, duration time.Duration) {
+					flog.FromContext(watchCtx).LogAttrs(
+						watchCtx, slog.LevelDebug, "callback failed, retrying",
+						slog.String("task_id", string(r.Id())),
+						slog.String("error", err.Error()),
+						slog.Duration("duration", duration),
+					)
+				},
+			)
 			flog.FromContext(ctx).LogAttrs(
 				ctx, slog.LevelDebug, "delivered callback",
 				slog.String("task_id", string(r.Id())),
 				slog.Bool("error", err != nil),
 			)
-			close(executionFinished)
+			executionResultDeliveryFinished.Store(true)
 		}(marshalledInput, runCtx)
 	}
 
 	for {
 		select {
-		case <-executionFinished:
-			return nil
 		case marshalledInput, ok := <-valuesCh:
 			if !ok {
 				valuesCh = nil
@@ -132,33 +144,11 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			defer mu.Unlock()
 			if runErr != nil {
 				return runErr
+			} else if executionResultDeliveryFinished.Load() {
+				// if the execution result delivery finished, we should ignore the error
+				return nil
 			}
 			return err
-		}
-	}
-}
-
-func retryCallback(
-	ctx context.Context,
-	callback func(context.Context, []byte, error) error,
-	output []byte,
-	runErr error,
-	attemptTimeout time.Duration,
-) error {
-	delay := callbackRetryInitialDelay
-	for {
-		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
-		err := callback(attemptCtx, output, runErr)
-		cancel()
-		if err == nil {
-			return nil
-		} else if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		callbackRetrySleep(delay)
-		delay *= 2
-		if delay > callbackRetryMaxDelay {
-			delay = callbackRetryMaxDelay
 		}
 	}
 }

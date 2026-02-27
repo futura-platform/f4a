@@ -25,6 +25,8 @@ func setInput(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value []byte) {
 	assert.NoError(t, err)
 }
 
+const testCallbackTimeout = time.Second
+
 func TestRun(t *testing.T) {
 	t.Run("returns output on successful execution", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
@@ -61,7 +63,7 @@ func TestRun(t *testing.T) {
 				return nil
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), callback)
+			err = runnable.Run(t.Context(), t.Name(), callback, testCallbackTimeout)
 			assert.NoError(t, err)
 			select {
 			case output := <-outputCh:
@@ -100,15 +102,6 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			originalSleep := callbackRetrySleep
-			var sleepDurations []time.Duration
-			callbackRetrySleep = func(d time.Duration) {
-				sleepDurations = append(sleepDurations, d)
-			}
-			defer func() {
-				callbackRetrySleep = originalSleep
-			}()
-
 			attempts := atomic.Int32{}
 			outputCh := make(chan []byte, 1)
 			callback := func(_ context.Context, output []byte, err error) error {
@@ -121,10 +114,9 @@ func TestRun(t *testing.T) {
 				return nil
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), callback)
+			err = runnable.Run(t.Context(), t.Name(), callback, time.Second*3)
 			assert.NoError(t, err)
 			assert.Equal(t, int32(3), attempts.Load())
-			assert.Equal(t, []time.Duration{callbackRetryInitialDelay, callbackRetryInitialDelay * 2}, sleepDurations)
 			select {
 			case output := <-outputCh:
 				assert.Equal(t, expectedOutput, output)
@@ -168,7 +160,7 @@ func TestRun(t *testing.T) {
 				return nil
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), callback)
+			err = runnable.Run(t.Context(), t.Name(), callback, testCallbackTimeout)
 			assert.NoError(t, err)
 			select {
 			case receivedErr := <-callbackErr:
@@ -236,7 +228,7 @@ func TestRun(t *testing.T) {
 			var runErr error
 			done := make(chan struct{})
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), callback)
+				runErr = runnable.Run(t.Context(), t.Name(), callback, testCallbackTimeout)
 				close(done)
 			}()
 
@@ -322,7 +314,7 @@ func TestRun(t *testing.T) {
 			defer cancel()
 
 			go func() {
-				runnable.Run(ctx, t.Name(), func(context.Context, []byte, error) error { return nil })
+				runnable.Run(ctx, t.Name(), func(context.Context, []byte, error) error { return nil }, testCallbackTimeout)
 			}()
 
 			// Wait for first execution to start
@@ -391,7 +383,7 @@ func TestRun(t *testing.T) {
 				runErr = runnable.Run(ctx, t.Name(), func(_ context.Context, _ []byte, err error) error {
 					callbackErr <- err
 					return nil
-				})
+				}, testCallbackTimeout)
 				close(done)
 			}()
 
@@ -458,7 +450,7 @@ func TestRun(t *testing.T) {
 				runErr = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, err error) error {
 					assert.NoError(t, err)
 					return nil
-				})
+				}, testCallbackTimeout)
 				close(done)
 			}()
 
@@ -491,7 +483,7 @@ func TestRun(t *testing.T) {
 		})
 	})
 
-	t.Run("does not report success if callback never succeeds", func(t *testing.T) {
+	t.Run("returns nil error even if callback never succeeds", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -526,7 +518,7 @@ func TestRun(t *testing.T) {
 				runErr = runnable.Run(ctx, t.Name(), func(_ context.Context, _ []byte, _ error) error {
 					callbackAttempts.Add(1)
 					return errors.New("callback failed")
-				})
+				}, testCallbackTimeout)
 				close(done)
 			}()
 
@@ -540,7 +532,7 @@ func TestRun(t *testing.T) {
 			}
 
 			assert.GreaterOrEqual(t, callbackAttempts.Load(), int32(1))
-			assert.ErrorIs(t, runErr, context.Canceled)
+			assert.NoError(t, runErr)
 		})
 	})
 
@@ -573,7 +565,7 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil }, testCallbackTimeout)
 			assert.NoError(t, err)
 
 			// The Watch function decodes with privateencoding, so receivedInput is already the decoded value
@@ -633,7 +625,7 @@ func TestRun(t *testing.T) {
 
 			var runErr error
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), callback)
+				runErr = runnable.Run(t.Context(), t.Name(), callback, testCallbackTimeout)
 				close(done)
 			}()
 
@@ -685,7 +677,7 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil }, testCallbackTimeout)
 			assert.ErrorIs(t, err, ErrRunFatal)
 		})
 	})

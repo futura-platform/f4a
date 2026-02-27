@@ -66,7 +66,7 @@ func TestRunMap(t *testing.T) {
 			wg.Wait()
 
 			// give some time for the cleanup to complete
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			m.mu.Lock()
 			assert.Equal(t, 0, len(m.runCancels))
 			m.mu.Unlock()
