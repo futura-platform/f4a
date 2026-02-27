@@ -2,6 +2,7 @@ package serverutil
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,13 +25,20 @@ func K8sAwareListenAndServe(s *http.Server, shutdownTimeout time.Duration, drain
 	wg.Go(func() {
 		select {
 		case <-signals:
+
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
 			// We ignore shutdown errors here because the caller is responsible for
 			// classifying ListenAndServe's return value.
 			_ = s.Shutdown(ctx)
 			if drain != nil {
-				backoff.Retry(drain, backoff.NewExponentialBackOff())
+				err := backoff.Retry(drain, backoff.WithContext(backoff.NewExponentialBackOff(
+					// limit retries with context timeout, not here
+					backoff.WithMaxElapsedTime(0),
+				), ctx))
+				if err != nil {
+					slog.Error("failed to drain server", "error", err)
+				}
 			}
 		case <-stopWatcher:
 			// Server stopped via a non-signal path (e.g. context/work-loop shutdown).
