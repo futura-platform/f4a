@@ -255,15 +255,19 @@ func (s *Scheduler) assignPending(
 		group.Go(func() error {
 			defer activeTxSem.Release(1)
 			var txScopedRetryAssignLater mapset.Set[string]
+			var txScopedRunnerScoreEvictions mapset.Set[string]
 
-			// store a JIT snapshot of runner active states to skip assignment for inactive runners
-			// and avoid querying the database for each task assignment.
-			txRunnerActiveStates := make(map[string]bool)
 			_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 				txScopedRetryAssignLater = mapset.NewSet[string]()
+				txScopedRunnerScoreEvictions = mapset.NewSet[string]()
+				rejectedRunners := mapset.NewSet[string]()
+
+				// Keep this scoped to a single transaction attempt so retries do not
+				// observe stale per-attempt state.
+				txRunnerActiveStates := make(map[string]bool)
 				for _, id := range batch {
 				retryRunnerSelection:
-					runnerId, ok := selectWeightedRunner(scores)
+					runnerId, ok := selectWeightedRunnerExcluding(scores, rejectedRunners)
 					if !ok {
 						txScopedRetryAssignLater.Add(id)
 						continue
@@ -277,7 +281,9 @@ func (s *Scheduler) assignPending(
 					}
 					if !runnerState {
 						// this runner is no longer active, skip assignment for it.
-						scores.Delete(runnerId)
+						// evict from score cache only after transaction commit.
+						rejectedRunners.Add(runnerId)
+						txScopedRunnerScoreEvictions.Add(runnerId)
 						// then retry the assignment for this task.
 						goto retryRunnerSelection
 					}
@@ -285,8 +291,9 @@ func (s *Scheduler) assignPending(
 					runnerSet, err := activeRunnerSets.open(runnerId)
 					if err != nil {
 						if errors.Is(err, directory.ErrDirNotExists) {
-							// the runner set is no longer active, delete the score and retry the assignment.
-							scores.Delete(runnerId)
+							// the runner set is no longer active, evict score on commit and retry assignment.
+							rejectedRunners.Add(runnerId)
+							txScopedRunnerScoreEvictions.Add(runnerId)
 							goto retryRunnerSelection
 						}
 						return nil, err
@@ -305,6 +312,9 @@ func (s *Scheduler) assignPending(
 				retryAssignLater.Append(batch...)
 			} else {
 				retryAssignLater.Append(txScopedRetryAssignLater.ToSlice()...)
+				for runnerID := range txScopedRunnerScoreEvictions.Iter() {
+					scores.Delete(runnerID)
+				}
 			}
 			return err
 		})
@@ -353,6 +363,10 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 }
 
 func selectWeightedRunner(scores *xsync.Map[string, float64]) (string, bool) {
+	return selectWeightedRunnerExcluding(scores, nil)
+}
+
+func selectWeightedRunnerExcluding(scores *xsync.Map[string, float64], excluded mapset.Set[string]) (string, bool) {
 	if scores.Size() == 0 {
 		return "", false
 	}
@@ -360,12 +374,18 @@ func selectWeightedRunner(scores *xsync.Map[string, float64]) (string, bool) {
 	keys := make([]string, 0, scores.Size())
 	maxScore := math.Inf(-1)
 	scores.Range(func(worker string, scoreValue float64) bool {
+		if excluded != nil && excluded.ContainsOne(worker) {
+			return true
+		}
 		keys = append(keys, worker)
 		if scoreValue > maxScore {
 			maxScore = scoreValue
 		}
 		return true
 	})
+	if len(keys) == 0 {
+		return "", false
+	}
 	sort.Strings(keys)
 
 	const weightScale = 1000.0

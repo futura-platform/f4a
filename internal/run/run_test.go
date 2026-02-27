@@ -491,6 +491,59 @@ func TestRun(t *testing.T) {
 		})
 	})
 
+	t.Run("does not report success if callback never succeeds", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+			setInput(t, db, tkey, []byte("test input"))
+
+			executor := &testutil.MockExecutor{
+				Execute: func(
+					inContainer executiontype.TransactionalContainer,
+					ctx context.Context,
+					marshalledInput []byte,
+					opts ...ftype.FlowLoopOption,
+				) ([]byte, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				},
+			}
+
+			runnable := Runnable{
+				db:       db.Database,
+				taskKey:  tkey,
+				executor: executor,
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			callbackAttempts := atomic.Int32{}
+			done := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = runnable.Run(ctx, t.Name(), func(_ context.Context, _ []byte, _ error) error {
+					callbackAttempts.Add(1)
+					return errors.New("callback failed")
+				})
+				close(done)
+			}()
+
+			time.Sleep(100 * time.Millisecond)
+			cancel()
+
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for Run to return")
+			}
+
+			assert.GreaterOrEqual(t, callbackAttempts.Load(), int32(1))
+			assert.ErrorIs(t, runErr, context.Canceled)
+		})
+	})
+
 	t.Run("execution receives correct input", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			expectedInput := []byte("expected input data")

@@ -65,10 +65,11 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 	var mu sync.Mutex
 	var cancelPrevious context.CancelCauseFunc
-	var success bool
 
 	var runErr error
 	var execWg sync.WaitGroup
+
+	executionFinished := make(chan struct{})
 
 	startExecution := func(marshalledInput []byte) {
 		mu.Lock()
@@ -108,12 +109,14 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				slog.String("task_id", string(r.Id())),
 				slog.Bool("error", err != nil),
 			)
-			success = true
+			close(executionFinished)
 		}(marshalledInput, runCtx)
 	}
 
 	for {
 		select {
+		case <-executionFinished:
+			return nil
 		case marshalledInput, ok := <-valuesCh:
 			if !ok {
 				valuesCh = nil
@@ -129,9 +132,6 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			defer mu.Unlock()
 			if runErr != nil {
 				return runErr
-			}
-			if success {
-				return nil
 			}
 			return err
 		}
