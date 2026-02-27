@@ -35,6 +35,7 @@ var callbackRetrySleep = time.Sleep
 // It will only return if either:
 // 1. The execution finishes successfully and the callback succeeds at least once
 // 2. The execution fails and the callback succeeds at least once with the error
+// 3. the watch fails
 func (r Runnable) Run(ctx context.Context, runnerId string, callback func(context.Context, []byte, error) error) error {
 	if callback == nil {
 		return errors.New("callback is required")
@@ -64,7 +65,6 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 	var mu sync.Mutex
 	var cancelPrevious context.CancelCauseFunc
-	var success bool
 
 	var runErr error
 	var execWg sync.WaitGroup
@@ -81,6 +81,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		execWg.Add(1)
 		go func(input []byte, runCtx context.Context) {
 			defer execWg.Done()
+
 			result, err := executable.Execute(runCtx, input)
 			if errors.Is(err, ErrRunFatal) {
 				if !testing.Testing() {
@@ -106,7 +107,6 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				slog.String("task_id", string(r.Id())),
 				slog.Bool("error", err != nil),
 			)
-			success = true
 		}(marshalledInput, runCtx)
 	}
 
@@ -120,16 +120,13 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			startExecution(marshalledInput)
 		case err, ok := <-errCh:
 			if !ok {
-				err = nil
+				return nil
 			}
 			execWg.Wait()
 			mu.Lock()
 			defer mu.Unlock()
 			if runErr != nil {
 				return runErr
-			}
-			if success {
-				return nil
 			}
 			return err
 		}
