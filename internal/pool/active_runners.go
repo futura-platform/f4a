@@ -7,6 +7,9 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
+// ActiveRunners is a set of runners that can accept tasks.
+// It is NOT strongly consistent, and should only be used for best effort fast paths.
+// (this is because runner pods can fail to drain without committing their liveness marker)
 type ActiveRunners struct {
 	livenessMarkers directory.DirectorySubspace
 }

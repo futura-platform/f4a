@@ -451,7 +451,7 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		if err != nil {
 			return fmt.Errorf("failed to get task runner id: %w", err)
 		}
-		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(c.db, c.db, *runnerID)
+		taskSet, cancelTaskSet, err := pool.OpenTaskSetForRunner(t, c.db, *runnerID)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				return ErrRunningTaskQueueInvariant

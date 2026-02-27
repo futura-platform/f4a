@@ -13,7 +13,10 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
-	"github.com/puzpuzpuz/xsync/v4"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1 "k8s.io/client-go/listers/core/v1"
 )
 
 // SpawnReaperRoutine spins off a goroutine that runs a loop that scans for orphaned task sets and re queues all the tasks in them to be scheduled.
@@ -22,7 +25,8 @@ import (
 // activeRunnerSets is expected to be updated in real time as a liveActiveRunnerSets return value.
 func SpawnReaperRoutine(
 	db dbutil.DbRoot,
-	activeRunnerSets *xsync.Map[string, *reliableset.Set],
+	cachedPods corev1.PodNamespaceLister,
+	livePods corev1client.PodInterface,
 	pollInterval time.Duration,
 ) (_ context.CancelFunc, err error) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,7 +58,7 @@ func SpawnReaperRoutine(
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				err := reapAll(ctx, db, activeRunnerSets, activeRunners, pendingSet, taskDirectory)
+				err := reapAll(ctx, db, cachedPods, livePods, activeRunners, pendingSet, taskDirectory)
 				if err != nil {
 					slog.Error("reaper: failed to reap", "error", err)
 				}
@@ -68,7 +72,8 @@ func SpawnReaperRoutine(
 func reapAll(
 	ctx context.Context,
 	db dbutil.DbRoot,
-	activeRunnerSets *xsync.Map[string, *reliableset.Set],
+	cachedPods corev1.PodNamespaceLister,
+	livePods corev1client.PodInterface,
 	activeRunners pool.ActiveRunners,
 	pendingSet *reliableset.Set,
 	taskDirectory task.TasksDirectory,
@@ -83,7 +88,12 @@ func reapAll(
 	}
 	reapErrs := make([]error, 0, len(runnerIds))
 	for _, runnerId := range runnerIds {
-		if _, ok := activeRunnerSets.Load(runnerId); ok {
+		// check if the runner is dead (in cache, fast eventually consistent path)
+		if _, err := cachedPods.Get(runnerId); !apierrors.IsNotFound(err) {
+			continue
+		}
+		// check if the runner is dead (from api server, slow consistent path)
+		if _, err := livePods.Get(ctx, runnerId, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 			continue
 		}
 

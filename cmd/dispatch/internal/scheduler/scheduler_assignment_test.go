@@ -29,7 +29,7 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		taskID := task.Id("pending-task-retry")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
-		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)}, scoresMap(map[string]float64{}), xsync.NewMap[string, *reliableset.Set](xsync.WithPresize(1)))
+		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)}, scoresMap(map[string]float64{}), newMockedRunnerSetCache(db, map[string]*reliableset.Set{}))
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
 
@@ -98,7 +98,12 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 	})
 }
 
-func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Scheduler, task.TasksDirectory, *reliableset.Set, *xsync.Map[string, *reliableset.Set]) {
+func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
+	*Scheduler,
+	task.TasksDirectory,
+	*reliableset.Set,
+	*runnerSetCache,
+) {
 	t.Helper()
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
@@ -119,9 +124,6 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Sche
 	})
 	require.NoError(t, err)
 
-	activeRunnerSets := xsync.NewMap[string, *reliableset.Set](xsync.WithPresize(1))
-	activeRunnerSets.Store(workerID, workerSet)
-
 	s := &Scheduler{
 		cfg: Config{
 			BatchTxParallelism: 1,
@@ -134,7 +136,18 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (*Sche
 		pendingSetCancel: pendingSetCancel,
 		logger:           slog.Default(),
 	}
-	return s, tasksDir, pendingSet, activeRunnerSets
+	return s, tasksDir, pendingSet, newMockedRunnerSetCache(db, map[string]*reliableset.Set{workerID: workerSet})
+}
+
+func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*reliableset.Set) *runnerSetCache {
+	cache := &runnerSetCache{
+		db:         db,
+		activeSets: xsync.NewMap[string, *reliableset.Set](xsync.WithPresize(len(src))),
+	}
+	for k, v := range src {
+		cache.activeSets.Store(k, v)
+	}
+	return cache
 }
 
 func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, pendingSet *reliableset.Set, id task.Id) {

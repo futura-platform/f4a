@@ -127,19 +127,23 @@ func (s *Scheduler) run(ctx context.Context) error {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}
 
-	activeRunnerSets, cancel, err := liveActiveRunnerSets(
+	runnerPodInformer, cancel, err := liveRunnerPods(
 		ctx,
-		s.db,
 		s.clients,
 		s.cfg.Namespace,
 		s.cfg.StatefulSetName,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to watch active runner sets: %w", err)
+		return fmt.Errorf("failed to watch runner pods: %w", err)
 	}
 	defer cancel()
 
-	cancelReaper, err := reaper.SpawnReaperRoutine(s.db, activeRunnerSets, reaperPollInterval)
+	cancelReaper, err := reaper.SpawnReaperRoutine(
+		s.db,
+		runnerPodInformer.Lister().Pods(s.cfg.Namespace),
+		s.clients.Core.CoreV1().Pods(s.cfg.Namespace),
+		reaperPollInterval,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to spawn reaper routine: %w", err)
 	}
@@ -149,6 +153,8 @@ func (s *Scheduler) run(ctx context.Context) error {
 	if err != nil {
 		s.logger.Error("failed to refresh worker scores", "error", err)
 	}
+
+	activeRunnerSets := newRunnerSetCache(runnerPodInformer.Informer())
 
 	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores, activeRunnerSets)
 	if err != nil {
@@ -223,7 +229,7 @@ func (s *Scheduler) assignPending(
 	ctx context.Context,
 	pendingIds []string,
 	scores *xsync.Map[string, float64],
-	activeRunnerSets *xsync.Map[string, *reliableset.Set],
+	activeRunnerSets *runnerSetCache,
 ) (retryAssignLater mapset.Set[string], err error) {
 	defer func() {
 		slog.Info("assigned pending tasks",
@@ -277,12 +283,9 @@ func (s *Scheduler) assignPending(
 						goto retryRunnerSelection
 					}
 
-					runnerSet, ok := activeRunnerSets.Load(runnerId)
-					if !ok {
-						// Pod readiness can change between score snapshots.
-						// Drop this runner and retry selection for the current task.
-						scores.Delete(runnerId)
-						goto retryRunnerSelection
+					runnerSet, err := activeRunnerSets.open(runnerId)
+					if err != nil {
+						return nil, err
 					}
 
 					if err := s.assignTask(tx, task.Id(id), runnerId, runnerSet); err != nil {
