@@ -89,7 +89,11 @@ func WatchCh[T any](
 			if err != nil {
 				return fmt.Errorf("failed to get value: %w", err)
 			}
-			ch <- v
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case ch <- v:
+			}
 			lastValue = v
 
 			err = watch.Get()
@@ -105,7 +109,10 @@ func WatchCh[T any](
 
 		err := startWatchLoop()
 		if err != nil {
-			errCh <- err
+			select {
+			case <-ctx.Done():
+			case errCh <- err:
+			}
 		}
 	}()
 	return ch, errCh
