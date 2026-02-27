@@ -42,8 +42,9 @@ func (r *runnerSetCache) open(runnerId string) (*reliableset.Set, error) {
 	return set.(*reliableset.Set), nil
 }
 
-func newRunnerSetCache(runnerInformer cache.SharedIndexInformer) *runnerSetCache {
+func newRunnerSetCache(db dbutil.DbRoot, runnerInformer cache.SharedIndexInformer) *runnerSetCache {
 	cache := &runnerSetCache{
+		db:         db,
 		activeSets: xsync.NewMap[string, *reliableset.Set](),
 	}
 	runnerInformer.AddEventHandler(cache)

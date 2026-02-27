@@ -154,7 +154,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 		s.logger.Error("failed to refresh worker scores", "error", err)
 	}
 
-	activeRunnerSets := newRunnerSetCache(runnerPodInformer.Informer())
+	activeRunnerSets := newRunnerSetCache(s.db, runnerPodInformer.Informer())
 
 	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores, activeRunnerSets)
 	if err != nil {
