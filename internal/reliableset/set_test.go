@@ -3,6 +3,7 @@ package reliableset
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
+	"github.com/futura-platform/f4a/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +87,12 @@ func readSetValues(t testing.TB, db dbutil.DbRoot, set *Set) mapset.Set[string] 
 func requireSetMatchesDB(t *testing.T, db dbutil.DbRoot, set *Set, expected mapset.Set[string]) {
 	t.Helper()
 	actual := readSetValues(t, db, set)
-	require.True(t, stateSetsEqual(actual, expected), "set mismatch: expected %v got %v", expected, actual)
+	equal := stateSetsEqual(actual, expected)
+	errMsg := []any{"set mismatch: expected %v got %v", expected, actual}
+	if actual.Cardinality() > 100 || expected.Cardinality() > 100 {
+		errMsg = []any{fmt.Sprintf("(full diffs too large) expected %d items got %d items", expected.Cardinality(), actual.Cardinality())}
+	}
+	require.True(t, equal, errMsg...)
 }
 
 func TestSetAddRemove(t *testing.T) {
@@ -229,29 +236,57 @@ func TestSetItemSizeLimit(t *testing.T) {
 
 func TestSetCompactLog(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		set := newSet(t, db, "compact")
-		addItem(t, db, set, []byte("a"))
-		addItem(t, db, set, []byte("b"))
-		addItem(t, db, set, []byte("c"))
-		removeItem(t, db, set, []byte("b"))
+		t.Run("small scale", func(t *testing.T) {
+			set := newSet(t, db, "small_compact")
+			addItem(t, db, set, []byte("a"))
+			addItem(t, db, set, []byte("b"))
+			addItem(t, db, set, []byte("c"))
+			removeItem(t, db, set, []byte("b"))
 
-		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-			return nil, set.compactLog(tx)
+			err := set.compactor.compactLog(db.Database)
+			require.NoError(t, err)
+
+			expected := mapset.NewSet[string]("a", "c")
+			requireSetMatchesDB(t, db, set, expected)
+
+			begin, _ := set.logSubspace.FDBRangeKeys()
+			var logEntries []KeyedLogEntry
+			_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+				var err error
+				logEntries, err = set.readLog(tx, begin)
+				return nil, err
+			})
+			require.NoError(t, err)
+			require.Empty(t, logEntries)
 		})
-		require.NoError(t, err)
 
-		expected := mapset.NewSet[string]("a", "c")
-		requireSetMatchesDB(t, db, set, expected)
+		t.Run("large scale", func(t *testing.T) {
+			set := newSet(t, db, "large_compact")
+			expected := mapset.NewSet[string]()
+			for i := range 10 {
+				const perEntrySize = 1000
+				_, err := db.TransactContext(t.Context(), func(tx fdb.Transaction) (any, error) {
+					for range (constants.MaxTransactionAffectedSizeBytes / (perEntrySize + 100 /*overhead*/)) - 1 {
+						randomFill := make([]byte, perEntrySize)
+						_, err := rand.Read(randomFill)
+						require.NoError(t, err)
+						expected.Add(string(randomFill))
+						err = set.Add(tx, randomFill)
+						if err != nil {
+							return nil, err
+						}
+					}
+					return nil, nil
+				})
+				t.Logf("adding log chunk %d", i)
+				require.NoError(t, err)
+			}
 
-		begin, _ := set.logSubspace.FDBRangeKeys()
-		var logEntries []KeyedLogEntry
-		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-			var err error
-			logEntries, err = set.readLog(tx, begin)
-			return nil, err
+			err := set.compactor.compactLog(db.Database)
+			require.NoError(t, err, "failed to compact log")
+
+			requireSetMatchesDB(t, db, set, expected)
 		})
-		require.NoError(t, err)
-		require.Empty(t, logEntries)
 	})
 }
 
@@ -295,9 +330,7 @@ func TestCompactionRespectsActiveCursor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-			return nil, set.compactLog(tx)
-		})
+		err = set.compactor.compactLog(db.Database)
 		require.NoError(t, err)
 
 		remaining := readLogEntries(t, db, set)
@@ -319,7 +352,7 @@ func TestCleanDeadCursors(t *testing.T) {
 			tx.Set(set.cursorKey(activeID, cursorKeyTail), []byte("live-tail"))
 			tx.Set(set.cursorKey(activeID, cursorKeyLease), encodeLease(now.Add(time.Minute)))
 
-			index, err := set.cursorIndex(tx)
+			index, err := set.makeCursorIndex(tx)
 			require.NoError(t, err)
 			return nil, cleanDeadCursors(tx, index, now)
 		})

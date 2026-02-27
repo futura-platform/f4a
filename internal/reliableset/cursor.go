@@ -131,8 +131,8 @@ func (s *Set) decodeCursorKey(key fdb.Key) (string, string, bool) {
 	return id, kind, true
 }
 
-// cursorIndex gets a snapshot of all current cursor states
-func (s *Set) cursorIndex(tx fdb.ReadTransaction) (cursorIndex, error) {
+// makeCursorIndex gets a snapshot of all current cursor states
+func (s *Set) makeCursorIndex(tx fdb.ReadTransaction) (cursorIndex, error) {
 	begin, end := s.cursorSubspace.FDBRangeKeys()
 	kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
 	if err != nil {

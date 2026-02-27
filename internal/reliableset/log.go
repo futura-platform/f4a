@@ -17,7 +17,8 @@ const (
 )
 
 const (
-	entrySizeLimit = 1024
+	entrySizeLimit   = 1024
+	AddOverheadBytes = 39
 )
 
 var (

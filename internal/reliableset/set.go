@@ -15,7 +15,7 @@ import (
 // It is gauranteed to be contention free on write operations
 // (unless versiontimestamp collisions occur across FDB shards).
 type Set struct {
-	db fdb.Transactor
+	db fdb.Database
 
 	// this key should be incremented for every new log entry
 	epochKey fdb.Key
