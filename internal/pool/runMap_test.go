@@ -67,7 +67,9 @@ func TestRunMap(t *testing.T) {
 
 			// give some time for the cleanup to complete
 			time.Sleep(100 * time.Millisecond)
+			m.mu.Lock()
 			assert.Equal(t, 0, len(m.runCancels))
+			m.mu.Unlock()
 		})
 	})
 
