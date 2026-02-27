@@ -273,10 +273,10 @@ func (c *controller) activateTaskRevisioned(
 			}
 
 			// move to pending queue
-			tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
 			if err := c.removeFromCurrentQueue(t, tkey); err != nil {
 				return fmt.Errorf("failed to remove task from current queue: %w", err)
 			}
+			tkey.LifecycleStatus().Set(t, task.LifecycleStatusPending)
 			return c.pendingSet.Add(t, []byte(tkey.Id()))
 		},
 	)
