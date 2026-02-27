@@ -45,7 +45,7 @@ func WatchCh[T any](
 	getValue ValueGetter[T],
 ) (<-chan T, <-chan error) {
 	ch := make(chan T)
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	startWatchLoop := func() error {
 		handleWatchErr := func(err error) error {
 			if ctx.Err() != nil {
@@ -56,13 +56,18 @@ func WatchCh[T any](
 
 		var watch fdb.FutureNil = initialWatch
 		var watchMu sync.Mutex
+		stopWatchCanceler := make(chan struct{})
+		defer close(stopWatchCanceler)
 		go func() {
-			<-ctx.Done()
-			watchMu.Lock()
-			if watch != nil {
-				watch.Cancel()
+			select {
+			case <-ctx.Done():
+				watchMu.Lock()
+				if watch != nil {
+					watch.Cancel()
+				}
+				watchMu.Unlock()
+			case <-stopWatchCanceler:
 			}
-			watchMu.Unlock()
 		}()
 		if initialWatch != nil {
 			err := initialWatch.Get()
@@ -109,10 +114,7 @@ func WatchCh[T any](
 
 		err := startWatchLoop()
 		if err != nil {
-			select {
-			case <-ctx.Done():
-			case errCh <- err:
-			}
+			errCh <- err
 		}
 	}()
 	return ch, errCh

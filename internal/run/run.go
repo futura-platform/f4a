@@ -65,6 +65,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 	var mu sync.Mutex
 	var cancelPrevious context.CancelCauseFunc
+	var success bool
 
 	var runErr error
 	var execWg sync.WaitGroup
@@ -107,6 +108,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				slog.String("task_id", string(r.Id())),
 				slog.Bool("error", err != nil),
 			)
+			success = true
 		}(marshalledInput, runCtx)
 	}
 
@@ -120,13 +122,16 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			startExecution(marshalledInput)
 		case err, ok := <-errCh:
 			if !ok {
-				return nil
+				err = nil
 			}
 			execWg.Wait()
 			mu.Lock()
 			defer mu.Unlock()
 			if runErr != nil {
 				return runErr
+			}
+			if success {
+				return nil
 			}
 			return err
 		}
