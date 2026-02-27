@@ -49,6 +49,75 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 	})
 }
 
+func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		const inactiveRunner = "worker-inactive"
+
+		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, inactiveRunner)
+		taskID := task.Id("pending-task-inactive-runner")
+		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+			s.activeRunners.SetActive(tx, inactiveRunner, false)
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		scores := scoresMap(map[string]float64{inactiveRunner: 0.5})
+		retryAssignLater, err := s.assignPending(
+			t.Context(),
+			[]string{string(taskID)},
+			scores,
+			activeRunnerSets,
+		)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
+		_, ok := scores.Load(inactiveRunner)
+		require.False(t, ok, "inactive runner score should be evicted to avoid repeated retries")
+
+		status, runnerID := readTaskState(t, db, tasksDir, taskID)
+		require.Equal(t, task.LifecycleStatusPending, status)
+		require.Nil(t, runnerID)
+		requireSetContainsTask(t, db, pendingSet, taskID)
+	})
+}
+
+func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		const (
+			healthyRunner    = "worker-healthy"
+			missingSetRunner = "worker-missing-set"
+		)
+
+		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, healthyRunner)
+		taskID := task.Id("pending-task-missing-runner-set")
+		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+			s.activeRunners.SetActive(tx, missingSetRunner, true)
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		scores := scoresMap(map[string]float64{missingSetRunner: 0.8})
+		retryAssignLater, err := s.assignPending(
+			t.Context(),
+			[]string{string(taskID)},
+			scores,
+			activeRunnerSets,
+		)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
+		_, ok := scores.Load(missingSetRunner)
+		require.False(t, ok, "runner score should be evicted when runner queue directory is gone")
+
+		status, runnerID := readTaskState(t, db, tasksDir, taskID)
+		require.Equal(t, task.LifecycleStatusPending, status)
+		require.Nil(t, runnerID)
+		requireSetContainsTask(t, db, pendingSet, taskID)
+	})
+}
+
 func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, "worker-1")

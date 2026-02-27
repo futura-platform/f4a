@@ -285,6 +285,11 @@ func (s *Scheduler) assignPending(
 
 					runnerSet, err := activeRunnerSets.open(runnerId)
 					if err != nil {
+						if errors.Is(err, directory.ErrDirNotExists) {
+							// the runner set is no longer active, delete the score and retry the assignment.
+							scores.Delete(runnerId)
+							goto retryRunnerSelection
+						}
 						return nil, err
 					}
 
