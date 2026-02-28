@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/util"
+	"golang.org/x/sync/singleflight"
 )
 
 // Lease represents a lease on a key.
@@ -26,6 +28,9 @@ type Lease struct {
 	options LeaseOptions
 
 	hasActivated atomic.Bool
+
+	releaseSingleflight singleflight.Group
+	releaseOnce         sync.Once
 }
 
 // Valid checks if the lease is still the proper holder of the lock.
@@ -154,14 +159,20 @@ func (l *ActiveLease) Release(tr fdb.Transactor) error {
 // It will release the lease by clearing the holder identity and expiration keys.
 // This operation is atomic.
 func (l *Lease) Release(tr fdb.Transactor) error {
-	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
-		if !l.Valid(t) {
-			return nil, ErrLeaseStolen
-		}
+	_, err, _ := l.releaseSingleflight.Do("release", func() (any, error) {
+		var err error
+		l.releaseOnce.Do(func() {
+			_, err = tr.Transact(func(t fdb.Transaction) (any, error) {
+				if !l.Valid(t) {
+					return nil, ErrLeaseStolen
+				}
 
-		t.Clear(l.holderIdentityKey())
-		t.Clear(l.holderExpirationKey())
-		return nil, nil
+				t.Clear(l.holderIdentityKey())
+				t.Clear(l.holderExpirationKey())
+				return nil, nil
+			})
+		})
+		return err, nil
 	})
 	if err != nil {
 		return err
