@@ -36,6 +36,7 @@ func DefaultLeaseOptions() leaseOptions {
 
 // Acquire acquires the lock. It will block until the lock is acquired or the context is canceled.
 func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
+retryAcquire:
 	var acquiredLease *Lease
 	var holderExpiration time.Time
 	var expirationWatch fdb.FutureNil
@@ -81,7 +82,7 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
 			return nil, ctx.Err()
 		case <-time.After(time.Until(holderExpiration)):
 			watchCtxCancel()
-			return l.Acquire(ctx, db)
+			goto retryAcquire
 		case holderExpiration, ok := <-expirationUpdates:
 			if !ok {
 				return nil, fmt.Errorf("watch channel closed")
@@ -89,7 +90,7 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
 			if holderExpiration.Before(time.Now()) {
 				// this means the lease has been released, we should try to acquire the lock again immediately
 				watchCtxCancel()
-				return l.Acquire(ctx, db)
+				goto retryAcquire
 			}
 		}
 	}
