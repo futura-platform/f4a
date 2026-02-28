@@ -14,7 +14,7 @@ type runMap struct {
 	mu sync.Mutex
 	wg sync.WaitGroup
 
-	runCancels map[task.Id]context.CancelCauseFunc
+	runStates  map[task.Id]*runState
 	runnerId   string
 	onRunError func(task.Id, error)
 }
@@ -24,7 +24,7 @@ func newRunMap(runnerId string, onRunError func(task.Id, error)) *runMap {
 		onRunError = func(task.Id, error) {}
 	}
 	return &runMap{
-		runCancels: make(map[task.Id]context.CancelCauseFunc),
+		runStates:  make(map[task.Id]*runState),
 		runnerId:   runnerId,
 		onRunError: onRunError,
 	}
@@ -37,30 +37,28 @@ var (
 
 func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.Context, []byte, error) error) error {
 	ctx = task.WithTaskKey(ctx, r.TaskKey())
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.runCancels[r.Id()]; ok {
-		return ErrDuplicateRun
-	}
-
-	ctx, cancel := context.WithCancelCause(ctx)
-	m.wg.Go(func() {
-		cleanup := func() {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-
-			cancel(nil)
-			delete(m.runCancels, r.Id())
-		}
-		err := r.Run(ctx, m.runnerId, callback)
-		if err != nil && ctx.Err() == nil {
+	newState := newRunState(ctx, func(runCtx context.Context) {
+		err := r.Run(runCtx, m.runnerId, callback)
+		if err != nil && runCtx.Err() == nil {
 			m.onRunError(r.Id(), err)
 		}
-		cleanup()
 	})
-	m.runCancels[r.Id()] = cancel
+
+	s, ok := m.runStates[r.Id()]
+	if !ok {
+		m.runStates[r.Id()] = newState
+		m.wg.Go(func() {
+			m.runChain(r.Id(), newState)
+		})
+		return nil
+	}
+	if runStateChainActive(s) {
+		return ErrDuplicateRun
+	}
+	lastRunState(s).next = newState
 	return nil
 }
 
@@ -68,15 +66,58 @@ func (m *runMap) cancel(id task.Id) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cancel, ok := m.runCancels[id]
+	s, ok := m.runStates[id]
 	if !ok {
 		return ErrRunNotFound
 	}
-	cancel(nil)
+	for current := s; current != nil; current = current.next {
+		current.cancel(nil)
+	}
 	return nil
 }
 
 // wait waits for all runs to exit.
 func (m *runMap) wait() {
 	m.wg.Wait()
+}
+
+// runChain runs the chain of run states serially.
+// It maintains the runStates map to only contain the relevant portion of the chain,
+// meaning the current run state, or pending future run states that have not started yet.
+// Pending states that were canceled before their turn are skipped.
+func (m *runMap) runChain(id task.Id, current *runState) {
+	for current != nil {
+		// Pending states canceled before they start are skipped entirely.
+		if current.active() {
+			current.runFn(current.ctx)
+		}
+
+		m.mu.Lock()
+		next := current.next
+		if next != nil {
+			m.runStates[id] = next
+		} else {
+			delete(m.runStates, id)
+		}
+		m.mu.Unlock()
+
+		current = next
+	}
+}
+
+func runStateChainActive(head *runState) bool {
+	for current := head; current != nil; current = current.next {
+		if current.active() {
+			return true
+		}
+	}
+	return false
+}
+
+func lastRunState(head *runState) *runState {
+	current := head
+	for current.next != nil {
+		current = current.next
+	}
+	return current
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func TestRunMap(t *testing.T) {
 			wg.Add(1)
 			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
 				// it should not be cleaned up when until callback exits successfully
-				assert.Equal(t, 1, len(m.runCancels))
+				assert.Equal(t, 1, len(m.runStates))
 				assert.Equal(t, []byte("output"), output)
 				assert.NoError(t, err)
 				wg.Done()
@@ -68,7 +69,7 @@ func TestRunMap(t *testing.T) {
 			// give some time for the cleanup to complete
 			time.Sleep(500 * time.Millisecond)
 			m.mu.Lock()
-			assert.Equal(t, 0, len(m.runCancels))
+			assert.Equal(t, 0, len(m.runStates))
 			m.mu.Unlock()
 		})
 	})
@@ -116,7 +117,7 @@ func TestRunMap(t *testing.T) {
 				if !assert.Eventually(t, func() bool {
 					m.mu.Lock()
 					defer m.mu.Unlock()
-					_, ok := m.runCancels[runnable.Id()]
+					_, ok := m.runStates[runnable.Id()]
 					return !ok
 				}, 2*time.Second, 10*time.Millisecond) {
 					return
@@ -162,14 +163,14 @@ func TestRunMap(t *testing.T) {
 				})
 				assert.NoError(t, err)
 			}
-			assert.Equal(t, runCount, len(m.runCancels))
+			assert.Equal(t, runCount, len(m.runStates))
 			executeWg.Wait()
 
 			cancel()
 			m.wait()
 			callbackWg.Wait()
 
-			assert.Equal(t, 0, len(m.runCancels))
+			assert.Equal(t, 0, len(m.runStates))
 		})
 	})
 	t.Run("wait blocks until runs exit after parent cancellation", func(t *testing.T) {
@@ -218,7 +219,7 @@ func TestRunMap(t *testing.T) {
 			assert.GreaterOrEqual(t, elapsed, sleepTime)
 
 			callbackWg.Wait()
-			assert.Equal(t, 0, len(m.runCancels))
+			assert.Equal(t, 0, len(m.runStates))
 		})
 	})
 	t.Run("execution error passed to callback", func(t *testing.T) {
@@ -255,7 +256,7 @@ func TestRunMap(t *testing.T) {
 	t.Run("wait on empty map", func(t *testing.T) {
 		m := newRunMap(t.Name(), neverCallErrorCallback(t))
 		m.wait() // should not panic
-		assert.Equal(t, 0, len(m.runCancels))
+		assert.Equal(t, 0, len(m.runStates))
 	})
 	t.Run("delete non-existent run", func(t *testing.T) {
 		m := newRunMap(t.Name(), neverCallErrorCallback(t))
@@ -288,6 +289,99 @@ func TestRunMap(t *testing.T) {
 				return nil
 			})
 			assert.ErrorIs(t, err, ErrDuplicateRun)
+		})
+	})
+	t.Run("remove add remove does not start queued successor", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+			setInput(t, db, tkey, []byte("input"))
+
+			var executionCount atomic.Int32
+			started := make(chan struct{}, 2)
+			runnable := run.NewRunnable(
+				&testutil.MockExecutor{
+					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						executionCount.Add(1)
+						started <- struct{}{}
+						<-ctx.Done()
+						return nil, ctx.Err()
+					},
+				},
+				db.Database,
+				tkey,
+				executiontype.NewInMemoryContainer(),
+			)
+
+			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			assert.NoError(t, err)
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for first run to start")
+			}
+
+			assert.NoError(t, m.cancel(runnable.Id()))
+			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			assert.NoError(t, err)
+			assert.NoError(t, m.cancel(runnable.Id()))
+
+			m.wait()
+			assert.Equal(t, int32(1), executionCount.Load())
+		})
+	})
+	t.Run("remove add remove add only starts final successor once", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+			setInput(t, db, tkey, []byte("input"))
+
+			var executionCount atomic.Int32
+			started := make(chan struct{}, 3)
+			runnable := run.NewRunnable(
+				&testutil.MockExecutor{
+					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						executionCount.Add(1)
+						started <- struct{}{}
+						<-ctx.Done()
+						return nil, ctx.Err()
+					},
+				},
+				db.Database,
+				tkey,
+				executiontype.NewInMemoryContainer(),
+			)
+
+			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			assert.NoError(t, err)
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for first run to start")
+			}
+
+			assert.NoError(t, m.cancel(runnable.Id()))
+			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			assert.NoError(t, err)
+			assert.NoError(t, m.cancel(runnable.Id()))
+			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			assert.NoError(t, err)
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for final successor to start")
+			}
+
+			assert.NoError(t, m.cancel(runnable.Id()))
+			m.wait()
+			assert.Equal(t, int32(2), executionCount.Load())
 		})
 	})
 }
