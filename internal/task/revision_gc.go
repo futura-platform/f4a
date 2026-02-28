@@ -9,6 +9,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/cenkalti/backoff/v4"
+	"github.com/futura-platform/f4a/internal/reliablelock"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -55,7 +56,7 @@ func runRevisionGCSweep(
 	store RevisionStore,
 ) error {
 	acquireCtx, cancelAcquire := context.WithTimeout(ctx, revisionGCAcquireTimeout)
-	lease, err := store.GCLock().Acquire(acquireCtx, db.Database)
+	lease, err := store.GCLock().Acquire(acquireCtx, db.Database, reliablelock.DefaultLeaseOptions())
 	cancelAcquire()
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -64,7 +65,12 @@ func runRevisionGCSweep(
 		}
 		return fmt.Errorf("failed to acquire revision gc lock: %w", err)
 	}
-	defer lease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+	activeLease, err := lease.Activate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to activate revision gc lock: %w", err)
+	}
+	defer activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+	ctx = activeLease
 
 	for {
 		if err := ctx.Err(); err != nil {

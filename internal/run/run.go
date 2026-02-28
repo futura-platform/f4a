@@ -12,6 +12,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/cenkalti/backoff/v4"
+	"github.com/futura-platform/f4a/internal/reliablelock"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 	"github.com/futura-platform/futura/flog"
 )
@@ -48,15 +49,19 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	if err != nil {
 		return fmt.Errorf("failed to get lock: %w", err)
 	}
-	lease, err := lock.Acquire(ctx, r.db)
+	lease, err := lock.Acquire(ctx, r.db, reliablelock.DefaultLeaseOptions())
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
+	activeLease, err := lease.Activate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to activate lease: %w", err)
+	}
 	// best effort graceful release
-	defer lease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+	defer activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
 
 	// bind ctx to the lease so that operations only happen while the lease is valid
-	ctx = lease
+	ctx = activeLease
 
 	executable := r.executor.ExecuteFrom(r.execution)
 	watchCtx, watchCancel := context.WithCancel(ctx)
