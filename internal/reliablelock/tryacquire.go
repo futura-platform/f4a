@@ -50,7 +50,8 @@ func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transacto
 	}
 
 	// we were able to acquire the lock, we need to create a new lease
-	renewalCtx, renewalCtxCancel := context.WithCancel(ctx)
+	// bind the lease to a new context that is not cancelled by the caller
+	renewalCtx, renewalCtxCancel := context.WithCancel(context.Background())
 	defer func() {
 		if err != nil {
 			renewalCtxCancel()
