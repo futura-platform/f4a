@@ -5,10 +5,10 @@ import (
 	"github.com/futura-platform/f4a/internal/reliablelock"
 )
 
-func (k TaskKey) RunnableLock(db fdb.Transactor) *reliablelock.Lock {
+func (k TaskKey) RunnableLock(db fdb.Transactor) (*reliablelock.Lock, error) {
 	lockDir, err := k.d.CreateOrOpen(db, []string{"runnable_lock"}, nil)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return reliablelock.NewLock(lockDir)
+	return reliablelock.NewLock(lockDir), nil
 }

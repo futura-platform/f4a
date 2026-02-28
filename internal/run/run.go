@@ -44,7 +44,10 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		return errors.New("callback is required")
 	}
 
-	lock := r.taskKey.RunnableLock(r.db)
+	lock, err := r.taskKey.RunnableLock(r.db)
+	if err != nil {
+		return fmt.Errorf("failed to get lock: %w", err)
+	}
 	lease, err := lock.Acquire(ctx, r.db)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
