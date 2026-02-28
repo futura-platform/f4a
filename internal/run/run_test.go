@@ -499,8 +499,7 @@ func TestRun(t *testing.T) {
 					marshalledInput []byte,
 					opts ...ftype.FlowLoopOption,
 				) ([]byte, error) {
-					<-ctx.Done()
-					return nil, ctx.Err()
+					return nil, nil
 				},
 			}
 
@@ -510,29 +509,22 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			ctx, cancel := context.WithCancel(t.Context())
 			callbackAttempts := atomic.Int32{}
-			done := make(chan struct{})
-			var runErr error
+			runErrCh := make(chan error, 1)
 			go func() {
-				runErr = runnable.Run(ctx, t.Name(), func(_ context.Context, _ []byte, _ error) error {
+				runErrCh <- runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error {
 					callbackAttempts.Add(1)
 					return errors.New("callback failed")
-				}, testCallbackTimeout)
-				close(done)
+				}, 100*time.Millisecond)
 			}()
 
-			time.Sleep(100 * time.Millisecond)
-			cancel()
-
 			select {
-			case <-done:
+			case runErr := <-runErrCh:
+				assert.GreaterOrEqual(t, callbackAttempts.Load(), int32(1))
+				assert.NoError(t, runErr)
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for Run to return")
 			}
-
-			assert.GreaterOrEqual(t, callbackAttempts.Load(), int32(1))
-			assert.NoError(t, runErr)
 		})
 	})
 
@@ -570,6 +562,73 @@ func TestRun(t *testing.T) {
 
 			// The Watch function decodes with privateencoding, so receivedInput is already the decoded value
 			assert.Equal(t, expectedInput, receivedInput)
+		})
+	})
+
+	t.Run("an input change during execution does not trigger a callback", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+
+			setInput(t, db, tkey, []byte("input"))
+
+			executionStarted := make(chan struct{})
+			executions := atomic.Int32{}
+			executor := &testutil.MockExecutor{
+				Execute: func(
+					inContainer executiontype.TransactionalContainer,
+					ctx context.Context,
+					marshalledInput []byte,
+					opts ...ftype.FlowLoopOption,
+				) ([]byte, error) {
+					currentExecution := executions.Add(1)
+					if currentExecution == 1 {
+						close(executionStarted)
+						// wait for the context to be cancelled on the first execution
+						// (the input change should trigger this)
+						<-ctx.Done()
+					}
+					return marshalledInput, nil
+				},
+			}
+
+			runnable := Runnable{
+				db:       db.Database,
+				taskKey:  tkey,
+				executor: executor,
+			}
+
+			afterInputChangeInput := []byte("updated")
+
+			callbackAttempts := atomic.Int32{}
+			runErrCh := make(chan error, 1)
+			go func() {
+				runErrCh <- runnable.Run(t.Context(), t.Name(), func(_ context.Context, output []byte, _ error) error {
+					callbackAttempts.Add(1)
+					assert.Equal(t, afterInputChangeInput, output)
+					return nil
+				}, testCallbackTimeout)
+			}()
+
+			// once execution starts, we should trigger an input change
+			select {
+			case runErr := <-runErrCh:
+				t.Fatal("Run returned before execution started", runErr)
+			case <-executionStarted:
+			}
+			setInput(t, db, tkey, afterInputChangeInput)
+
+			select {
+			case runErr := <-runErrCh:
+				assert.NoError(t, runErr)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for Run to return")
+			}
+
+			assert.Equal(t, int32(1), callbackAttempts.Load())
 		})
 	})
 

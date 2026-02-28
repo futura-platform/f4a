@@ -95,20 +95,19 @@ func (r Runnable) Run(
 				mu.Unlock()
 				watchCancel()
 				return
-			} else if errors.Is(err, errInputChanged) {
+			} else if errors.Is(context.Cause(runCtx), errInputChanged) {
 				return
 			}
 
 			mu.Lock()
 			defer mu.Unlock()
-			watchCancel()
-			timeout, cancel := context.WithTimeout(watchCtx, callbackTimeout)
+			timeout, cancel := context.WithTimeout(runCtx, callbackTimeout)
 			defer cancel()
 			err = backoff.RetryNotify(
 				func() error {
 					return callback(timeout, result, err)
 				},
-				backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(callbackTimeout)),
+				backoff.WithContext(backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0)), timeout),
 				func(err error, duration time.Duration) {
 					flog.FromContext(watchCtx).LogAttrs(
 						watchCtx, slog.LevelDebug, "callback failed, retrying",
@@ -118,12 +117,18 @@ func (r Runnable) Run(
 					)
 				},
 			)
+			if errors.Is(err, context.Canceled) {
+				// if the context was cancelled,
+				// that means another execution started and will deliver the result, so we should not treat delivery as finished.
+				return
+			}
 			flog.FromContext(ctx).LogAttrs(
 				ctx, slog.LevelDebug, "delivered callback",
 				slog.String("task_id", string(r.Id())),
 				slog.Bool("error", err != nil),
 			)
 			executionResultDeliveryFinished.Store(true)
+			watchCancel()
 		}(marshalledInput, runCtx)
 	}
 

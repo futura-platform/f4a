@@ -15,7 +15,7 @@ import (
 // It is gauranteed to be contention free on write operations
 // (unless versiontimestamp collisions occur across FDB shards).
 type Set struct {
-	db fdb.Database
+	db dbutil.DbRoot
 
 	// this key should be incremented for every new log entry
 	epochKey fdb.Key
@@ -66,7 +66,7 @@ func newSetDirectories[T fdb.ReadTransactor](
 }
 
 func constructWith[T fdb.ReadTransactor](
-	db fdb.Database,
+	db dbutil.DbRoot,
 	tr T,
 	path []string,
 	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
@@ -94,7 +94,7 @@ func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		var err error
 		set, err = constructWith(
-			db.Database,
+			db,
 			t,
 			path,
 			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
@@ -114,7 +114,7 @@ func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, error) 
 	_, err := tr.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
 		var err error
 		set, err = constructWith(
-			db.Database,
+			db,
 			t,
 			path,
 			func(tr fdb.ReadTransaction, path []string) (directory.DirectorySubspace, error) {
@@ -134,7 +134,7 @@ func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, err
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		var err error
 		set, err = constructWith(
-			db.Database,
+			db,
 			t,
 			path,
 			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {

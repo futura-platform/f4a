@@ -33,7 +33,7 @@ func (c *setCompactor) runCompactionLoop() error {
 		case <-c.runCtx.Done():
 			return nil
 		case <-ticker.C:
-			err := c.compactLog(c.set.db)
+			err := c.compactLog(c.runCtx, c.set.db)
 			if err != nil {
 				slog.Error("reliableset: failed to compact log", "error", err)
 				continue
@@ -45,10 +45,10 @@ func (c *setCompactor) runCompactionLoop() error {
 // compactLog compacts the entire current log into the snapshot.
 // It batches over multiple transactions to avoid exceeding the transaction size limit.
 // Failures are partial, so the compaction will continue from the last successful chunk.
-func (c *setCompactor) compactLog(db fdb.Database) error {
+func (c *setCompactor) compactLog(ctx context.Context, db dbutil.DbRoot) error {
 	for more := true; more; {
-		_, err := db.Transact(func(tx fdb.Transaction) (_ any, err error) {
-			more, err = c.compactLogChunk(tx)
+		_, err := db.TransactContext(ctx, func(tx fdb.Transaction) (_ any, err error) {
+			more, err = c.compactLogChunk(ctx, tx)
 			return nil, err
 		})
 		if err != nil {
@@ -60,11 +60,9 @@ func (c *setCompactor) compactLog(db fdb.Database) error {
 
 // compactLogChunk compacts a single chunk of the current log into the snapshot.
 // It maximizes the number of log entries processed in a single transaction.
-func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error) {
+func (c *setCompactor) compactLogChunk(ctx context.Context, tx fdb.Transaction) (more bool, err error) {
 	c.ensureLock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := c.lock.Acquire(ctx); err != nil {
 		return false, fmt.Errorf("failed to acquire compaction lock: %w", err)
 	}

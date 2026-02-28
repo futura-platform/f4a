@@ -55,6 +55,7 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 		Started:          true,
 		Reuse:            true,
 	})
+	require.NoError(t, err)
 	// First time setup: configure the database
 	// This will fail if already configured (e.g., cluster file was deleted but container still running)
 	exitCode, output, err := c.Exec(ctx, []string{"fdbcli", "--exec", "configure new single memory"})

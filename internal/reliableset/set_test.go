@@ -243,7 +243,7 @@ func TestSetCompactLog(t *testing.T) {
 			addItem(t, db, set, []byte("c"))
 			removeItem(t, db, set, []byte("b"))
 
-			err := set.compactor.compactLog(db.Database)
+			err := set.compactor.compactLog(t.Context(), db)
 			require.NoError(t, err)
 
 			expected := mapset.NewSet[string]("a", "c")
@@ -282,7 +282,7 @@ func TestSetCompactLog(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			err := set.compactor.compactLog(db.Database)
+			err := set.compactor.compactLog(t.Context(), db)
 			require.NoError(t, err, "failed to compact log")
 
 			requireSetMatchesDB(t, db, set, expected)
@@ -330,7 +330,7 @@ func TestCompactionRespectsActiveCursor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = set.compactor.compactLog(db.Database)
+		err = set.compactor.compactLog(t.Context(), db)
 		require.NoError(t, err)
 
 		remaining := readLogEntries(t, db, set)
