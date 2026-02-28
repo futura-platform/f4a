@@ -171,6 +171,10 @@ func processAddedBatch(
 	for _, runnable := range runnables {
 		err := taskManager.run(ctx, runnable)
 		if err != nil {
+			if errors.Is(err, ErrDuplicateRun) {
+				// Already running, treat as idempotent.
+				continue
+			}
 			return fmt.Errorf("failed to run task %s: %w", runnable.Id(), err)
 		}
 	}

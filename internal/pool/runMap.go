@@ -73,7 +73,6 @@ func (m *runMap) cancel(id task.Id) error {
 		return ErrRunNotFound
 	}
 	cancel(nil)
-	delete(m.runCancels, id)
 	return nil
 }
 

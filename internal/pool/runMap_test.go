@@ -111,12 +111,20 @@ func TestRunMap(t *testing.T) {
 			err = m.cancel(runnable.Id())
 			assert.NoError(t, err)
 
-			t.Run("duplicate cancel should return non existent run error", func(t *testing.T) {
+			t.Run("duplicate cancel should return non existent run error after cleanup", func(t *testing.T) {
+				callbackWg.Wait()
+				if !assert.Eventually(t, func() bool {
+					m.mu.Lock()
+					defer m.mu.Unlock()
+					_, ok := m.runCancels[runnable.Id()]
+					return !ok
+				}, 2*time.Second, 10*time.Millisecond) {
+					return
+				}
+
 				err := m.cancel(runnable.Id())
 				assert.ErrorIs(t, err, ErrRunNotFound)
 			})
-
-			callbackWg.Wait()
 		})
 	})
 	t.Run("run, then cancel parent context", func(t *testing.T) {
