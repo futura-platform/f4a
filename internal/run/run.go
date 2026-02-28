@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 	"github.com/futura-platform/futura/flog"
 )
@@ -43,12 +44,16 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		return errors.New("callback is required")
 	}
 
-	lock := r.taskKey.RunnableLock(r.db, runnerId)
-	err := lock.Acquire(ctx)
+	lock := r.taskKey.RunnableLock(r.db)
+	lease, err := lock.Acquire(ctx, r.db)
 	if err != nil {
-		return fmt.Errorf("failed to lock task: %w", err)
+		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
-	defer lock.Release()
+	// best effort graceful release
+	defer lease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+
+	// bind ctx to the lease so that operations only happen while the lease is valid
+	ctx = lease
 
 	executable := r.executor.ExecuteFrom(r.execution)
 	watchCtx, watchCancel := context.WithCancel(ctx)

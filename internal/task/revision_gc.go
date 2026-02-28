@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/reliablelock"
+	"github.com/cenkalti/backoff/v4"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
-	"github.com/google/uuid"
 )
 
 const (
@@ -33,16 +31,6 @@ func RunRevisionGCLoop(ctx context.Context, db dbutil.DbRoot) {
 		return
 	}
 
-	hostname, _ := os.Hostname()
-	holderID := fmt.Sprintf("%s-%s", hostname, uuid.NewString())
-	lock := reliablelock.NewLock[string](
-		db,
-		store.GCLockKey(),
-		holderID,
-		reliablelock.WithLeaseDuration(revisionGCLockLeaseDuration),
-		reliablelock.WithRefreshInterval(revisionGCLockLeaseDuration/2),
-	)
-
 	ticker := time.NewTicker(revisionGCInterval)
 	defer ticker.Stop()
 
@@ -52,7 +40,7 @@ func RunRevisionGCLoop(ctx context.Context, db dbutil.DbRoot) {
 			return
 		case <-ticker.C:
 			sweepCtx, cancelSweep := context.WithTimeout(ctx, revisionGCSweepTimeout)
-			err := runRevisionGCSweep(sweepCtx, db, store, lock)
+			err := runRevisionGCSweep(sweepCtx, db, store)
 			cancelSweep()
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				slog.Warn("revision gc sweep failed", "error", err)
@@ -65,10 +53,9 @@ func runRevisionGCSweep(
 	ctx context.Context,
 	db dbutil.DbRoot,
 	store RevisionStore,
-	lock *reliablelock.Lock[string],
 ) error {
 	acquireCtx, cancelAcquire := context.WithTimeout(ctx, revisionGCAcquireTimeout)
-	err := lock.Acquire(acquireCtx)
+	lease, err := store.GCLock().Acquire(acquireCtx, db.Database)
 	cancelAcquire()
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -77,14 +64,7 @@ func runRevisionGCSweep(
 		}
 		return fmt.Errorf("failed to acquire revision gc lock: %w", err)
 	}
-	defer func() {
-		releaseErr := lock.Release()
-		if releaseErr != nil &&
-			!errors.Is(releaseErr, reliablelock.ErrNotOwner) &&
-			!errors.Is(releaseErr, reliablelock.ErrNotHeld) {
-			slog.Warn("failed to release revision gc lock", "error", releaseErr)
-		}
-	}()
+	defer lease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
 
 	for {
 		if err := ctx.Err(); err != nil {

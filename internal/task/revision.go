@@ -9,6 +9,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	"github.com/futura-platform/f4a/internal/reliablelock"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -73,7 +74,7 @@ func (d RevisionDecision) String() string {
 type RevisionStore struct {
 	revisions  directory.DirectorySubspace
 	tombstones directory.DirectorySubspace
-	gcLockKey  fdb.Key
+	gcLockDir  directory.DirectorySubspace
 
 	tombstoneTTL time.Duration
 	now          func() time.Time
@@ -94,17 +95,21 @@ func CreateOrOpenRevisionStore(db dbutil.DbRoot) (RevisionStore, error) {
 	if err != nil {
 		return RevisionStore{}, fmt.Errorf("failed to create or open tombstones directory: %w", err)
 	}
+	gcLockDir, err := db.Root.CreateOrOpen(db, []string{revisionFieldGCLock}, nil)
+	if err != nil {
+		return RevisionStore{}, fmt.Errorf("failed to create or open gc lock directory: %w", err)
+	}
 	return RevisionStore{
 		revisions:    revisions,
 		tombstones:   tombstones,
-		gcLockKey:    revisions.Pack(tuple.Tuple{revisionFieldGCLock}),
+		gcLockDir:    gcLockDir,
 		tombstoneTTL: defaultTombstoneTTL,
 		now:          time.Now,
 	}, nil
 }
 
-func (s RevisionStore) GCLockKey() fdb.Key {
-	return append(fdb.Key(nil), s.gcLockKey...)
+func (s RevisionStore) GCLock() *reliablelock.Lock {
+	return reliablelock.NewLock(s.gcLockDir)
 }
 
 func (s RevisionStore) Apply(
