@@ -26,6 +26,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	err error,
 ) {
 	streamCtx, streamCancel := context.WithCancel(ctx)
+	cursor := newLogCursor(s)
 	var initialEpochWatch fdb.FutureNil
 	var initialTail fdb.KeyConvertible
 	_, err = s.db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -34,7 +35,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		if err != nil {
 			return nil, err
 		}
-		s.registerCursor(tx, initialTail)
+		cursor.register(tx, initialTail)
 		return nil, nil
 	})
 	if err != nil {
@@ -61,9 +62,10 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	)
 	go func() {
 		defer streamCancel()
+		defer cursor.bestEffortClear()
 		defer close(eventsCh)
 		defer close(_errCh)
-		go s.leaseLoop(streamCtx)
+		go cursor.leaseLoop(streamCtx)
 		for onEpochCh != nil || onEpochErrCh != nil {
 			select {
 			case c, ok := <-onEpochCh:
@@ -78,7 +80,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 					sendStreamErr(_errCh, err)
 					return
 				}
-				if err := s.advanceCursor(streamCtx, c.tailKey); err != nil {
+				if err := cursor.advance(streamCtx, c.tailKey); err != nil {
 					sendStreamErr(_errCh, err)
 					return
 				}

@@ -300,7 +300,8 @@ func TestCursorRegistrationAndAdvance(t *testing.T) {
 		defer drainStream(t, cancel, errCh)
 
 		begin, _ := set.logSubspace.FDBRangeKeys()
-		tail, lease := readCursor(t, db, set, set.consumerID)
+		cursorID := readSingleCursorID(t, db, set)
+		tail, lease := readCursor(t, db, set, cursorID)
 		require.Equal(t, begin.FDBKey(), tail)
 		require.True(t, lease.After(time.Now()))
 
@@ -308,7 +309,7 @@ func TestCursorRegistrationAndAdvance(t *testing.T) {
 		_ = readNextBatch(t, ctx, events, errCh)
 
 		lastKey := readLastLogKey(t, db, set)
-		waitForCursorTail(t, db, set, set.consumerID, lastKey)
+		waitForCursorTail(t, db, set, cursorID, lastKey)
 	})
 }
 
@@ -466,6 +467,24 @@ func readCursor(t testing.TB, db dbutil.DbRoot, set *Set, id string) (fdb.Key, t
 	})
 	require.NoError(t, err)
 	return tail, lease
+}
+
+func readSingleCursorID(t testing.TB, db dbutil.DbRoot, set *Set) string {
+	t.Helper()
+	var id string
+	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+		index, err := set.makeCursorIndex(tx)
+		if err != nil {
+			return nil, err
+		}
+		require.Len(t, index.keysByID, 1)
+		for cursorID := range index.keysByID {
+			id = cursorID
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
+	return id
 }
 
 func readLogEntries(t testing.TB, db dbutil.DbRoot, set *Set) []KeyedLogEntry {

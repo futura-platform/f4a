@@ -2,11 +2,7 @@ package reliableset
 
 import (
 	"bytes"
-	"context"
-	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
-	"os"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -25,73 +21,8 @@ const (
 	cursorKeyHint      = "hint"
 )
 
-func newConsumerID() (string, string) {
-	hostname, _ := os.Hostname()
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(hostname)), hostname
-	}
-	return hex.EncodeToString(buf), hostname
-}
-
 func (s *Set) cursorKey(id, kind string) fdb.Key {
 	return s.cursorSubspace.Pack(tuple.Tuple{id, kind})
-}
-
-func (s *Set) registerCursor(tx fdb.Transaction, tail fdb.KeyConvertible) {
-	if s.consumerHint != "" {
-		tx.Set(s.cursorKey(s.consumerID, cursorKeyHint), []byte(s.consumerHint))
-	}
-	s.writeCursorTail(tx, tail)
-	s.writeLease(tx, time.Now())
-}
-
-func (s *Set) writeCursorTail(tx fdb.Transaction, tail fdb.KeyConvertible) {
-	if tail == nil {
-		panic("cursor tail is nil")
-	}
-	tx.Set(s.cursorKey(s.consumerID, cursorKeyTail), tail.FDBKey())
-}
-
-func (s *Set) writeLease(tx fdb.Transaction, now time.Time) {
-	tx.Set(s.cursorKey(s.consumerID, cursorKeyLease), encodeLease(now.Add(cursorLeaseTTL)))
-}
-
-func (s *Set) advanceCursor(ctx context.Context, tail fdb.KeyConvertible) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err := s.db.Transact(func(tx fdb.Transaction) (any, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		s.writeCursorTail(tx, tail)
-		s.writeLease(tx, time.Now())
-		return nil, nil
-	})
-	return err
-}
-
-// leaseLoop refreshes the lease of the cursor periodically
-// This is used to prevent the cursor from being garbage collected,
-// which would happen if this consumer dies for any reason.
-func (s *Set) leaseLoop(ctx context.Context) {
-	if cursorLeaseRefresh <= 0 {
-		return
-	}
-	ticker := time.NewTicker(cursorLeaseRefresh)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			_, _ = s.db.Transact(func(tx fdb.Transaction) (any, error) {
-				s.writeLease(tx, time.Now())
-				return nil, nil
-			})
-		}
-	}
 }
 
 func encodeLease(exp time.Time) []byte {

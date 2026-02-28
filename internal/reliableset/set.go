@@ -25,9 +25,6 @@ type Set struct {
 	// enqueueCounter disambiguates versionstamp keys within a transaction.
 	logCounter uint64
 
-	consumerID   string
-	consumerHint string
-
 	compactor *setCompactor
 
 	clearLock sync.Mutex
@@ -81,13 +78,10 @@ func constructWith[T fdb.ReadTransactor](
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
-	consumerID, consumerHint := newConsumerID()
 	s := &Set{
 		db:             db,
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
 		setDirectories: dirs,
-		consumerID:     consumerID,
-		consumerHint:   consumerHint,
 		clearFunc:      clearFunc,
 	}
 	s.compactor = newSetCompactor(s, dirs.compactionLockSubspace)
