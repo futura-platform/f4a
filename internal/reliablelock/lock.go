@@ -40,7 +40,7 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
 	var holderExpiration time.Time
 	var expirationWatch fdb.FutureNil
 	_, err := db.Transact(func(t fdb.Transaction) (_ any, err error) {
-		acquiredLease, holderExpiration, err = l.TryAcquire(ctx, db, db, DefaultLeaseOptions())
+		acquiredLease, holderExpiration, err = l.TryAcquire(ctx, db, t, DefaultLeaseOptions())
 		expirationWatch = t.Watch(l.holderExpirationKey())
 		return
 	})
