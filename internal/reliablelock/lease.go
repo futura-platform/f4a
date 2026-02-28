@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/cenkalti/backoff/v4"
+	"github.com/futura-platform/f4a/internal/util"
 )
 
 // Lease represents a lease on a key.
@@ -89,4 +92,19 @@ func (l *Lease) Release() error {
 		return err
 	}
 	return nil
+}
+
+// BestEffortRelease is a convenience wrapper for Release that will retry the release operation with a context bound backoff until either
+// 1. It succeeds
+// 2. Someone steals the lease
+// 3. The context is canceled
+func (l *Lease) BestEffortRelease(ctx context.Context, opts ...backoff.ExponentialBackOffOpts) error {
+	return util.WithBestEffort(ctx, func() error {
+		err := l.Release()
+		if errors.Is(err, ErrLeaseStolen) {
+			slog.Warn("reliablelock: lease has been stolen, halting release attempt")
+			return nil
+		}
+		return err
+	}, opts...)
 }
