@@ -25,6 +25,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	errCh <-chan error,
 	err error,
 ) {
+	streamCtx, streamCancel := context.WithCancel(ctx)
 	var initialEpochWatch fdb.FutureNil
 	var initialTail fdb.KeyConvertible
 	_, err = s.db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -42,7 +43,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 
 	eventsCh := make(chan []LogEntry)
 	_errCh := make(chan error, 1)
-	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(ctx, s.db, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
+	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(streamCtx, s.db, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
 		func(tx fdb.ReadTransaction, _ fdb.KeyConvertible, l epochChunk) (epochChunk, error) {
 			logEntries, err := s.readLog(tx, l.tailKey)
 			if err != nil {
@@ -58,9 +59,10 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		},
 	)
 	go func() {
+		defer streamCancel()
 		defer close(eventsCh)
 		defer close(_errCh)
-		go s.leaseLoop(ctx)
+		go s.leaseLoop(streamCtx)
 		for onEpochCh != nil || onEpochErrCh != nil {
 			select {
 			case c, ok := <-onEpochCh:
@@ -71,11 +73,11 @@ func (s *Set) StreamEvents(ctx context.Context) (
 				if len(c.entries) == 0 {
 					continue
 				}
-				if err := sendStreamBatch(ctx, eventsCh, c.entries); err != nil {
+				if err := sendStreamBatch(streamCtx, eventsCh, c.entries); err != nil {
 					sendStreamErr(_errCh, err)
 					return
 				}
-				if err := s.advanceCursor(ctx, c.tailKey); err != nil {
+				if err := s.advanceCursor(streamCtx, c.tailKey); err != nil {
 					sendStreamErr(_errCh, err)
 					return
 				}
