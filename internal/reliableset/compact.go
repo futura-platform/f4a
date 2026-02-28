@@ -46,9 +46,15 @@ func (c *setCompactor) runCompactionLoop() error {
 // It batches over multiple transactions to avoid exceeding the transaction size limit.
 // Failures are partial, so the compaction will continue from the last successful chunk.
 func (c *setCompactor) compactLog(ctx context.Context, db dbutil.DbRoot) error {
+	c.ensureLock()
+	if err := c.lock.Acquire(ctx); err != nil {
+		return fmt.Errorf("failed to acquire compaction lock: %w", err)
+	}
+	defer c.lock.Release()
+
 	for more := true; more; {
 		_, err := db.TransactContext(ctx, func(tx fdb.Transaction) (_ any, err error) {
-			more, err = c.compactLogChunk(ctx, tx)
+			more, err = c.compactLogChunk(tx)
 			return nil, err
 		})
 		if err != nil {
@@ -60,14 +66,7 @@ func (c *setCompactor) compactLog(ctx context.Context, db dbutil.DbRoot) error {
 
 // compactLogChunk compacts a single chunk of the current log into the snapshot.
 // It maximizes the number of log entries processed in a single transaction.
-func (c *setCompactor) compactLogChunk(ctx context.Context, tx fdb.Transaction) (more bool, err error) {
-	c.ensureLock()
-
-	if err := c.lock.Acquire(ctx); err != nil {
-		return false, fmt.Errorf("failed to acquire compaction lock: %w", err)
-	}
-	defer c.lock.Release()
-
+func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error) {
 	begin, end := c.set.logSubspace.FDBRangeKeys()
 	clearEnd := end
 	now := time.Now()
