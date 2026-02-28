@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
@@ -49,17 +48,6 @@ func RunWorkLoop(
 	taskSet *reliableset.Set,
 	router execute.Router,
 ) error {
-	return runWorkLoopWithCallbackTimeout(ctx, runnerId, db, taskSet, router, defaultCallbackTimeout)
-}
-
-func runWorkLoopWithCallbackTimeout(
-	ctx context.Context,
-	runnerId string,
-	db dbutil.DbRoot,
-	taskSet *reliableset.Set,
-	router execute.Router,
-	callbackTimeout time.Duration,
-) error {
 	taskDirectory, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
@@ -73,21 +61,11 @@ func runWorkLoopWithCallbackTimeout(
 	var runErrOnce sync.Once
 	runErrCh := make(chan error, 1)
 	taskManager := &taskManager{
-		runMap: newRunMapWithCallbackTimeout(runnerId, func(id task.Id, err error) {
-			if errors.Is(err, run.ErrCallbackTimeout) {
-				flog.FromContext(ctx).LogAttrs(
-					ctx,
-					slog.LevelWarn,
-					"ignoring callback timeout for task run",
-					slog.String("task_id", string(id)),
-					slog.String("error", err.Error()),
-				)
-				return
-			}
+		runMap: newRunMap(runnerId, func(id task.Id, err error) {
 			runErrOnce.Do(func() {
 				runErrCh <- fmt.Errorf("%w: %s: %w", ErrRunFailed, id, err)
 			})
-		}, callbackTimeout),
+		}),
 		db:            db,
 		runnerId:      runnerId,
 		taskSet:       taskSet,

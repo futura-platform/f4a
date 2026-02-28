@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 	"github.com/futura-platform/futura/flog"
 )
@@ -20,25 +19,26 @@ var (
 	errInputChanged = errors.New("input changed")
 	// this error will cause the run to return the error instead of just calling the callback with the error.
 	// This is for testing purposes ONLY.
-	ErrRunFatal        = errors.New("run encountered fatal error")
-	ErrCallbackTimeout = errors.New("callback delivery timed out")
+	ErrRunFatal = errors.New("run encountered fatal error")
+)
+
+const (
+	callbackRetryInitialDelay = 100 * time.Millisecond
+	callbackRetryMaxDelay     = 30 * time.Second
+	callbackAttemptTimeout    = 10 * time.Second
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
 // This uses reliablelock to ensure that only one instance of the runnable is executed at a time.
-// It will re execute the runnable with the new input if the input changes.
+// It will re execute the runnable with the new input if the input changes before
+// the current execution returns. Once execution has returned and callback
+// delivery has started, later input changes do not trigger a replay.
 // It will only return if:
 // 1. The execution finishes successfully and the callback succeeds at least once
 // 2. The execution fails and the callback succeeds at least once (delivering the error)
-// 3. The callback fails to deliver the result within the callback timeout budget
-// 4. The parent context is canceled, which aborts any in-flight execution and callback delivery
-// 5. The watch fails
-func (r Runnable) Run(
-	ctx context.Context,
-	runnerId string,
-	callback func(context.Context, []byte, error) error,
-	callbackTimeout time.Duration,
-) error {
+// 3. The parent context is canceled, which aborts any in-flight execution and callback delivery
+// 4. The watch fails
+func (r Runnable) Run(ctx context.Context, runnerId string, callback func(context.Context, []byte, error) error) error {
 	if callback == nil {
 		return errors.New("callback is required")
 	}
@@ -71,9 +71,14 @@ func (r Runnable) Run(
 	var runErr error
 	var execWg sync.WaitGroup
 
+	// Once callback delivery finishes, later input changes are ignored.
 	var executionResultDeliveryFinished atomic.Bool
 	startExecution := func(marshalledInput []byte) {
 		mu.Lock()
+		if executionResultDeliveryFinished.Load() || watchCtx.Err() != nil {
+			mu.Unlock()
+			return
+		}
 		if cancelPrevious != nil {
 			cancelPrevious(errInputChanged)
 		}
@@ -103,9 +108,8 @@ func (r Runnable) Run(
 
 			mu.Lock()
 			defer mu.Unlock()
-			deliveryErr := retryCallbackUntilTimeout(
+			deliveryErr := retryCallback(
 				runCtx,
-				callbackTimeout,
 				func(callbackCtx context.Context) error {
 					return callback(callbackCtx, result, err)
 				},
@@ -119,9 +123,7 @@ func (r Runnable) Run(
 				},
 			)
 			if deliveryErr != nil {
-				// Cancellation here means either a newer input superseded this run or the parent
-				// context requested shutdown. In either case, do not mark delivery as finished.
-				if errors.Is(deliveryErr, context.Canceled) {
+				if ctx.Err() != nil {
 					return
 				}
 				if runErr == nil {
@@ -166,54 +168,43 @@ func (r Runnable) Run(
 	}
 }
 
-func retryCallbackUntilTimeout(
+func retryCallback(
 	ctx context.Context,
-	callbackTimeout time.Duration,
 	callback func(context.Context) error,
 	notify func(error, time.Duration),
 ) error {
-	if callbackTimeout <= 0 {
-		return fmt.Errorf("%w: invalid timeout %s", ErrCallbackTimeout, callbackTimeout)
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, callbackTimeout)
-	defer cancel()
-
-	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
-	var lastErr error
+	delay := callbackRetryInitialDelay
 	for {
-		err := callback(timeoutCtx)
+		attemptCtx, cancel := context.WithTimeout(ctx, callbackAttemptTimeout)
+		err := callback(attemptCtx)
+		cancel()
 		if err == nil {
 			return nil
 		}
-		lastErr = err
-
-		if err := timeoutCtx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return fmt.Errorf("%w: %w", ErrCallbackTimeout, lastErr)
-			}
-			return err
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
-		next := b.NextBackOff()
 		if notify != nil {
-			notify(lastErr, next)
+			notify(err, delay)
 		}
 
-		timer := time.NewTimer(next)
+		timer := time.NewTimer(delay)
 		select {
-		case <-timeoutCtx.Done():
+		case <-ctx.Done():
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
 				default:
 				}
 			}
-			if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("%w: %w", ErrCallbackTimeout, lastErr)
-			}
-			return timeoutCtx.Err()
+			return ctx.Err()
 		case <-timer.C:
+		}
+
+		delay *= 2
+		if delay > callbackRetryMaxDelay {
+			delay = callbackRetryMaxDelay
 		}
 	}
 }

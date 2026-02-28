@@ -49,6 +49,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 		slog.String("callback_url", callbackUrl.String()),
 		slog.Bool("task_error", taskErr != nil))
 	var body io.Reader
+	var bodyCloser io.Closer
 	var contentType string
 	if taskErr != nil {
 		p := problem.New(
@@ -66,6 +67,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 		}()
 
 		body = pr
+		bodyCloser = pr
 		contentType = problem.ContentTypeJSON
 	} else {
 		body = bytes.NewReader(output)
@@ -79,12 +81,18 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 		body,
 	)
 	if err != nil {
+		if bodyCloser != nil {
+			_ = bodyCloser.Close()
+		}
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", contentType)
 	resp, err := m.c.Do(req)
 	if err != nil {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
 		return fmt.Errorf("failed to send result: %w", err)
 	}
 	defer resp.Body.Close()

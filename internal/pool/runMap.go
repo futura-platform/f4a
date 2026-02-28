@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
@@ -15,32 +14,19 @@ type runMap struct {
 	mu sync.Mutex
 	wg sync.WaitGroup
 
-	runCancels      map[task.Id]context.CancelCauseFunc
-	runnerId        string
-	onRunError      func(task.Id, error)
-	callbackTimeout time.Duration
+	runCancels map[task.Id]context.CancelCauseFunc
+	runnerId   string
+	onRunError func(task.Id, error)
 }
 
 func newRunMap(runnerId string, onRunError func(task.Id, error)) *runMap {
-	return newRunMapWithCallbackTimeout(runnerId, onRunError, defaultCallbackTimeout)
-}
-
-func newRunMapWithCallbackTimeout(
-	runnerId string,
-	onRunError func(task.Id, error),
-	callbackTimeout time.Duration,
-) *runMap {
 	if onRunError == nil {
 		onRunError = func(task.Id, error) {}
 	}
-	if callbackTimeout <= 0 {
-		callbackTimeout = defaultCallbackTimeout
-	}
 	return &runMap{
-		runCancels:      make(map[task.Id]context.CancelCauseFunc),
-		runnerId:        runnerId,
-		onRunError:      onRunError,
-		callbackTimeout: callbackTimeout,
+		runCancels: make(map[task.Id]context.CancelCauseFunc),
+		runnerId:   runnerId,
+		onRunError: onRunError,
 	}
 }
 
@@ -48,8 +34,6 @@ var (
 	ErrRunNotFound  = errors.New("run not found")
 	ErrDuplicateRun = errors.New("run already exists for task")
 )
-
-const defaultCallbackTimeout = 10 * time.Second
 
 func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.Context, []byte, error) error) error {
 	ctx = task.WithTaskKey(ctx, r.TaskKey())
@@ -70,7 +54,7 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 			cancel(nil)
 			delete(m.runCancels, r.Id())
 		}
-		err := r.Run(ctx, m.runnerId, callback, m.callbackTimeout)
+		err := r.Run(ctx, m.runnerId, callback)
 		if err != nil && ctx.Err() == nil {
 			m.onRunError(r.Id(), err)
 		}

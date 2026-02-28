@@ -325,69 +325,6 @@ func TestWorkLoop(t *testing.T) {
 		})
 	})
 	t.Run("the result is reliably delivered at least once to the callback url", func(t *testing.T) {
-		t.Run("callback timeout does not crash the work loop", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-				const callbackTimeout = 100 * time.Millisecond
-
-				runWorkLoopErr := make(chan error, 1)
-				runnerId := "test-runner"
-				taskSet := openTaskSet(t, db, runnerId)
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-
-				callbackStarted := make(chan struct{}, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					select {
-					case callbackStarted <- struct{}{}:
-					default:
-					}
-					time.Sleep(3 * callbackTimeout)
-					w.WriteHeader(http.StatusAccepted)
-				}))
-				defer server.Close()
-
-				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return []byte("expected output"), nil
-					},
-				}
-				executorId := execute.ExecutorId("test-executor")
-				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
-
-				go func() {
-					runWorkLoopErr <- runWorkLoopWithCallbackTimeout(ctx, runnerId, db, taskSet, router, callbackTimeout)
-				}()
-
-				id := task.NewId()
-				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
-				addTasks(t, db, taskSet, []task.Id{id})
-
-				select {
-				case <-callbackStarted:
-				case err := <-runWorkLoopErr:
-					t.Fatalf("RunWorkLoop returned an error: %v", err)
-				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for callback attempt")
-				}
-
-				time.Sleep(3 * callbackTimeout)
-				select {
-				case err := <-runWorkLoopErr:
-					t.Fatalf("RunWorkLoop should ignore callback timeout, got: %v", err)
-				default:
-				}
-
-				cancel()
-				select {
-				case err := <-runWorkLoopErr:
-					assert.ErrorIs(t, err, context.Canceled)
-					assert.NotErrorIs(t, err, ErrRunFailed)
-					assert.NotErrorIs(t, err, run.ErrCallbackTimeout)
-				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for worker shutdown")
-				}
-			})
-		})
 		t.Run("when there are no errors", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
