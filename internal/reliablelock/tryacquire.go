@@ -4,21 +4,20 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-type leaseOptions struct {
-	expirationDuration  time.Duration
-	renewalSafetyMargin time.Duration
+type LeaseOptions struct {
+	ExpirationDuration  time.Duration
+	RenewalSafetyMargin time.Duration
 }
 
 // TryAcquire tries to acquire the lock. It will return the holder expiration time if the lock is already held by another holder.
 // db will be used to spawn the renewal goroutine + release. tr will be used to do the initial lock acquisition.
-func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transactor, opts leaseOptions) (*Lease, time.Time, error) {
+func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transactor, opts LeaseOptions) (*Lease, time.Time, error) {
 	errLockAlreadyHeld := errors.New("lock held by another holder")
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
@@ -32,7 +31,7 @@ func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transacto
 			return nil, err
 		} else if !ok || holderExpiration.Before(time.Now()) {
 			// the lease has expired, we can acquire the lock
-			newLeaseExpiration = time.Now().Add(opts.expirationDuration)
+			newLeaseExpiration = time.Now().Add(opts.ExpirationDuration)
 			l.writeExpirationKey(t, newLeaseExpiration)
 			t.Set(l.holderIdentityKey(), id)
 			return nil, nil
@@ -52,38 +51,10 @@ func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transacto
 	}
 
 	// we were able to acquire the lock, we need to create a new lease
-	// bind the lease to a new context that is not cancelled by the caller
-	renewalCtx, renewalCtxCancel := context.WithCancel(context.Background())
-	defer func() {
-		if err != nil {
-			renewalCtxCancel()
-		}
-	}()
-	lease := &Lease{
-		Lock:          l,
-		db:            db,
-		id:            id,
-		Context:       renewalCtx,
-		cancelRenewal: renewalCtxCancel,
-	}
-	// start the renewal goroutine
-	go func() {
-		defer renewalCtxCancel()
-		ticker := time.NewTicker(opts.expirationDuration - opts.renewalSafetyMargin)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-renewalCtx.Done():
-				return
-			case <-ticker.C:
-				// renew the lease
-				err := lease.renew(db, opts.expirationDuration)
-				if err != nil {
-					slog.Error("reliablelock: failed to renew lease", "error", err)
-					return
-				}
-			}
-		}
-	}()
-	return lease, time.Time{}, nil
+	return &Lease{
+		Lock:    l,
+		db:      db,
+		id:      id,
+		options: opts,
+	}, time.Time{}, nil
 }

@@ -27,15 +27,15 @@ func NewLock(dir directory.DirectorySubspace) *Lock {
 	return &Lock{dir: dir}
 }
 
-func DefaultLeaseOptions() leaseOptions {
-	return leaseOptions{
-		expirationDuration:  10 * time.Second,
-		renewalSafetyMargin: 6 * time.Second,
+func DefaultLeaseOptions() LeaseOptions {
+	return LeaseOptions{
+		ExpirationDuration:  10 * time.Second,
+		RenewalSafetyMargin: 6 * time.Second,
 	}
 }
 
 // Acquire acquires the lock. It will block until the lock is acquired or the context is canceled.
-func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
+func (l *Lock) Acquire(ctx context.Context, db fdb.Database, opts LeaseOptions) (*Lease, error) {
 	for {
 		lease, err := l.acquireOrWait(ctx, db)
 		if err != nil {

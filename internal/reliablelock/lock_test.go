@@ -20,7 +20,7 @@ type acquireResult struct {
 func startAcquire(ctx context.Context, lock *Lock, db fdb.Database) <-chan acquireResult {
 	ch := make(chan acquireResult, 1)
 	go func() {
-		lease, err := lock.Acquire(ctx, db)
+		lease, err := lock.Acquire(ctx, db, DefaultLeaseOptions())
 		ch <- acquireResult{lease: lease, err: err}
 	}()
 	return ch
@@ -64,7 +64,7 @@ func TestTryAcquireLock(t *testing.T) {
 			require.Equal(t, exp, holderExpiration)
 		})
 		t.Run("acquisition after pre-existing holder has been released", func(t *testing.T) {
-			require.NoError(t, lease.Release())
+			require.NoError(t, lease.Release(db))
 			newLease, holderExpiration, err := lock.TryAcquire(t.Context(), db.Database, db, DefaultLeaseOptions())
 			require.NoError(t, err)
 			require.NotNil(t, newLease)
@@ -80,14 +80,14 @@ func TestAcquireLock(t *testing.T) {
 		lock := NewLock(lockDir)
 
 		t.Run("acquisition without pre-existing holder", func(t *testing.T) {
-			lease, err := lock.Acquire(t.Context(), db.Database)
+			lease, err := lock.Acquire(t.Context(), db.Database, DefaultLeaseOptions())
 			require.NoError(t, err)
 			require.NotNil(t, lease)
-			require.NoError(t, lease.Release())
+			require.NoError(t, lease.Release(db))
 		})
 		t.Run("if there is a pre-existing holder, acquisition retries when possible", func(t *testing.T) {
 			t.Run("waits for pre-existing holder to release", func(t *testing.T) {
-				preexistingLease, err := lock.Acquire(t.Context(), db.Database)
+				preexistingLease, err := lock.Acquire(t.Context(), db.Database, DefaultLeaseOptions())
 				require.NoError(t, err)
 				require.NotNil(t, preexistingLease)
 
@@ -98,16 +98,16 @@ func TestAcquireLock(t *testing.T) {
 
 				if !assert.Never(t, receivedAcquireResult, 100*time.Millisecond, 10*time.Millisecond) {
 					if acquireResult.lease != nil {
-						require.NoError(t, acquireResult.lease.Release())
+						require.NoError(t, acquireResult.lease.Release(db))
 					}
 					t.FailNow()
 				}
-				require.NoError(t, preexistingLease.Release())
+				require.NoError(t, preexistingLease.Release(db))
 				require.Eventually(t, receivedAcquireResult, time.Second, 10*time.Millisecond)
 				require.NoError(t, acquireResult.err)
 				require.NotNil(t, acquireResult.lease)
 				// release the new lease for the next test
-				require.NoError(t, acquireResult.lease.Release())
+				require.NoError(t, acquireResult.lease.Release(db))
 			})
 			t.Run("waits for pre-existing holder to expire", func(t *testing.T) {
 				expirationTime := time.Now().Add(200 * time.Millisecond)
@@ -126,7 +126,7 @@ func TestAcquireLock(t *testing.T) {
 				if preExpirationWindow > 0 {
 					if !assert.Never(t, receivedAcquireResult, preExpirationWindow, 10*time.Millisecond) {
 						if acquireResult.lease != nil {
-							require.NoError(t, acquireResult.lease.Release())
+							require.NoError(t, acquireResult.lease.Release(db))
 						}
 						t.FailNow()
 					}
@@ -135,7 +135,84 @@ func TestAcquireLock(t *testing.T) {
 				require.Eventually(t, receivedAcquireResult, time.Second, 10*time.Millisecond)
 				require.NoError(t, acquireResult.err)
 				require.NotNil(t, acquireResult.lease)
-				require.NoError(t, acquireResult.lease.Release())
+				require.NoError(t, acquireResult.lease.Release(db))
+			})
+		})
+	})
+}
+
+func TestActivateLease(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		lockDir, err := db.Root.CreateOrOpen(db, []string{"test_lock"}, nil)
+		require.NoError(t, err)
+		lock := NewLock(lockDir)
+
+		opts := LeaseOptions{
+			ExpirationDuration:  100 * time.Millisecond,
+			RenewalSafetyMargin: 0,
+		}
+		lease, _, err := lock.TryAcquire(t.Context(), db.Database, db, opts)
+		require.NoError(t, err)
+		require.NotNil(t, lease)
+
+		leaseCtx, leaseCtxCancel := context.WithCancel(t.Context())
+		var activeLease *ActiveLease
+		t.Run("activating a lease for the first time", func(t *testing.T) {
+			activeLease, err = lease.Activate(leaseCtx)
+			require.NoError(t, err)
+			require.NotNil(t, activeLease)
+		})
+		t.Run("activating a lease that has already been activated should fail", func(t *testing.T) {
+			activeLease2, err := lease.Activate(leaseCtx)
+			require.ErrorIs(t, err, ErrLeaseAlreadyActivated)
+			require.Nil(t, activeLease2)
+		})
+		require.NoError(t, activeLease.Release(db))
+		t.Run("the lease should be renewed automatically, while the context is still active", func(t *testing.T) {
+			lease, _, err := lock.TryAcquire(t.Context(), db.Database, db, opts)
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+
+			activeLease, err := lease.Activate(leaseCtx)
+			require.NoError(t, err)
+			require.NotNil(t, activeLease)
+
+			var oldExpiration time.Time
+			expirationUpdates := 0
+			require.Eventually(t, func() bool {
+				exp, err := activeLease.Expiration(db)
+				require.NoError(t, err)
+				if !exp.After(oldExpiration) {
+					return false
+				}
+				oldExpiration = exp
+
+				// wait for 5 automatic renewals
+				expirationUpdates++
+				return expirationUpdates > 5
+			}, time.Second, 50*time.Millisecond)
+
+			t.Run("the lease should stop renewing when the context is canceled", func(t *testing.T) {
+				leaseCtxCancel()
+				require.Eventually(t, func() bool {
+					var expiration time.Time
+					_, err = db.ReadTransact(func(t fdb.ReadTransaction) (_ any, err error) {
+						expiration, _, err = lock.readExpirationKey(t)
+						return nil, err
+					})
+					require.NoError(t, err)
+					return expiration.Before(time.Now().Add(opts.ExpirationDuration * -2))
+				}, time.Second, 50*time.Millisecond)
+
+				t.Run("the lease should best effort release itself when the context is canceled", func(t *testing.T) {
+					var holderIdentity []byte
+					_, err := db.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
+						holderIdentity = t.Get(lock.holderIdentityKey()).MustGet()
+						return nil, nil
+					})
+					require.NoError(t, err)
+					require.Nil(t, holderIdentity)
+				})
 			})
 		})
 	})
