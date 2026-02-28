@@ -24,11 +24,15 @@ type Lease struct {
 	cancelRenewal context.CancelFunc
 }
 
+// Valid checks if the lease is still the proper holder of the lock.
+func (l *Lease) Valid(t fdb.ReadTransaction) bool {
+	holderIdentity := t.Get(l.holderIdentityKey()).MustGet()
+	return bytes.Equal(holderIdentity, l.id)
+}
+
 func (l *Lease) renew(tr fdb.Transactor, expirationDuration time.Duration) error {
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
-		// first make sure that the lease is still valid
-		holderIdentity := t.Get(l.holderIdentityKey()).MustGet()
-		if !bytes.Equal(holderIdentity, l.id) {
+		if !l.Valid(t) {
 			return nil, errors.New("lease has been stolen")
 		}
 
@@ -56,6 +60,10 @@ func (l *Lease) Expiration() time.Time {
 func (l *Lease) Release() error {
 	l.cancelRenewal()
 	_, err := l.db.Transact(func(t fdb.Transaction) (any, error) {
+		if !l.Valid(t) {
+			return nil, errors.New("lease has been stolen")
+		}
+
 		t.Clear(l.holderIdentityKey())
 		t.Clear(l.holderExpirationKey())
 		return nil, nil
