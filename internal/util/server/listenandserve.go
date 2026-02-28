@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/futura-platform/f4a/internal/util"
 )
 
 // K8sAwareListenAndServe wraps the ListenAndServe method of the http.Server to add a shutdown signal handler for SIGTERM and SIGINT.
@@ -32,10 +33,7 @@ func K8sAwareListenAndServe(s *http.Server, shutdownTimeout time.Duration, drain
 			// classifying ListenAndServe's return value.
 			_ = s.Shutdown(ctx)
 			if drain != nil {
-				err := backoff.Retry(drain, backoff.WithContext(backoff.NewExponentialBackOff(
-					// limit retries with context timeout, not here
-					backoff.WithMaxElapsedTime(0),
-				), ctx))
+				err := util.WithBestEffort(ctx, drain, backoff.WithMaxElapsedTime(0))
 				if err != nil {
 					slog.Error("failed to drain server", "error", err)
 				}
