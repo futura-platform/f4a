@@ -31,18 +31,20 @@ func (l *Lease) Valid(t fdb.ReadTransaction) bool {
 }
 
 func (l *Lease) renew(tr fdb.Transactor, expirationDuration time.Duration) error {
+	newExpiration := time.Now().Add(expirationDuration)
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		if !l.Valid(t) {
 			return nil, errors.New("lease has been stolen")
 		}
 
 		// then renew the lease
-		l.writeExpirationKey(t, time.Now().Add(expirationDuration))
+		l.writeExpirationKey(t, newExpiration)
 		return nil, nil
 	})
 	if err != nil {
 		return err
 	}
+	l.expiration = newExpiration
 	return nil
 }
 
