@@ -15,19 +15,32 @@ type runMap struct {
 	mu sync.Mutex
 	wg sync.WaitGroup
 
-	runCancels map[task.Id]context.CancelCauseFunc
-	runnerId   string
-	onRunError func(task.Id, error)
+	runCancels      map[task.Id]context.CancelCauseFunc
+	runnerId        string
+	onRunError      func(task.Id, error)
+	callbackTimeout time.Duration
 }
 
 func newRunMap(runnerId string, onRunError func(task.Id, error)) *runMap {
+	return newRunMapWithCallbackTimeout(runnerId, onRunError, defaultCallbackTimeout)
+}
+
+func newRunMapWithCallbackTimeout(
+	runnerId string,
+	onRunError func(task.Id, error),
+	callbackTimeout time.Duration,
+) *runMap {
 	if onRunError == nil {
 		onRunError = func(task.Id, error) {}
 	}
+	if callbackTimeout <= 0 {
+		callbackTimeout = defaultCallbackTimeout
+	}
 	return &runMap{
-		runCancels: make(map[task.Id]context.CancelCauseFunc),
-		runnerId:   runnerId,
-		onRunError: onRunError,
+		runCancels:      make(map[task.Id]context.CancelCauseFunc),
+		runnerId:        runnerId,
+		onRunError:      onRunError,
+		callbackTimeout: callbackTimeout,
 	}
 }
 
@@ -36,7 +49,7 @@ var (
 	ErrDuplicateRun = errors.New("run already exists for task")
 )
 
-const callbackTimeout = 10 * time.Second
+const defaultCallbackTimeout = 10 * time.Second
 
 func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.Context, []byte, error) error) error {
 	ctx = task.WithTaskKey(ctx, r.TaskKey())
@@ -57,7 +70,7 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 			cancel(nil)
 			delete(m.runCancels, r.Id())
 		}
-		err := r.Run(ctx, m.runnerId, callback, callbackTimeout)
+		err := r.Run(ctx, m.runnerId, callback, m.callbackTimeout)
 		if err != nil && ctx.Err() == nil {
 			m.onRunError(r.Id(), err)
 		}

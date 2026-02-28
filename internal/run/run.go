@@ -20,7 +20,8 @@ var (
 	errInputChanged = errors.New("input changed")
 	// this error will cause the run to return the error instead of just calling the callback with the error.
 	// This is for testing purposes ONLY.
-	ErrRunFatal = errors.New("run encountered fatal error")
+	ErrRunFatal        = errors.New("run encountered fatal error")
+	ErrCallbackTimeout = errors.New("callback delivery timed out")
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
@@ -30,7 +31,6 @@ var (
 // 1. The execution finishes successfully and the callback succeeds at least once
 // 2. The execution fails and the callback succeeds at least once (delivering the error)
 // 3. The callback fails to deliver the result within the callback timeout budget
-//    (treated as non-fatal, Run will return nil)
 // 4. The parent context is canceled, which aborts any in-flight execution and callback delivery
 // 5. The watch fails
 func (r Runnable) Run(
@@ -103,13 +103,12 @@ func (r Runnable) Run(
 
 			mu.Lock()
 			defer mu.Unlock()
-			timeout, cancel := context.WithTimeout(runCtx, callbackTimeout)
-			defer cancel()
-			err = backoff.RetryNotify(
-				func() error {
-					return callback(timeout, result, err)
+			deliveryErr := retryCallbackUntilTimeout(
+				runCtx,
+				callbackTimeout,
+				func(callbackCtx context.Context) error {
+					return callback(callbackCtx, result, err)
 				},
-				backoff.WithContext(backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0)), timeout),
 				func(err error, duration time.Duration) {
 					flog.FromContext(watchCtx).LogAttrs(
 						watchCtx, slog.LevelDebug, "callback failed, retrying",
@@ -119,11 +118,18 @@ func (r Runnable) Run(
 					)
 				},
 			)
-				if errors.Is(err, context.Canceled) {
-					// Cancellation here means either a newer input superseded this run or the parent
-					// context requested shutdown. In either case, do not mark delivery as finished.
+			if deliveryErr != nil {
+				// Cancellation here means either a newer input superseded this run or the parent
+				// context requested shutdown. In either case, do not mark delivery as finished.
+				if errors.Is(deliveryErr, context.Canceled) {
 					return
 				}
+				if runErr == nil {
+					runErr = deliveryErr
+				}
+				watchCancel()
+				return
+			}
 			flog.FromContext(ctx).LogAttrs(
 				ctx, slog.LevelDebug, "delivered callback",
 				slog.String("task_id", string(r.Id())),
@@ -156,6 +162,58 @@ func (r Runnable) Run(
 				return nil
 			}
 			return err
+		}
+	}
+}
+
+func retryCallbackUntilTimeout(
+	ctx context.Context,
+	callbackTimeout time.Duration,
+	callback func(context.Context) error,
+	notify func(error, time.Duration),
+) error {
+	if callbackTimeout <= 0 {
+		return fmt.Errorf("%w: invalid timeout %s", ErrCallbackTimeout, callbackTimeout)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, callbackTimeout)
+	defer cancel()
+
+	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
+	var lastErr error
+	for {
+		err := callback(timeoutCtx)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		if err := timeoutCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("%w: %w", ErrCallbackTimeout, lastErr)
+			}
+			return err
+		}
+
+		next := b.NextBackOff()
+		if notify != nil {
+			notify(lastErr, next)
+		}
+
+		timer := time.NewTimer(next)
+		select {
+		case <-timeoutCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("%w: %w", ErrCallbackTimeout, lastErr)
+			}
+			return timeoutCtx.Err()
+		case <-timer.C:
 		}
 	}
 }

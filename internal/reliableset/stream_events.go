@@ -41,7 +41,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	}
 
 	eventsCh := make(chan []LogEntry)
-	_errCh := make(chan error)
+	_errCh := make(chan error, 1)
 	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(ctx, s.db, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
 		func(tx fdb.ReadTransaction, _ fdb.KeyConvertible, l epochChunk) (epochChunk, error) {
 			logEntries, err := s.readLog(tx, l.tailKey)
@@ -61,28 +61,52 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		defer close(eventsCh)
 		defer close(_errCh)
 		go s.leaseLoop(ctx)
-		for {
+		for onEpochCh != nil || onEpochErrCh != nil {
 			select {
 			case c, ok := <-onEpochCh:
 				if !ok {
-					return
+					onEpochCh = nil
+					continue
 				}
 				if len(c.entries) == 0 {
 					continue
 				}
-				eventsCh <- c.entries
+				if err := sendStreamBatch(ctx, eventsCh, c.entries); err != nil {
+					sendStreamErr(_errCh, err)
+					return
+				}
 				if err := s.advanceCursor(ctx, c.tailKey); err != nil {
-					_errCh <- err
+					sendStreamErr(_errCh, err)
 					return
 				}
 			case err, ok := <-onEpochErrCh:
 				if !ok {
-					return
+					onEpochErrCh = nil
+					continue
 				}
-				_errCh <- err
+				sendStreamErr(_errCh, err)
 				return
 			}
 		}
 	}()
 	return initialValues, eventsCh, _errCh, nil
+}
+
+func sendStreamBatch(ctx context.Context, ch chan<- []LogEntry, batch []LogEntry) error {
+	select {
+	case ch <- batch:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
+func sendStreamErr(errCh chan<- error, err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case errCh <- err:
+	default:
+	}
 }

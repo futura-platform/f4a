@@ -24,33 +24,38 @@ func (s *Set) Stream(ctx context.Context) (
 	}
 
 	eventsCh := make(chan []LogEntry)
-	_errCh := make(chan error)
+	_errCh := make(chan error, 1)
 
 	go func() {
 		defer close(eventsCh)
 		defer close(_errCh)
 
 		currentState := initialValues.Clone()
-		for {
+		for rawEventsCh != nil || rawErrCh != nil {
 			select {
 			case batch, ok := <-rawEventsCh:
 				if !ok {
-					return
+					rawEventsCh = nil
+					continue
 				}
 
 				absoluteBatch, err := resolveAbsoluteBatch(currentState, batch)
 				if err != nil {
-					_errCh <- err
+					sendStreamErr(_errCh, err)
 					return
 				} else if len(absoluteBatch) == 0 {
 					continue
 				}
-				eventsCh <- absoluteBatch
-			case err, ok := <-rawErrCh:
-				if !ok {
+				if err := sendStreamBatch(ctx, eventsCh, absoluteBatch); err != nil {
+					sendStreamErr(_errCh, err)
 					return
 				}
-				_errCh <- err
+			case err, ok := <-rawErrCh:
+				if !ok {
+					rawErrCh = nil
+					continue
+				}
+				sendStreamErr(_errCh, err)
 				return
 			}
 		}

@@ -80,6 +80,29 @@ func TestSetStreamEmptyTransitions(t *testing.T) {
 	})
 }
 
+func TestSetStreamCancelWhileBlockedOnSendReturnsContextError(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_cancel_blocked_send")
+
+		ctx, cancel := context.WithCancel(t.Context())
+		_, _, errCh, err := set.Stream(ctx)
+		require.NoError(t, err)
+
+		addItem(t, db, set, []byte("blocked"))
+
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+
+		select {
+		case err, ok := <-errCh:
+			require.True(t, ok)
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for canceled stream error")
+		}
+	})
+}
+
 func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_add_batch")

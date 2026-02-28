@@ -483,7 +483,7 @@ func TestRun(t *testing.T) {
 		})
 	})
 
-	t.Run("returns nil error even if callback never succeeds", func(t *testing.T) {
+	t.Run("returns callback timeout error if callback never succeeds", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -521,7 +521,7 @@ func TestRun(t *testing.T) {
 			select {
 			case runErr := <-runErrCh:
 				assert.GreaterOrEqual(t, callbackAttempts.Load(), int32(1))
-				assert.NoError(t, runErr)
+				assert.ErrorIs(t, runErr, ErrCallbackTimeout)
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for Run to return")
 			}
