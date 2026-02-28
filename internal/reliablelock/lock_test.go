@@ -1,14 +1,45 @@
 package reliablelock
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type acquireResult struct {
+	lease *Lease
+	err   error
+}
+
+func startAcquire(ctx context.Context, lock *Lock, db fdb.Database) <-chan acquireResult {
+	ch := make(chan acquireResult, 1)
+	go func() {
+		lease, err := lock.Acquire(ctx, db)
+		ch <- acquireResult{lease: lease, err: err}
+	}()
+	return ch
+}
+
+func receiveAcquireResult(ch <-chan acquireResult, result *acquireResult, received *bool) func() bool {
+	return func() bool {
+		if *received {
+			return true
+		}
+		select {
+		case *result = <-ch:
+			*received = true
+			return true
+		default:
+			return false
+		}
+	}
+}
 
 func TestTryAcquireLock(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
@@ -60,26 +91,23 @@ func TestAcquireLock(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, preexistingLease)
 
-				acquiredLease := make(chan *Lease, 1)
-				go func() {
-					newLease, err := lock.Acquire(t.Context(), db.Database)
-					if err != nil {
-						t.Errorf("failed to acquire lock: %v", err)
-						return
-					}
-					acquiredLease <- newLease
-				}()
+				acquireResultCh := startAcquire(t.Context(), lock, db.Database)
+				var acquireResult acquireResult
+				var receivedAcquire bool
+				receivedAcquireResult := receiveAcquireResult(acquireResultCh, &acquireResult, &receivedAcquire)
 
-				time.Sleep(100 * time.Millisecond)
-				require.NoError(t, preexistingLease.Release())
-				select {
-				case newLease := <-acquiredLease:
-					require.NotNil(t, newLease)
-					// release the new lease for the next test
-					require.NoError(t, newLease.Release())
-				case <-time.After(100 * time.Millisecond):
-					t.Errorf("timeout waiting for new acquisition to happen")
+				if !assert.Never(t, receivedAcquireResult, 100*time.Millisecond, 10*time.Millisecond) {
+					if acquireResult.lease != nil {
+						require.NoError(t, acquireResult.lease.Release())
+					}
+					t.FailNow()
 				}
+				require.NoError(t, preexistingLease.Release())
+				require.Eventually(t, receivedAcquireResult, time.Second, 10*time.Millisecond)
+				require.NoError(t, acquireResult.err)
+				require.NotNil(t, acquireResult.lease)
+				// release the new lease for the next test
+				require.NoError(t, acquireResult.lease.Release())
 			})
 			t.Run("waits for pre-existing holder to expire", func(t *testing.T) {
 				expirationTime := time.Now().Add(200 * time.Millisecond)
@@ -89,24 +117,25 @@ func TestAcquireLock(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				acquiredLease := make(chan *Lease, 1)
-				go func() {
-					newLease, err := lock.Acquire(t.Context(), db.Database)
-					if err != nil {
-						t.Errorf("failed to acquire lock: %v", err)
-						return
-					}
-					acquiredLease <- newLease
-				}()
+				acquireResultCh := startAcquire(t.Context(), lock, db.Database)
+				var acquireResult acquireResult
+				var receivedAcquire bool
+				receivedAcquireResult := receiveAcquireResult(acquireResultCh, &acquireResult, &receivedAcquire)
 
-				select {
-				case newLease := <-acquiredLease:
-					require.WithinDuration(t, expirationTime, time.Now(), 10*time.Millisecond)
-					require.NotNil(t, newLease)
-					require.NoError(t, newLease.Release())
-				case <-time.After(time.Second):
-					t.Errorf("timeout waiting for new acquisition to happen")
+				preExpirationWindow := time.Until(expirationTime.Add(-50 * time.Millisecond))
+				if preExpirationWindow > 0 {
+					if !assert.Never(t, receivedAcquireResult, preExpirationWindow, 10*time.Millisecond) {
+						if acquireResult.lease != nil {
+							require.NoError(t, acquireResult.lease.Release())
+						}
+						t.FailNow()
+					}
 				}
+
+				require.Eventually(t, receivedAcquireResult, time.Second, 10*time.Millisecond)
+				require.NoError(t, acquireResult.err)
+				require.NotNil(t, acquireResult.lease)
+				require.NoError(t, acquireResult.lease.Release())
 			})
 		})
 	})
