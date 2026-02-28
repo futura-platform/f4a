@@ -35,10 +35,11 @@ type Set struct {
 	clearFunc func() (bool, error)
 }
 type setDirectories struct {
-	snapshotSubspace directory.DirectorySubspace
-	logSubspace      directory.DirectorySubspace
-	cursorSubspace   directory.DirectorySubspace
-	metadataSubspace directory.DirectorySubspace
+	snapshotSubspace       directory.DirectorySubspace
+	logSubspace            directory.DirectorySubspace
+	cursorSubspace         directory.DirectorySubspace
+	metadataSubspace       directory.DirectorySubspace
+	compactionLockSubspace directory.DirectorySubspace
 }
 
 func newSetDirectories[T fdb.ReadTransactor](
@@ -61,6 +62,10 @@ func newSetDirectories[T fdb.ReadTransactor](
 	d.metadataSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "metadata"))
 	if err != nil {
 		return d, fmt.Errorf("failed to create metadata subspace: %w", err)
+	}
+	d.compactionLockSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "compaction_lock"))
+	if err != nil {
+		return d, fmt.Errorf("failed to create compaction lock subspace: %w", err)
 	}
 	return d, err
 }
@@ -85,7 +90,7 @@ func constructWith[T fdb.ReadTransactor](
 		consumerHint:   consumerHint,
 		clearFunc:      clearFunc,
 	}
-	s.compactor = newSetCompactor(s)
+	s.compactor = newSetCompactor(s, dirs.compactionLockSubspace)
 	return s, nil
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	"github.com/cenkalti/backoff/v4"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/constants"
 )
@@ -46,11 +47,11 @@ func (c *setCompactor) runCompactionLoop() error {
 // It batches over multiple transactions to avoid exceeding the transaction size limit.
 // Failures are partial, so the compaction will continue from the last successful chunk.
 func (c *setCompactor) compactLog(ctx context.Context, db dbutil.DbRoot) error {
-	c.ensureLock()
-	if err := c.lock.Acquire(ctx); err != nil {
+	lease, err := c.lock.Acquire(ctx, db.Database)
+	if err != nil {
 		return fmt.Errorf("failed to acquire compaction lock: %w", err)
 	}
-	defer c.lock.Release()
+	defer lease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
 
 	for more := true; more; {
 		_, err := db.TransactContext(ctx, func(tx fdb.Transaction) (_ any, err error) {

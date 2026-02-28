@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/reliablelock"
 )
 
@@ -12,8 +12,7 @@ import (
 type setCompactor struct {
 	set *Set
 
-	lockInitOnce sync.Once
-	lock         *reliablelock.Lock[string]
+	lock *reliablelock.Lock
 
 	runOnce   sync.Once
 	runCtx    context.Context
@@ -23,13 +22,12 @@ type setCompactor struct {
 	releaseOnce sync.Once
 }
 
-func newSetCompactor(set *Set) *setCompactor {
-	return &setCompactor{set: set}
+func newSetCompactor(set *Set, lockDir directory.DirectorySubspace) *setCompactor {
+	return &setCompactor{set: set, lock: reliablelock.NewLock(lockDir)}
 }
 
 func (c *setCompactor) Run() func() {
 	c.runOnce.Do(func() {
-		c.ensureLock()
 		c.runCtx, c.runCancel = context.WithCancel(context.Background())
 		c.runDone = make(chan struct{})
 
@@ -39,18 +37,6 @@ func (c *setCompactor) Run() func() {
 		}()
 	})
 	return c.release
-}
-
-func (c *setCompactor) ensureLock() {
-	c.lockInitOnce.Do(func() {
-		c.lock = reliablelock.NewLock(
-			c.set.db,
-			c.set.metadataSubspace.Pack(tuple.Tuple{"compactionLock"}),
-			c.set.consumerID,
-			reliablelock.WithLeaseDuration(2*compactionInterval),
-			reliablelock.WithRefreshInterval(compactionInterval/2),
-		)
-	})
 }
 
 func (c *setCompactor) release() {
