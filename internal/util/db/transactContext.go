@@ -8,7 +8,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 )
 
-// TransactContext is a wrapper around the Transact method that cancels the transaction if the context is cancelled.
+// TransactContext is a wrapper around the Transact method that cancels the transaction if the context is cancelled (best effort).
 // It functions the same as func (d fdb.Database) Transact, except that it cancels the transaction if the context is cancelled.
 // DO NOT call Commit on the transaction in the callback function.
 func (db DbRoot) TransactContext(ctx context.Context, fn func(t fdb.Transaction) (any, error)) (any, error) {
