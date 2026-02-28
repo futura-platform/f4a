@@ -91,7 +91,11 @@ func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database) (*Lease, erro
 
 	for {
 		select {
-		case err := <-errCh:
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
 			return nil, fmt.Errorf("failed to watch lease expiration: %w", err)
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -100,7 +104,8 @@ func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database) (*Lease, erro
 			return nil, nil
 		case holderExpiration, ok := <-expirationUpdates:
 			if !ok {
-				return nil, fmt.Errorf("watch channel closed")
+				expirationUpdates = nil
+				continue
 			}
 			if holderExpiration.Before(time.Now()) {
 				// this means the lease has been released, we should try to acquire the lock again immediately
