@@ -46,6 +46,11 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
 	}
 }
 
+// acquireOrWait acquires the lock or blocks until it is released.
+// It has 3 return cases:
+// 1. The lock was able to be acquired immediately. the lease is non-nil.
+// 2. The lock was not able to be acquired immediately. the lease is returned as nil when the current lease expires or is released.
+// 3. An error occurs. The error is returned.
 func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database) (*Lease, error) {
 	var acquiredLease *Lease
 	var holderExpiration time.Time
