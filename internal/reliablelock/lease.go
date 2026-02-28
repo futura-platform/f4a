@@ -85,20 +85,27 @@ func (l *Lease) Activate(ctx context.Context) (*ActiveLease, error) {
 		return nil, ErrLeaseAlreadyActivated
 	}
 	go func() {
-		defer renewalCtxCancel(nil)
+		lastRenewalCompleted := time.Now()
+		defer func() {
+			renewalCtxCancel(nil)
+			if errors.Is(context.Cause(renewalCtx), errCauseExplicitRelease) {
+				// the lease was explicitly released, and already released in the db, so we can return
+				return
+			}
+			// otherwise, the activation context was canceled, so we need to best effort release the lease here
+			timeUntilExpirationHeuristic := time.Until(lastRenewalCompleted.Add(l.options.ExpirationDuration))
+			if timeUntilExpirationHeuristic <= 0 {
+				// already expired, no need to clean up in db.
+				// Other acquirers should be already attempting to acquire the lock.
+				return
+			}
+			lease.BestEffortRelease(context.Background(), backoff.WithMaxElapsedTime(timeUntilExpirationHeuristic))
+		}()
 		ticker := time.NewTicker(renewInterval)
 		defer ticker.Stop()
-		lastRenewalCompleted := time.Now()
 		for {
 			select {
 			case <-renewalCtx.Done():
-				if errors.Is(context.Cause(renewalCtx), errCauseExplicitRelease) {
-					// the lease was explicitly released, and already released in the db, so we can return
-					return
-				}
-				// otherwise, the activation context was canceled, so we need to best effort release the lease here
-				timeUntilExpirationHeuristic := time.Until(lastRenewalCompleted.Add(l.options.ExpirationDuration))
-				lease.BestEffortRelease(renewalCtx, backoff.WithMaxElapsedTime(timeUntilExpirationHeuristic))
 				return
 			case <-ticker.C:
 				// renew the lease
