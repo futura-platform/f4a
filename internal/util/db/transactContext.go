@@ -12,14 +12,14 @@ import (
 // It functions the same as func (d fdb.Database) Transact, except that it cancels the transaction if the context is cancelled.
 // DO NOT call Commit on the transaction in the callback function.
 func (db DbRoot) TransactContext(ctx context.Context, fn func(t fdb.Transaction) (any, error)) (any, error) {
-	return genericTransactContext(ctx, db.Transact, fn)
+	return TransactContext(ctx, db.Transact, fn)
 }
 
 func (db DbRoot) ReadTransactContext(ctx context.Context, fn func(t fdb.ReadTransaction) (any, error)) (any, error) {
-	return genericTransactContext(ctx, db.ReadTransact, fn)
+	return TransactContext(ctx, db.ReadTransact, fn)
 }
 
-func genericTransactContext[T fdb.ReadTransaction](
+func TransactContext[T fdb.ReadTransaction](
 	ctx context.Context,
 	createTransaction func(func(t T) (any, error)) (any, error),
 	fn func(t T) (any, error),

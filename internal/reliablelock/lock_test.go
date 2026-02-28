@@ -1,285 +1,111 @@
-package reliablelock_test
+package reliablelock
 
 import (
-	"bytes"
-	"context"
-	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	"github.com/futura-platform/f4a/internal/reliablelock"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
-	"github.com/futura-platform/futura/privateencoding"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func lockKey(db dbutil.DbRoot) fdb.Key {
-	return db.Root.Pack(tuple.Tuple{"lock"})
-}
-
-func readLockValue[T comparable](t *testing.T, db dbutil.DbRoot, key fdb.KeyConvertible) (reliablelock.LeaseValue[T], bool) {
-	t.Helper()
-
-	var raw []byte
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		value, err := tx.Get(key).Get()
-		if err != nil {
-			return nil, err
-		}
-		raw = value
-		return nil, nil
-	})
-	if !assert.NoError(t, err) {
-		return reliablelock.LeaseValue[T]{}, false
-	}
-	if raw == nil {
-		return reliablelock.LeaseValue[T]{}, false
-	}
-
-	decoder := privateencoding.NewDecoder[reliablelock.LeaseValue[T]](bytes.NewReader(raw))
-	value, err := decoder.Decode()
-	if !assert.NoError(t, err) {
-		return reliablelock.LeaseValue[T]{}, false
-	}
-	return value, true
-}
-
-type lockHolderMetadata struct {
-	ID     string
-	Region string
-}
-
-func TestLockAcquireRelease(t *testing.T) {
+func TestTryAcquireLock(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		metadata := "holder-1"
-		lock := reliablelock.NewLock(db.Database, key, metadata)
+		lockDir, err := db.Root.CreateOrOpen(db, []string{"test_lock"}, nil)
+		require.NoError(t, err)
+		lock := NewLock(lockDir)
 
-		err := lock.Acquire(t.Context())
-		assert.NoError(t, err)
-
-		value, ok := readLockValue[string](t, db, key)
-		assert.True(t, ok)
-		assert.Equal(t, metadata, value.Holder)
-		assert.True(t, time.Unix(0, value.LeaseExpiration).After(time.Now()))
-
-		err = lock.Release()
-		assert.NoError(t, err)
-
-		_, ok = readLockValue[string](t, db, key)
-		assert.False(t, ok)
+		var lease *Lease
+		t.Run("acquisition without pre-existing holder", func(t *testing.T) {
+			var holderExpiration time.Time
+			lease, holderExpiration, err = lock.TryAcquire(t.Context(), db.Database, db, DefaultLeaseOptions())
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+			require.Zero(t, holderExpiration)
+		})
+		t.Run("acquisition with pre-existing holder", func(t *testing.T) {
+			failedLease, holderExpiration, err := lock.TryAcquire(t.Context(), db.Database, db, DefaultLeaseOptions())
+			require.NoError(t, err)
+			require.Nil(t, failedLease)
+			require.Equal(t, lease.Expiration(), holderExpiration)
+		})
+		t.Run("acquisition after pre-existing holder has been released", func(t *testing.T) {
+			require.NoError(t, lease.Release())
+			newLease, holderExpiration, err := lock.TryAcquire(t.Context(), db.Database, db, DefaultLeaseOptions())
+			require.NoError(t, err)
+			require.NotNil(t, newLease)
+			require.Zero(t, holderExpiration)
+		})
 	})
 }
 
-func TestLockStoresCorrectValue(t *testing.T) {
+func TestAcquireLock(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		holder := lockHolderMetadata{
-			ID:     "task-123",
-			Region: "us-west-2",
-		}
-		leaseDuration := 400 * time.Millisecond
-		lock := reliablelock.NewLock(db.Database, key, holder,
-			reliablelock.WithLeaseDuration(leaseDuration),
-			reliablelock.WithRefreshInterval(leaseDuration*10),
-		)
+		lockDir, err := db.Root.CreateOrOpen(db, []string{"test_lock"}, nil)
+		require.NoError(t, err)
+		lock := NewLock(lockDir)
 
-		start := time.Now()
-		err := lock.Acquire(t.Context())
-		assert.NoError(t, err)
+		t.Run("acquisition without pre-existing holder", func(t *testing.T) {
+			lease, err := lock.Acquire(t.Context(), db.Database)
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+			require.NoError(t, lease.Release())
+		})
+		t.Run("if there is a pre-existing holder, acquisition retries when possible", func(t *testing.T) {
+			t.Run("waits for pre-existing holder to release", func(t *testing.T) {
+				preexistingLease, err := lock.Acquire(t.Context(), db.Database)
+				require.NoError(t, err)
+				require.NotNil(t, preexistingLease)
 
-		value, ok := readLockValue[lockHolderMetadata](t, db, key)
-		assert.True(t, ok)
-		assert.Equal(t, holder, value.Holder)
-		assert.WithinDuration(t, start.Add(leaseDuration), time.Unix(0, value.LeaseExpiration), 500*time.Millisecond)
-
-		assert.NoError(t, lock.Release())
-	})
-}
-
-func TestLockBlocksUntilReleased(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		holder := reliablelock.NewLock(db.Database, key, "holder")
-		waiter := reliablelock.NewLock(db.Database, key, "waiter")
-
-		err := holder.Acquire(t.Context())
-		assert.NoError(t, err)
-
-		acquired := make(chan error, 1)
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-		defer cancel()
-
-		go func() {
-			acquired <- waiter.Acquire(ctx)
-		}()
-
-		select {
-		case err := <-acquired:
-			t.Fatalf("lock acquired early: %v", err)
-		case <-time.After(200 * time.Millisecond):
-		}
-
-		err = holder.Release()
-		assert.NoError(t, err)
-
-		select {
-		case err := <-acquired:
-			assert.NoError(t, err)
-		case <-time.After(2 * time.Second):
-			t.Fatal("timeout waiting for lock acquisition")
-		}
-	})
-}
-
-func TestLockReleaseNotOwner(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		holder := reliablelock.NewLock(db.Database, key, "holder")
-		other := reliablelock.NewLock(db.Database, key, "other")
-
-		err := holder.Acquire(t.Context())
-		assert.NoError(t, err)
-
-		err = other.Release()
-		assert.ErrorIs(t, err, reliablelock.ErrNotOwner)
-	})
-}
-
-func TestLockAcquireContextCanceled(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		holder := reliablelock.NewLock(db.Database, key, "holder")
-		waiter := reliablelock.NewLock(db.Database, key, "waiter")
-
-		err := holder.Acquire(t.Context())
-		assert.NoError(t, err)
-
-		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-		defer cancel()
-
-		err = waiter.Acquire(ctx)
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
-	})
-}
-
-func TestLockHolderDies(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		key := lockKey(db)
-		leaseDuration := 200 * time.Millisecond
-		holder := reliablelock.NewLock(db.Database, key, "holder",
-			reliablelock.WithLeaseDuration(leaseDuration),
-			reliablelock.WithRefreshInterval(leaseDuration*4),
-		)
-		waiter := reliablelock.NewLock(db.Database, key, "waiter", reliablelock.WithLeaseDuration(leaseDuration))
-
-		err := holder.Acquire(context.Background())
-		assert.NoError(t, err)
-
-		acquired := make(chan error, 1)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		go func() {
-			acquired <- waiter.Acquire(ctx)
-		}()
-
-		select {
-		case err := <-acquired:
-			t.Fatalf("lock acquired early: %v", err)
-		case <-time.After(leaseDuration / 2):
-		}
-
-		select {
-		case err := <-acquired:
-			assert.NoError(t, err)
-		case <-time.After(leaseDuration * 4):
-			t.Fatal("timeout waiting for lock acquisition after lease expiry")
-		}
-	})
-}
-
-func TestLockContention(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
-		key := lockKey(db)
-
-		const goroutines = 10
-		const iterations = 3
-
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		defer cancel()
-
-		start := make(chan struct{})
-		errCh := make(chan error, goroutines*iterations)
-		var wg sync.WaitGroup
-		var active atomic.Int32
-
-		for i := range goroutines {
-			lock := reliablelock.NewLock(db.Database, key, fmt.Sprintf("holder-%d", i))
-			wg.Go(func() {
-				<-start
-				for range iterations {
-					if err := lock.Acquire(ctx); err != nil {
-						errCh <- err
+				acquiredLease := make(chan *Lease, 1)
+				go func() {
+					newLease, err := lock.Acquire(t.Context(), db.Database)
+					if err != nil {
+						t.Errorf("failed to acquire lock: %v", err)
 						return
 					}
-					current := active.Add(1)
-					if current != 1 {
-						errCh <- fmt.Errorf("lock violated exclusivity: %d holders", current)
-					}
-					time.Sleep(100 * time.Millisecond)
-					active.Add(-1)
-					if err := lock.Release(); err != nil {
-						errCh <- err
-						return
-					}
+					acquiredLease <- newLease
+				}()
+
+				time.Sleep(100 * time.Millisecond)
+				require.NoError(t, preexistingLease.Release())
+				select {
+				case newLease := <-acquiredLease:
+					require.NotNil(t, newLease)
+					// release the new lease for the next test
+					require.NoError(t, newLease.Release())
+				case <-time.After(100 * time.Millisecond):
+					t.Errorf("timeout waiting for new acquisition to happen")
 				}
 			})
-		}
+			t.Run("waits for pre-existing holder to expire", func(t *testing.T) {
+				expirationTime := time.Now().Add(200 * time.Millisecond)
+				_, err = db.TransactContext(t.Context(), func(t fdb.Transaction) (any, error) {
+					lock.writeExpirationKey(t, expirationTime)
+					return nil, nil
+				})
+				require.NoError(t, err)
 
-		close(start)
+				acquiredLease := make(chan *Lease, 1)
+				go func() {
+					newLease, err := lock.Acquire(t.Context(), db.Database)
+					if err != nil {
+						t.Errorf("failed to acquire lock: %v", err)
+						return
+					}
+					acquiredLease <- newLease
+				}()
 
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-		case <-ctx.Done():
-			t.Fatalf("timeout waiting for contention test: %v", ctx.Err())
-		}
-
-		close(errCh)
-		for err := range errCh {
-			assert.NoError(t, err)
-		}
-	})
-}
-
-func BenchmarkLockAcquireRelease(b *testing.B) {
-	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
-		key := db.Root.Pack(tuple.Tuple{"bench_lock"})
-		lock := reliablelock.NewLock(db.Database, key, "bench")
-		ctx := context.Background()
-
-		b.ReportAllocs()
-		b.ResetTimer()
-
-		for b.Loop() {
-			if err := lock.Acquire(ctx); err != nil {
-				b.Fatal(err)
-			}
-			if err := lock.Release(); err != nil {
-				b.Fatal(err)
-			}
-		}
+				select {
+				case newLease := <-acquiredLease:
+					require.WithinDuration(t, expirationTime, time.Now(), 10*time.Millisecond)
+					require.NotNil(t, newLease)
+					require.NoError(t, newLease.Release())
+				case <-time.After(time.Second):
+					t.Errorf("timeout waiting for new acquisition to happen")
+				}
+			})
+		})
 	})
 }
