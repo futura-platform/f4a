@@ -67,10 +67,6 @@ var (
 // The goroutine will best effort release the lease when the context is canceled.
 // If renewal fails, the renewal goroutine will immedietely exit and cancel the ActiveLease.
 func (l *Lease) Activate(ctx context.Context) (*ActiveLease, error) {
-	if !l.hasActivated.CompareAndSwap(false, true) {
-		return nil, ErrLeaseAlreadyActivated
-	}
-
 	// bind the renewal context to the caller's context
 	renewalCtx, renewalCtxCancel := context.WithCancelCause(ctx)
 	lease := &ActiveLease{
@@ -82,6 +78,11 @@ func (l *Lease) Activate(ctx context.Context) (*ActiveLease, error) {
 	renewInterval := l.options.ExpirationDuration - l.options.RenewalSafetyMargin
 	if renewInterval <= 0 {
 		return nil, fmt.Errorf("renewal interval is less than or equal to 0: %s", renewInterval)
+	}
+
+	// once validated, we can activate the lease
+	if !l.hasActivated.CompareAndSwap(false, true) {
+		return nil, ErrLeaseAlreadyActivated
 	}
 	go func() {
 		defer renewalCtxCancel(nil)
@@ -172,7 +173,11 @@ func (l *Lease) Release(tr fdb.Transactor) error {
 				return nil, nil
 			})
 		})
-		return err, nil
+		if err != nil {
+			// if the release fails, we need to reset the once so that we can retry
+			l.releaseOnce = sync.Once{}
+		}
+		return nil, err
 	})
 	if err != nil {
 		return err

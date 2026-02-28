@@ -37,7 +37,7 @@ func DefaultLeaseOptions() LeaseOptions {
 // Acquire acquires the lock. It will block until the lock is acquired or the context is canceled.
 func (l *Lock) Acquire(ctx context.Context, db fdb.Database, opts LeaseOptions) (*Lease, error) {
 	for {
-		lease, err := l.acquireOrWait(ctx, db)
+		lease, err := l.acquireOrWait(ctx, db, opts)
 		if err != nil {
 			return nil, err
 		} else if lease != nil {
@@ -51,12 +51,12 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database, opts LeaseOptions) 
 // 1. The lock was able to be acquired immediately. the lease is non-nil.
 // 2. The lock was not able to be acquired immediately. the lease is returned as nil when the current lease expires or is released.
 // 3. An error occurs. The error is returned.
-func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database) (*Lease, error) {
+func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database, opts LeaseOptions) (*Lease, error) {
 	var acquiredLease *Lease
 	var holderExpiration time.Time
 	var expirationWatch fdb.FutureNil
 	_, err := db.Transact(func(t fdb.Transaction) (_ any, err error) {
-		acquiredLease, holderExpiration, err = l.TryAcquire(ctx, db, t, DefaultLeaseOptions())
+		acquiredLease, holderExpiration, err = l.TryAcquire(ctx, db, t, opts)
 		expirationWatch = t.Watch(l.holderExpirationKey())
 		return
 	})
