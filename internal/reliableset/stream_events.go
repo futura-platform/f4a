@@ -38,6 +38,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		return nil, nil
 	})
 	if err != nil {
+		streamCancel()
 		return nil, nil, nil, err
 	}
 
