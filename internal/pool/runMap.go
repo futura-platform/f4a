@@ -56,6 +56,7 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 		return nil
 	}
 	if runStateChainActive(s) {
+		newState.cancel(ErrDuplicateRun)
 		return ErrDuplicateRun
 	}
 	lastRunState(s).next = newState

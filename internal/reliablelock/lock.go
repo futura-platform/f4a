@@ -62,7 +62,9 @@ func (l *Lock) acquireOrWait(ctx context.Context, db fdb.Database, opts LeaseOpt
 	})
 	if err != nil {
 		return nil, err
-	} else if acquiredLease != nil {
+	}
+	defer expirationWatch.Cancel()
+	if acquiredLease != nil {
 		// we were able to acquire the lock immediately
 		return acquiredLease, nil
 	}
