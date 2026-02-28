@@ -28,7 +28,9 @@ func TestTryAcquireLock(t *testing.T) {
 			failedLease, holderExpiration, err := lock.TryAcquire(t.Context(), db.Database, db, DefaultLeaseOptions())
 			require.NoError(t, err)
 			require.Nil(t, failedLease)
-			require.Equal(t, lease.Expiration(), holderExpiration)
+			exp, err := lease.Expiration(db)
+			require.NoError(t, err)
+			require.Equal(t, exp, holderExpiration)
 		})
 		t.Run("acquisition after pre-existing holder has been released", func(t *testing.T) {
 			require.NoError(t, lease.Release())

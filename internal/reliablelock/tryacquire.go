@@ -63,7 +63,6 @@ func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transacto
 		Lock:          l,
 		db:            db,
 		id:            id,
-		expiration:    newLeaseExpiration,
 		Context:       renewalCtx,
 		cancelRenewal: renewalCtxCancel,
 	}

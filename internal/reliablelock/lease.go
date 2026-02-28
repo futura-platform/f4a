@@ -17,8 +17,7 @@ type Lease struct {
 
 	db fdb.Database
 
-	id         []byte
-	expiration time.Time
+	id []byte
 
 	context.Context
 	cancelRenewal context.CancelFunc
@@ -30,11 +29,15 @@ func (l *Lease) Valid(t fdb.ReadTransaction) bool {
 	return bytes.Equal(holderIdentity, l.id)
 }
 
+var ErrLeaseStolen = errors.New("lease has been stolen")
+
+// renew renews the lease. This will succeed as long as no other holder has acquired the lock.
+// Even if the lease has technically expired, this can still succeed as long as the mentioned condition is met
 func (l *Lease) renew(tr fdb.Transactor, expirationDuration time.Duration) error {
 	newExpiration := time.Now().Add(expirationDuration)
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		if !l.Valid(t) {
-			return nil, errors.New("lease has been stolen")
+			return nil, ErrLeaseStolen
 		}
 
 		// then renew the lease
@@ -44,12 +47,24 @@ func (l *Lease) renew(tr fdb.Transactor, expirationDuration time.Duration) error
 	if err != nil {
 		return err
 	}
-	l.expiration = newExpiration
 	return nil
 }
 
-func (l *Lease) Expiration() time.Time {
-	return l.expiration
+func (l *Lease) Expiration(rt fdb.ReadTransactor) (time.Time, error) {
+	exp, err := rt.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
+		if !l.Valid(t) {
+			return time.Time{}, ErrLeaseStolen
+		}
+		expiration, _, err := l.readExpirationKey(t)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return expiration, nil
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return exp.(time.Time), nil
 }
 
 // Release releases the lease.
@@ -63,7 +78,7 @@ func (l *Lease) Release() error {
 	l.cancelRenewal()
 	_, err := l.db.Transact(func(t fdb.Transaction) (any, error) {
 		if !l.Valid(t) {
-			return nil, errors.New("lease has been stolen")
+			return nil, ErrLeaseStolen
 		}
 
 		t.Clear(l.holderIdentityKey())
