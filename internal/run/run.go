@@ -29,8 +29,10 @@ var (
 // It will only return if:
 // 1. The execution finishes successfully and the callback succeeds at least once
 // 2. The execution fails and the callback succeeds at least once (delivering the error)
-// 3. The callback fails to deliver the result within the callback timeout (treated as non-fatal, Run will return nil)
-// 4. The watch fails
+// 3. The callback fails to deliver the result within the callback timeout budget
+//    (treated as non-fatal, Run will return nil)
+// 4. The parent context is canceled, which aborts any in-flight execution and callback delivery
+// 5. The watch fails
 func (r Runnable) Run(
 	ctx context.Context,
 	runnerId string,
@@ -117,11 +119,11 @@ func (r Runnable) Run(
 					)
 				},
 			)
-			if errors.Is(err, context.Canceled) {
-				// if the context was cancelled,
-				// that means another execution started and will deliver the result, so we should not treat delivery as finished.
-				return
-			}
+				if errors.Is(err, context.Canceled) {
+					// Cancellation here means either a newer input superseded this run or the parent
+					// context requested shutdown. In either case, do not mark delivery as finished.
+					return
+				}
 			flog.FromContext(ctx).LogAttrs(
 				ctx, slog.LevelDebug, "delivered callback",
 				slog.String("task_id", string(r.Id())),
