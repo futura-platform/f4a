@@ -80,6 +80,7 @@ func (l *Lock) Acquire(ctx context.Context, db fdb.Database) (*Lease, error) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(time.Until(holderExpiration)):
+			watchCtxCancel()
 			return l.Acquire(ctx, db)
 		case holderExpiration, ok := <-expirationUpdates:
 			if !ok {
