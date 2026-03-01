@@ -150,7 +150,8 @@ func (s *Scheduler) run(ctx context.Context) error {
 
 	scores, err := s.refreshScores(ctx)
 	if err != nil {
-		s.logger.Error("failed to refresh worker scores", "error", err)
+		s.logger.Error("failed to refresh worker scores, using default scores", "error", err)
+		scores = xsync.NewMap[string, float64](xsync.WithPresize(1))
 	}
 
 	activeRunnerSets := newRunnerSetCache(s.db, runnerPodInformer.Informer())
