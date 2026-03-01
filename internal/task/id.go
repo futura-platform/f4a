@@ -12,5 +12,5 @@ func NewId() Id {
 }
 
 const (
-	MAX_ID_LENGTH = 32
+	MAX_ID_LENGTH = 64
 )
