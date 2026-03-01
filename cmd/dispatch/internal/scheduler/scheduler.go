@@ -232,6 +232,9 @@ func (s *Scheduler) assignPending(
 	activeRunnerSets *runnerSetCache,
 ) (retryAssignLater mapset.Set[string], err error) {
 	defer func() {
+		if len(pendingIds) == 0 {
+			return
+		}
 		slog.Info("assigned pending tasks",
 			"pendingIds", util.JoinWithMaxPreview(pendingIds, 5),
 			"scores", scores,
