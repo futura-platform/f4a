@@ -20,7 +20,7 @@ func liveRunnerPods(
 	clients *k8s.Clients,
 	namespace string,
 	statefulSetName string,
-) (runners corev1informer.PodInformer, cancel context.CancelFunc, err error) {
+) (runners corev1informer.PodInformer, _ context.CancelFunc, returnErr error) {
 	sts, err := clients.Core.AppsV1().
 		StatefulSets(namespace).
 		Get(ctx, statefulSetName, metav1.GetOptions{})
@@ -39,9 +39,9 @@ func liveRunnerPods(
 		}),
 	)
 	podInformer := informerFactory.Core().V1().Pods()
-	ctx, cancel = context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
-		if err != nil {
+		if returnErr != nil {
 			cancel()
 		}
 	}()
