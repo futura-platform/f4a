@@ -45,8 +45,9 @@ func liveRunnerPods(
 			cancel()
 		}
 	}()
+	shared := podInformer.Informer()
 	informerFactory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), shared.HasSynced) {
 		return nil, nil, fmt.Errorf("cache sync failed")
 	}
 
