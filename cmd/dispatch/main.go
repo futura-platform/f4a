@@ -27,8 +27,8 @@ import (
 // the dispatching of tasks from the pending set, to individual worker sets.
 
 const (
-	leaderLeaseDuration = 30 * time.Second
-	leaderRenewDeadline = 20 * time.Second
+	leaderLeaseDuration = 15 * time.Second
+	leaderRenewDeadline = 10 * time.Second
 	leaderRetryPeriod   = 5 * time.Second
 )
 
