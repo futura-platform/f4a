@@ -41,13 +41,16 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 	l := flog.FromContext(ctx)
 	if callbackUrl == nil {
 		l.LogAttrs(ctx, slog.LevelDebug, "no callback url, skipping result delivery",
-			slog.String("task_id", string(runnable.Id())))
+			slog.String("task_id", string(runnable.Id())),
+			slog.String("task_error", fmt.Sprint(taskErr)),
+		)
 		return nil
 	}
 	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
 		slog.String("task_id", string(runnable.Id())),
 		slog.String("callback_url", callbackUrl.String()),
-		slog.Bool("task_error", taskErr != nil))
+		slog.String("task_error", fmt.Sprint(taskErr)),
+	)
 	var body io.Reader
 	var bodyCloser io.Closer
 	var contentType string

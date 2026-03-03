@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,7 @@ func WorkerUtilizationSnapshot(
 	}
 
 	utilizations := make(map[string]WorkerUtilization)
+	slog.Info("computing worker utilizations", "num_pods", len(pods.Items))
 	for _, pod := range pods.Items {
 		if !podReady(pod) {
 			continue

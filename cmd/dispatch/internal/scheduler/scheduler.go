@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -193,12 +194,12 @@ func (s *Scheduler) run(ctx context.Context) error {
 				return fmt.Errorf("pending set stream failed: %w", err)
 			}
 		case <-ticker.C:
-			slog.Info("refreshing worker scores")
 			updated, err := s.refreshScores(ctx)
 			if err != nil {
 				s.logger.Error("failed to refresh worker scores", "error", err)
 				continue
 			}
+			slog.Info("refreshed worker scores", "num_workers", updated.Size())
 			scores = updated
 			backlog, err = s.assignPending(ctx, backlog.ToSlice(), scores, activeRunnerSets)
 			if err != nil {
@@ -231,14 +232,20 @@ func (s *Scheduler) assignPending(
 	scores *xsync.Map[string, float64],
 	activeRunnerSets *runnerSetCache,
 ) (retryAssignLater mapset.Set[string], err error) {
+	assignmentRecord := []string{}
+
+	var couldntSelect, batchTransactionFailed atomic.Int32
 	defer func() {
 		if len(pendingIds) == 0 {
 			return
 		}
 		slog.Info("assigned pending tasks",
-			"pendingIds", util.JoinWithMaxPreview(pendingIds, 5),
-			"scores", scores,
-			"retryAssignLater", util.JoinWithMaxPreview(retryAssignLater.ToSlice(), 5),
+			"assignments", util.JoinWithMaxPreview(assignmentRecord, 5),
+			"retry_assign_later", util.JoinWithMaxPreview(retryAssignLater.ToSlice(), 5),
+			"retry_reasons", fmt.Sprint(map[string]int32{
+				"couldnt_select":           couldntSelect.Load(),
+				"batch_transaction_failed": batchTransactionFailed.Load(),
+			}),
 			"err", err,
 		)
 	}()
@@ -273,6 +280,7 @@ func (s *Scheduler) assignPending(
 				retryRunnerSelection:
 					runnerId, ok := selectWeightedRunnerExcluding(scores, rejectedRunners)
 					if !ok {
+						couldntSelect.Add(1)
 						txScopedRetryAssignLater.Add(id)
 						continue
 					}
@@ -284,6 +292,7 @@ func (s *Scheduler) assignPending(
 						txRunnerActiveStates[runnerId] = runnerState
 					}
 					if !runnerState {
+						slog.Info("runner is not active, skipping assignment", "runner_id", runnerId)
 						// this runner is no longer active, skip assignment for it.
 						// evict from score cache only after transaction commit.
 						rejectedRunners.Add(runnerId)
@@ -303,6 +312,7 @@ func (s *Scheduler) assignPending(
 						return nil, err
 					}
 
+					assignmentRecord = append(assignmentRecord, fmt.Sprintf("%s -> %s", id, runnerId))
 					if err := s.assignTask(tx, task.Id(id), runnerId, runnerSet); err != nil {
 						if errors.Is(err, ErrTaskNotInAssignableState) {
 							continue
@@ -313,6 +323,7 @@ func (s *Scheduler) assignPending(
 				return nil, nil
 			})
 			if err != nil {
+				batchTransactionFailed.Add(int32(len(batch)))
 				retryAssignLater.Append(batch...)
 			} else {
 				retryAssignLater.Append(txScopedRetryAssignLater.ToSlice()...)
