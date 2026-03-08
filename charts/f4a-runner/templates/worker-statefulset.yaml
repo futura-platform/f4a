@@ -32,6 +32,10 @@ spec:
         - name: worker
           image: {{ .Values.worker.image | quote }}
           imagePullPolicy: {{ .Values.worker.imagePullPolicy }}
+          {{- if .Values.worker.envFrom }}
+          envFrom:
+            {{- toYaml .Values.worker.envFrom | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.worker.service.port }}
