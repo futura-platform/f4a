@@ -183,3 +183,45 @@ func TestResolveServerLoopExit(t *testing.T) {
 		}
 	})
 }
+
+func TestWithDrain(t *testing.T) {
+	options := new(StartOptions)
+	drainErr := errors.New("drain failed")
+	type contextKey string
+	const key contextKey = "test-key"
+
+	WithDrain(func(ctx context.Context) error {
+		if got := ctx.Value(key); got != "test-value" {
+			t.Fatalf("expected context value to be preserved, got %v", got)
+		}
+		return drainErr
+	})(options)
+
+	if options.Drain == nil {
+		t.Fatal("expected drain option to be set")
+	}
+
+	err := options.Drain(context.WithValue(context.Background(), key, "test-value"))
+	if !errors.Is(err, drainErr) {
+		t.Fatalf("expected drain error %v, got %v", drainErr, err)
+	}
+}
+
+func TestApplyStartOptions_IgnoresNilOptions(t *testing.T) {
+	drainErr := errors.New("drain failed")
+	var nilOption StartOption
+
+	options := applyStartOptions(
+		nilOption,
+		WithDrain(func(context.Context) error {
+			return drainErr
+		}),
+	)
+
+	if options.Drain == nil {
+		t.Fatal("expected drain option to be set")
+	}
+	if err := options.Drain(t.Context()); !errors.Is(err, drainErr) {
+		t.Fatalf("expected drain error %v, got %v", drainErr, err)
+	}
+}

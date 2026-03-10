@@ -20,6 +20,20 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type StartOptions struct {
+	// Drain function is called when the server is gracefully shutting down from being SIGTERM'd.
+	// If it gets an error, it will be retried until this instance is forcefully killed.
+	Drain func(context.Context) error
+}
+
+func WithDrain(drain func(context.Context) error) StartOption {
+	return func(options *StartOptions) {
+		options.Drain = drain
+	}
+}
+
+type StartOption func(*StartOptions)
+
 // Start starts an F4A worker + an associated health probe server.
 // It will route tasks via the given executors.
 // This function will block until the work loop encounters an error.
@@ -30,15 +44,20 @@ import (
 //
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
-func Start(ctx context.Context, executors map[string]execute.Executor) error {
+func Start(ctx context.Context, executors map[string]execute.Executor, options ...StartOption) error {
 	port, err := util.RequiredPort(constants.WorkerPort)
 	if err != nil {
 		return err
 	}
-	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors)
+	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors, options...)
 }
 
-func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor) (err error) {
+func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
+	options := new(StartOptions)
+	for _, o := range opts {
+		o(options)
+	}
+
 	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
 		return err
@@ -113,9 +132,20 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		if err != nil {
 			return fmt.Errorf("failed to open task directory: %w", err)
 		}
-		err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func() error {
-			cancelWorkLoop()
-			return pool.DrainTaskRunner(dbr, runnerId, activeRunners, taskSet, pendingSet, taskDir)
+		taskRunnerDrained := false
+		err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func(shutdownCtx context.Context) error {
+			if !taskRunnerDrained {
+				cancelWorkLoop()
+				err := pool.DrainTaskRunner(shutdownCtx, dbr, runnerId, activeRunners, taskSet, pendingSet, taskDir)
+				if err != nil {
+					return fmt.Errorf("failed to drain task runner: %w", err)
+				}
+				taskRunnerDrained = true
+			}
+			if options.Drain != nil {
+				return options.Drain(shutdownCtx)
+			}
+			return nil
 		})
 		return resolveServerLoopExit(err, workLoopInitiatedShutdown.Load())
 	})

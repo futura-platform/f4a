@@ -96,7 +96,7 @@ func reapAll(
 			continue
 		}
 
-		err = reapForRunner(db, activeRunners, pendingSet, taskDirectory, runnerId)
+		err = reapForRunner(ctx, db, activeRunners, pendingSet, taskDirectory, runnerId)
 		if err != nil {
 			reapErrs = append(reapErrs, err)
 		}
@@ -108,6 +108,7 @@ func reapAll(
 }
 
 func reapForRunner(
+	ctx context.Context,
 	db dbutil.DbRoot,
 	activeRunners pool.ActiveRunners,
 	pendingSet *reliableset.Set,
@@ -120,7 +121,7 @@ func reapForRunner(
 	}
 
 	// call a shared drain function here to drain the task set for the given runner id
-	err = pool.DrainTaskRunner(db, runnerId, activeRunners, taskSet, pendingSet, taskDirectory)
+	err = pool.DrainTaskRunner(ctx, db, runnerId, activeRunners, taskSet, pendingSet, taskDirectory)
 	if err != nil {
 		return err
 	}

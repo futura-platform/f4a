@@ -240,7 +240,7 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 			enqueueTaskWithAssignment(t, db, taskSet, taskDir, id, task.LifecycleStatusRunning, stringPointer(runnerID))
 		}
 
-		err = DrainTaskRunner(db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+		err = DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
 		require.NoError(t, err)
 
 		require.False(t, isRunnerActive(t, db, activeRunners, runnerID))
@@ -287,7 +287,7 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		invalidTaskID := task.Id("invalid-running-task")
 		enqueueTaskWithAssignment(t, db, taskSet, taskDir, invalidTaskID, task.LifecycleStatusRunning, nil)
 
-		err = DrainTaskRunner(db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+		err = DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "task assignment invariant violation")
 
@@ -484,7 +484,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 
 				drainErrCh := make(chan error, 1)
 				go func() {
-					drainErrCh <- DrainTaskRunner(db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+					drainErrCh <- DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
 				}()
 				// Maintain concurrent overlap for a bounded window, then let drain complete.
 				time.Sleep(250 * time.Millisecond)

@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -16,6 +17,7 @@ import (
 // back to the pending set so they can be re-assigned by the dispatch service.
 // It is idempotent: tasks already moved off the runner or deleted are skipped.
 func DrainTaskRunner(
+	ctx context.Context,
 	dbr dbutil.DbRoot,
 	runnerId string,
 	activeRunners ActiveRunners,
@@ -25,7 +27,7 @@ func DrainTaskRunner(
 ) error {
 	// immediately mark runner as inactive when draining the pod.
 	var hangingTasks mapset.Set[string]
-	_, err := dbr.Transact(func(tx fdb.Transaction) (any, error) {
+	_, err := dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		activeRunners.SetActive(tx, runnerId, false)
 		return nil, nil
 	})
@@ -35,7 +37,7 @@ func DrainTaskRunner(
 
 	// fetch the task set items to be drained, in a separate transaction,
 	// so failures here do not block the runner from being marked as inactive.
-	_, err = dbr.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+	_, err = dbr.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (any, error) {
 		// since the task set is unbounded, this can overload the tx size limit.
 		// this is an acceptable compromise for now.
 		// TODO: implement an iterator in reliableset so cases like this can be properly handled.
@@ -61,7 +63,7 @@ func DrainTaskRunner(
 			}
 			currentBatch.Add(taskID)
 		}
-		_, err = dbr.Transact(func(tx fdb.Transaction) (any, error) {
+		_, err = dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 			for taskID := range currentBatch.Iter() {
 				tkey, err := taskDir.Open(tx, task.Id(taskID))
 				if err != nil {
