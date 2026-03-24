@@ -64,7 +64,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./f4a
           file: ${{ matrix.component.dockerfile }}
           platforms: linux/${{ matrix.arch.name }}
           outputs: type=image,name=ghcr.io/${{ steps.owner.outputs.value }}/${{ matrix.component.image }},push-by-digest=true,name-canonical=true,push=true
