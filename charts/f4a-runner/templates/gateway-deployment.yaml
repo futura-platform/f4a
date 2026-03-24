@@ -29,8 +29,8 @@ spec:
       {{- end }}
       containers:
         - name: gateway
-          image: {{ .Values.gateway.image | quote }}
-          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          image: {{ include "f4a-runner.gatewayImage" . | quote }}
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.service.port }}

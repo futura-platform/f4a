@@ -1,9 +1,12 @@
 imagePullSecrets: []
 
+global: {}
+
 gateway:
   name: "f4a-gateway"
-  image: "ghcr.io/futura-platform/f4a-gateway:latest"
-  imagePullPolicy: IfNotPresent
+  image:
+    repository: "ghcr.io/futura-platform/f4a-gateway"
+    pullPolicy: IfNotPresent
   replicas: 1
   service:
     type: ClusterIP
@@ -13,8 +16,9 @@ gateway:
 dispatch:
   name: "f4a-dispatch"
   serviceAccountName: "f4a-dispatch"
-  image: "ghcr.io/futura-platform/f4a-dispatch:latest"
-  imagePullPolicy: IfNotPresent
+  image:
+    repository: "ghcr.io/futura-platform/f4a-dispatch"
+    pullPolicy: IfNotPresent
   replicas: 1
   metricsInterval: "5s"
   scoreEmaAlpha: "0.5"

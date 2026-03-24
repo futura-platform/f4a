@@ -26,6 +26,18 @@ app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "f4a-runner.imageTag" -}}
+{{- default .Chart.AppVersion .Values.global.imageTag -}}
+{{- end -}}
+
+{{- define "f4a-runner.gatewayImage" -}}
+{{- printf "%s:%s" .Values.gateway.image.repository (include "f4a-runner.imageTag" .) -}}
+{{- end -}}
+
+{{- define "f4a-runner.dispatchImage" -}}
+{{- printf "%s:%s" .Values.dispatch.image.repository (include "f4a-runner.imageTag" .) -}}
+{{- end -}}
+
 {{- define "f4a-runner.clusterFileKey" -}}
 {{- .Values.fdb.clusterFile.secret.key | default "fdb.cluster" -}}
 {{- end -}}

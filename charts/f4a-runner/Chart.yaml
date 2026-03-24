@@ -1,6 +1,7 @@
 apiVersion: v2
 name: f4a-runner
 version: 0.1.0
+appVersion: latest
 description: Helm chart for deploying an f4a workflow runner Service on Kubernetes
 type: application
 keywords:

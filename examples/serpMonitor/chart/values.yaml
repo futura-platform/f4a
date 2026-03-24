@@ -71,10 +71,14 @@ foundationdb:
       enableLivenessProbe: true
 
 f4a-runner:
+  global:
+    imageTag: latest
   gateway:
-    image: f4a-gateway:latest
+    image:
+      repository: f4a-gateway
   dispatch:
-    image: f4a-dispatch:latest
+    image:
+      repository: f4a-dispatch
   worker:
     image: serpmonitor:latest
   fdb:

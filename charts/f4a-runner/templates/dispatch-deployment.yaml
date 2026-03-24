@@ -30,8 +30,8 @@ spec:
       {{- end }}
       containers:
         - name: dispatch
-          image: {{ .Values.dispatch.image | quote }}
-          imagePullPolicy: {{ .Values.dispatch.imagePullPolicy }}
+          image: {{ include "f4a-runner.dispatchImage" . | quote }}
+          imagePullPolicy: {{ .Values.dispatch.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.dispatch.service.port }}

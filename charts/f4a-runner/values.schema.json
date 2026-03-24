@@ -15,6 +15,16 @@
 				"required": ["name"]
 			}
 		},
+		"global": {
+			"type": "object",
+			"properties": {
+				"imageTag": {
+					"type": "string",
+					"minLength": 1,
+					"description": "Optional image tag override for the gateway and dispatch images. Defaults to the chart appVersion."
+				}
+			}
+		},
 		"gateway": {
 			"type": "object",
 			"properties": {
@@ -24,11 +34,17 @@
 					"description": "Resource name for the gateway Deployment and Service."
 				},
 				"image": {
-					"type": "string",
-					"minLength": 1
-				},
-				"imagePullPolicy": {
-					"type": "string"
+					"type": "object",
+					"properties": {
+						"repository": {
+							"type": "string",
+							"minLength": 1
+						},
+						"pullPolicy": {
+							"type": "string"
+						}
+					},
+					"required": ["repository", "pullPolicy"]
 				},
 				"replicas": {
 					"type": "integer",
@@ -62,11 +78,17 @@
 					"description": "ServiceAccount name used by dispatch."
 				},
 				"image": {
-					"type": "string",
-					"minLength": 1
-				},
-				"imagePullPolicy": {
-					"type": "string"
+					"type": "object",
+					"properties": {
+						"repository": {
+							"type": "string",
+							"minLength": 1
+						},
+						"pullPolicy": {
+							"type": "string"
+						}
+					},
+					"required": ["repository", "pullPolicy"]
 				},
 				"replicas": {
 					"type": "integer",
