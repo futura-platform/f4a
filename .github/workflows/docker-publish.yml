@@ -258,6 +258,7 @@ jobs:
         id: push_chart
         shell: bash
         env:
+          REGISTRY_OWNER: ${{ steps.owner.outputs.value }}
           CHART_VERSION: ${{ steps.prep.outputs.chart_version }}
           RELEASE_TAG: ${{ steps.prep.outputs.release_tag }}
         run: |
