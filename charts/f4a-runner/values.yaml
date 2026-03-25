@@ -62,3 +62,8 @@ fdb:
       mountPath: /etc/foundationdb
       sourceMountPath: /etc/foundationdb-source
       initImage: foundationdb/fdb-kubernetes-monitor:7.3.63
+      wait:
+        enabled: false
+        image: busybox:1.36.1
+        pollIntervalSeconds: 2
+        timeoutSeconds: 600

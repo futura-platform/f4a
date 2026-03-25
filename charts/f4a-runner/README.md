@@ -55,6 +55,21 @@ helm install f4a-runner oci://ghcr.io/<owner>/f4a-runner \
   --set worker.startupProbe.periodSeconds=10
 ```
 
+## Waiting For An Async Cluster File Secret
+
+By default, the chart assumes `fdb.clusterFile.secret.name` already exists before pods start. If another controller or job creates that Secret later, enable `fdb.clusterFile.writable.wait.enabled` to make the init container poll the mounted source file until it exists and is non-empty.
+
+Example:
+
+```bash
+helm install f4a-runner oci://ghcr.io/<owner>/f4a-runner \
+  --version 0.1.0 \
+  --set worker.image=ghcr.io/<owner>/your-worker-image:v0.1.0 \
+  --set fdb.clusterFile.secret.name=your-fdb-cluster-file-secret \
+  --set fdb.clusterFile.writable.wait.enabled=true \
+  --set fdb.clusterFile.writable.wait.timeoutSeconds=600
+```
+
 ## Install
 
 ```bash

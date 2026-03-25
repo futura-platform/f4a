@@ -57,6 +57,33 @@ startupProbe:
 {{- end -}}
 
 {{- define "f4a-runner.clusterFileInitContainer" -}}
+{{- if .Values.fdb.clusterFile.writable.wait.enabled }}
+- name: fdb-cluster-init
+  image: {{ .Values.fdb.clusterFile.writable.wait.image | quote }}
+  command:
+    - sh
+    - -ec
+    - |
+      src={{ printf "%s/%s" .Values.fdb.clusterFile.writable.sourceMountPath .clusterFileKey | quote }}
+      dst={{ printf "%s/%s" .Values.fdb.clusterFile.writable.mountPath .clusterFileKey | quote }}
+      timeout={{ .Values.fdb.clusterFile.writable.wait.timeoutSeconds }}
+      interval={{ .Values.fdb.clusterFile.writable.wait.pollIntervalSeconds }}
+      deadline=$(( $(date +%s) + timeout ))
+      while [ ! -s "$src" ]; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          echo "Timed out waiting for cluster file: $src"
+          exit 1
+        fi
+        sleep "$interval"
+      done
+      cp "$src" "$dst"
+  volumeMounts:
+    - name: fdb-cluster-source
+      mountPath: {{ .Values.fdb.clusterFile.writable.sourceMountPath }}
+      readOnly: true
+    - name: fdb-cluster
+      mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+{{- else }}
 - name: fdb-cluster-init
   image: {{ .Values.fdb.clusterFile.writable.initImage | quote }}
   args:
@@ -76,6 +103,7 @@ startupProbe:
       readOnly: true
     - name: fdb-cluster
       mountPath: {{ .Values.fdb.clusterFile.writable.mountPath }}
+{{- end }}
 {{- end -}}
 
 {{- define "f4a-runner.clusterFileVolumeMounts" -}}
@@ -93,6 +121,7 @@ startupProbe:
 - name: fdb-cluster-source
   secret:
     secretName: {{ .clusterFileSecretName }}
+    optional: {{ .Values.fdb.clusterFile.writable.wait.enabled }}
     items:
       - key: {{ .clusterFileKey | quote }}
         path: {{ .clusterFileKey | quote }}

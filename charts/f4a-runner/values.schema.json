@@ -298,9 +298,35 @@
 									"type": "string",
 									"description": "Container image used to copy the cluster file into the writable volume.",
 									"minLength": 1
+								},
+								"wait": {
+									"type": "object",
+									"description": "Optional polling-based wait for asynchronously-created cluster file Secrets before copying them into the writable volume.",
+									"properties": {
+										"enabled": {
+											"type": "boolean",
+											"description": "When true, the init container waits for the mounted source cluster file to appear and become non-empty."
+										},
+										"image": {
+											"type": "string",
+											"description": "Container image used for the polling-based wait init container.",
+											"minLength": 1
+										},
+										"pollIntervalSeconds": {
+											"type": "integer",
+											"minimum": 1,
+											"description": "Delay between checks for the source cluster file."
+										},
+										"timeoutSeconds": {
+											"type": "integer",
+											"minimum": 1,
+											"description": "Maximum time to wait for the source cluster file before failing the init container."
+										}
+									},
+									"required": ["enabled", "image", "pollIntervalSeconds", "timeoutSeconds"]
 								}
 							},
-							"required": ["enabled", "mountPath", "sourceMountPath", "initImage"]
+							"required": ["enabled", "mountPath", "sourceMountPath", "initImage", "wait"]
 						}
 					},
 					"required": ["secret", "writable"]
