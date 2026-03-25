@@ -30,6 +30,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default .Chart.AppVersion .Values.global.imageTag -}}
 {{- end -}}
 
+{{- define "f4a-runner.startupProbe" -}}
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: {{ .periodSeconds }}
+  failureThreshold: {{ .failureThreshold }}
+  timeoutSeconds: {{ .timeoutSeconds }}
+{{- end -}}
+
 {{- define "f4a-runner.gatewayImage" -}}
 {{- printf "%s:%s" .Values.gateway.image.repository (include "f4a-runner.imageTag" .) -}}
 {{- end -}}

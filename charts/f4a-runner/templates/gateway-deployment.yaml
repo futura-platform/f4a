@@ -17,6 +17,7 @@ spec:
         {{- include "f4a-runner.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: gateway
     spec:
+      {{- $startupProbe := .Values.gateway.startupProbe | default .Values.global.startupProbe -}}
       {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
       {{- $clusterFileSecretName := include "f4a-runner.clusterFileSecretName" . -}}
       {{- if .Values.imagePullSecrets }}
@@ -39,6 +40,7 @@ spec:
               value: {{ .Values.gateway.service.port | quote }}
             - name: FDB_CLUSTER_FILE
               value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+          {{- include "f4a-runner.startupProbe" $startupProbe | nindent 10 }}
           livenessProbe:
             httpGet:
               path: /healthz

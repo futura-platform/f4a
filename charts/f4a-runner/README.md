@@ -36,6 +36,25 @@ The published chart pins the default gateway and dispatch images to the matching
 
 If you need to override the default gateway and dispatch tag, set `global.imageTag`.
 
+## Startup Probe Tuning
+
+The chart exposes a shared startup probe configuration at `global.startupProbe`, with optional per-workload overrides at:
+
+- `gateway.startupProbe`
+- `dispatch.startupProbe`
+- `worker.startupProbe`
+
+Example:
+
+```bash
+helm install f4a-runner oci://ghcr.io/<owner>/f4a-runner \
+  --version 0.1.0 \
+  --set worker.image=ghcr.io/<owner>/your-worker-image:v0.1.0 \
+  --set fdb.clusterFile.secret.name=your-fdb-cluster-file-secret \
+  --set global.startupProbe.failureThreshold=60 \
+  --set worker.startupProbe.periodSeconds=10
+```
+
 ## Install
 
 ```bash

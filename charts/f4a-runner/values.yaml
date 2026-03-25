@@ -1,6 +1,10 @@
 imagePullSecrets: []
 
-global: {}
+global:
+  startupProbe:
+    periodSeconds: 5
+    failureThreshold: 24
+    timeoutSeconds: 3
 
 gateway:
   name: "f4a-gateway"
@@ -8,6 +12,7 @@ gateway:
     repository: "ghcr.io/futura-platform/f4a-gateway"
     pullPolicy: IfNotPresent
   replicas: 1
+  startupProbe: {}
   service:
     type: ClusterIP
     port: 8080
@@ -20,6 +25,7 @@ dispatch:
     repository: "ghcr.io/futura-platform/f4a-dispatch"
     pullPolicy: IfNotPresent
   replicas: 1
+  startupProbe: {}
   metricsInterval: "5s"
   scoreEmaAlpha: "0.5"
   service:
@@ -30,6 +36,7 @@ worker:
   name: "f4a-worker"
   imagePullPolicy: IfNotPresent
   replicas: 1
+  startupProbe: {}
   service:
     port: 8081
   # Additional Kubernetes EnvFromSource entries appended to the worker container.

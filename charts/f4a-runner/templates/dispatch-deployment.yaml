@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/component: dispatch
     spec:
       serviceAccountName: {{ include "f4a-runner.dispatchServiceAccountName" . }}
+      {{- $startupProbe := .Values.dispatch.startupProbe | default .Values.global.startupProbe -}}
       {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
       {{- $clusterFileSecretName := include "f4a-runner.clusterFileSecretName" . -}}
       {{- if .Values.imagePullSecrets }}
@@ -56,6 +57,7 @@ spec:
               value: {{ include "f4a-runner.dispatchName" . | quote }}
             - name: FDB_CLUSTER_FILE
               value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+          {{- include "f4a-runner.startupProbe" $startupProbe | nindent 10 }}
           livenessProbe:
             httpGet:
               path: /healthz

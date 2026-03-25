@@ -22,6 +22,25 @@
 					"type": "string",
 					"minLength": 1,
 					"description": "Optional image tag override for the gateway and dispatch images. Defaults to the chart appVersion."
+				},
+				"startupProbe": {
+					"type": "object",
+					"description": "Default startup probe settings for gateway, dispatch, and worker workloads.",
+					"properties": {
+						"periodSeconds": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"failureThreshold": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"timeoutSeconds": {
+							"type": "integer",
+							"minimum": 1
+						}
+					},
+					"required": ["periodSeconds", "failureThreshold", "timeoutSeconds"]
 				}
 			}
 		},
@@ -49,6 +68,24 @@
 				"replicas": {
 					"type": "integer",
 					"minimum": 1
+				},
+				"startupProbe": {
+					"type": "object",
+					"description": "Optional startup probe override for the gateway container. Falls back to global.startupProbe when omitted or empty.",
+					"properties": {
+						"periodSeconds": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"failureThreshold": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"timeoutSeconds": {
+							"type": "integer",
+							"minimum": 1
+						}
+					}
 				},
 				"service": {
 					"type": "object",
@@ -93,6 +130,24 @@
 				"replicas": {
 					"type": "integer",
 					"minimum": 1
+				},
+				"startupProbe": {
+					"type": "object",
+					"description": "Optional startup probe override for the dispatch container. Falls back to global.startupProbe when omitted or empty.",
+					"properties": {
+						"periodSeconds": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"failureThreshold": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"timeoutSeconds": {
+							"type": "integer",
+							"minimum": 1
+						}
+					}
 				},
 				"metricsInterval": {
 					"type": "string",
@@ -168,6 +223,24 @@
 				"replicas": {
 					"type": "integer",
 					"minimum": 1
+				},
+				"startupProbe": {
+					"type": "object",
+					"description": "Optional startup probe override for the worker container. Falls back to global.startupProbe when omitted or empty.",
+					"properties": {
+						"periodSeconds": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"failureThreshold": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"timeoutSeconds": {
+							"type": "integer",
+							"minimum": 1
+						}
+					}
 				},
 				"service": {
 					"type": "object",

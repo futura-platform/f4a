@@ -18,6 +18,7 @@ spec:
         {{- include "f4a-runner.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
     spec:
+      {{- $startupProbe := .Values.worker.startupProbe | default .Values.global.startupProbe -}}
       {{- $clusterFileKey := include "f4a-runner.clusterFileKey" . -}}
       {{- $clusterFileSecretName := include "f4a-runner.clusterFileSecretName" . -}}
       {{- if .Values.imagePullSecrets }}
@@ -47,6 +48,7 @@ spec:
             {{- if .Values.worker.env }}
               {{- toYaml .Values.worker.env | nindent 12 }}
             {{- end }}
+          {{- include "f4a-runner.startupProbe" $startupProbe | nindent 10 }}
           livenessProbe:
             httpGet:
               path: /healthz
