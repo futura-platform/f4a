@@ -28,6 +28,7 @@ const (
 	callbackRetryInitialDelay = 100 * time.Millisecond
 	callbackRetryMaxDelay     = 30 * time.Second
 	callbackAttemptTimeout    = 10 * time.Second
+	callbackDeliveryTimeout   = time.Minute
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
@@ -64,6 +65,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	ctx = activeLease
 
 	executable := r.executor.ExecuteFrom(r.execution)
+
 	watchCtx, watchCancel := context.WithCancel(ctx)
 	defer watchCancel()
 	inputKey := r.taskKey.Input()
@@ -97,7 +99,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		}
 		runCtx, runCancel := context.WithCancelCause(watchCtx)
 		cancelPrevious = runCancel
-		mu.Unlock() // dont hold the lock while executing the execution. We need to be able to cancel the execution if the input changes.
+		mu.Unlock() // dont hold the lock while executing. We need to be able to cancel the execution if the input changes.
 
 		execWg.Add(1)
 		go func(input []byte, runCtx context.Context) {
@@ -121,8 +123,24 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 			mu.Lock()
 			defer mu.Unlock()
+
+			finishedAt, finishedAtErr := r.ensureFinishedAt(time.Now())
+			if finishedAtErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if runErr == nil {
+					runErr = finishedAtErr
+				}
+				watchCancel()
+				return
+			}
+
+			deadline := finishedAt.Add(callbackDeliveryTimeout)
+			callbackCtx, callbackCancel := context.WithDeadline(runCtx, deadline)
+			defer callbackCancel()
 			deliveryErr := retryCallback(
-				runCtx,
+				callbackCtx,
 				func(callbackCtx context.Context) error {
 					return callback(callbackCtx, result, err)
 				},
@@ -136,20 +154,28 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				},
 			)
 			if deliveryErr != nil {
-				if ctx.Err() != nil {
+				if time.Now().After(deadline) {
+					flog.FromContext(ctx).LogAttrs(
+						ctx, slog.LevelDebug, "callback delivery timed out",
+						slog.String("task_id", string(r.Id())),
+					)
+				} else {
+					if ctx.Err() != nil {
+						return
+					}
+					if runErr == nil {
+						runErr = deliveryErr
+					}
+					watchCancel()
 					return
 				}
-				if runErr == nil {
-					runErr = deliveryErr
-				}
-				watchCancel()
-				return
+			} else {
+				flog.FromContext(ctx).LogAttrs(
+					ctx, slog.LevelDebug, "delivered callback",
+					slog.String("task_id", string(r.Id())),
+					slog.Bool("error", err != nil),
+				)
 			}
-			flog.FromContext(ctx).LogAttrs(
-				ctx, slog.LevelDebug, "delivered callback",
-				slog.String("task_id", string(r.Id())),
-				slog.Bool("error", err != nil),
-			)
 			executionResultDeliveryFinished.Store(true)
 			watchCancel()
 		}(marshalledInput, runCtx)
@@ -181,6 +207,26 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	}
 }
 
+func (r Runnable) ensureFinishedAt(candidate time.Time) (time.Time, error) {
+	finishedAtValue, err := r.db.Transact(func(tx fdb.Transaction) (any, error) {
+		existing, err := r.taskKey.FinishedAt().Get(tx).Get()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read finishedAt: %w", err)
+		}
+		if existing != nil {
+			return *existing, nil
+		}
+
+		finishedAt := candidate
+		r.taskKey.FinishedAt().Set(tx, &finishedAt)
+		return finishedAt, nil
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to persist finishedAt: %w", err)
+	}
+	return finishedAtValue.(time.Time), nil
+}
+
 func retryCallback(
 	ctx context.Context,
 	callback func(context.Context) error,
@@ -193,12 +239,7 @@ func retryCallback(
 		cancel()
 		if err == nil {
 			return nil
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		if notify != nil {
+		} else if notify != nil {
 			notify(err, delay)
 		}
 

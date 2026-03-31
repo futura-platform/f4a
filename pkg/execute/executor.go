@@ -16,7 +16,11 @@ type genericExecutor[A, R any] struct {
 	opts       []ftype.FlowLoopOption
 }
 
-func NewExecutor[A, R any](fn futura.FlowFn[A, R], marshaller ExecutionMarshaller[A, R], opts ...ftype.FlowLoopOption) Executor {
+func NewExecutor[A, R any](
+	fn futura.FlowFn[A, R],
+	marshaller ExecutionMarshaller[A, R],
+	opts ...ftype.FlowLoopOption,
+) Executor {
 	return &genericExecutor[A, R]{fn: fn, marshaller: marshaller, opts: opts}
 }
 
