@@ -28,7 +28,7 @@ const (
 	callbackRetryInitialDelay = 100 * time.Millisecond
 	callbackRetryMaxDelay     = 30 * time.Second
 	callbackAttemptTimeout    = 10 * time.Second
-	callbackDeliveryTimeout   = 10 * time.Second
+	callbackDeliveryTimeout   = time.Minute
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
