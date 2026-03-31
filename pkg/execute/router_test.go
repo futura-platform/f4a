@@ -28,7 +28,7 @@ func TestRouter(t *testing.T) {
 	t.Run("route to unknown executor", func(t *testing.T) {
 		router := execute.NewRouter()
 		routed := router.Route("executor1")
-		_, _, err := routed.ExecuteFrom(nil).Execute(context.Background(), nil)
+		_, err := routed.ExecuteFrom(nil).Execute(context.Background(), nil)
 		assert.ErrorIs(t, err, execute.ErrExecutorNotFound)
 	})
 }

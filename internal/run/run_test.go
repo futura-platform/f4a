@@ -25,6 +25,25 @@ func setInput(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value []byte) {
 	assert.NoError(t, err)
 }
 
+func setFinishedAt(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value *time.Time) {
+	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+		td.FinishedAt().Set(tx, value)
+		return nil, nil
+	})
+	assert.NoError(t, err)
+}
+
+func getFinishedAt(t *testing.T, db dbutil.DbRoot, td task.TaskKey) *time.Time {
+	var finishedAt *time.Time
+	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+		var err error
+		finishedAt, err = td.FinishedAt().Get(tx).Get()
+		return nil, err
+	})
+	assert.NoError(t, err)
+	return finishedAt
+}
+
 func TestRun(t *testing.T) {
 	t.Run("returns output on successful execution", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
@@ -120,6 +139,54 @@ func TestRun(t *testing.T) {
 				assert.Equal(t, expectedOutput, output)
 			default:
 				t.Fatal("callback not called")
+			}
+		})
+	})
+
+	t.Run("stops retrying when callback delivery deadline already expired", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+
+			expectedOutput := []byte("success output")
+			inputData := []byte("test input")
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+			setInput(t, db, tkey, inputData)
+			staleFinishedAt := time.Now().Add(-callbackDeliveryTimeout - time.Second)
+			setFinishedAt(t, db, tkey, &staleFinishedAt)
+
+			executor := &testutil.MockExecutor{
+				Execute: func(
+					inContainer executiontype.TransactionalContainer,
+					ctx context.Context,
+					marshalledInput []byte,
+					opts ...ftype.FlowLoopOption,
+				) ([]byte, error) {
+					return expectedOutput, nil
+				},
+			}
+
+			runnable := Runnable{
+				db:       db.Database,
+				taskKey:  tkey,
+				executor: executor,
+			}
+
+			attempts := atomic.Int32{}
+			err = runnable.Run(t.Context(), t.Name(), func(callbackCtx context.Context, output []byte, err error) error {
+				assert.NoError(t, err)
+				assert.Equal(t, expectedOutput, output)
+				assert.ErrorIs(t, callbackCtx.Err(), context.DeadlineExceeded)
+				attempts.Add(1)
+				return errors.New("callback failed")
+			})
+
+			assert.NoError(t, err)
+			assert.Equal(t, int32(1), attempts.Load())
+			persistedFinishedAt := getFinishedAt(t, db, tkey)
+			if assert.NotNil(t, persistedFinishedAt) {
+				assert.Equal(t, staleFinishedAt.UnixNano(), persistedFinishedAt.UnixNano())
 			}
 		})
 	})
@@ -667,7 +734,7 @@ func TestRun(t *testing.T) {
 						case <-ctx.Done():
 							return nil, context.Cause(ctx)
 						case <-time.After(5 * time.Second):
-							return []byte(fmt.Sprintf("output-%d", count)), nil
+							return fmt.Appendf([]byte{}, "output-%d", count), nil
 						}
 					}
 
@@ -699,7 +766,7 @@ func TestRun(t *testing.T) {
 			// Rapid fire input changes
 			for i := range 5 {
 				time.Sleep(50 * time.Millisecond)
-				setInput(t, db, tkey, []byte(fmt.Sprintf("input-%d", i)))
+				setInput(t, db, tkey, fmt.Appendf([]byte{}, "input-%d", i))
 			}
 
 			select {

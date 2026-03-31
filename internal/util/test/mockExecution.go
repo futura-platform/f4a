@@ -19,10 +19,6 @@ type MockExecutor struct {
 
 var _ execute.Executor = &MockExecutor{}
 
-func (e *MockExecutor) ExecuteFrom(c executiontype.TransactionalContainer) execute.Executable {
-	return &mockExecutable{container: c, execute: e.Execute}
-}
-
 type mockExecutable struct {
 	container executiontype.TransactionalContainer
 	execute   func(
@@ -31,6 +27,10 @@ type mockExecutable struct {
 		marshalledInput []byte,
 		opts ...ftype.FlowLoopOption,
 	) ([]byte, error)
+}
+
+func (e *MockExecutor) ExecuteFrom(c executiontype.TransactionalContainer) execute.Executable {
+	return &mockExecutable{container: c, execute: e.Execute}
 }
 
 func (m *mockExecutable) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {

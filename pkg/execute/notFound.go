@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
@@ -24,6 +23,6 @@ type notFoundExecutable struct {
 	requestedExecutorId ExecutorId
 }
 
-func (r notFoundExecutable) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, time.Time, error) {
-	return nil, time.Now(), fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
+func (r notFoundExecutable) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+	return nil, fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
 }

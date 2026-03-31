@@ -49,7 +49,7 @@ func TestExecutableExecuteSuccess(t *testing.T) {
 	}, marshaller)
 
 	executable := executor.ExecuteFrom(container)
-	output, _, err := executable.Execute(context.Background(), []byte("input"))
+	output, err := executable.Execute(context.Background(), []byte("input"))
 
 	assert.NoError(t, err)
 	assert.Equal(t, "input-out", string(output))
@@ -78,7 +78,7 @@ func TestExecutableExecuteUnmarshalError(t *testing.T) {
 	}, marshaller)
 
 	executable := executor.ExecuteFrom(container)
-	_, _, err := executable.Execute(context.Background(), []byte("input"))
+	_, err := executable.Execute(context.Background(), []byte("input"))
 
 	assert.ErrorIs(t, err, sentinel)
 	assert.False(t, called)
@@ -104,7 +104,7 @@ func TestExecutableExecuteFlowError(t *testing.T) {
 	}, marshaller)
 
 	executable := executor.ExecuteFrom(container)
-	_, _, err := executable.Execute(t.Context(), []byte("input"))
+	_, err := executable.Execute(t.Context(), []byte("input"))
 
 	assert.ErrorIs(t, err, sentinel)
 	assert.Equal(t, 1, marshaller.unmarshalCalls)

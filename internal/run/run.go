@@ -105,7 +105,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		go func(input []byte, runCtx context.Context) {
 			defer execWg.Done()
 
-			result, finishedAt, err := executable.Execute(runCtx, input)
+			result, err := executable.Execute(runCtx, input)
 			if errors.Is(err, ErrRunFatal) {
 				if !testing.Testing() {
 					panic(fmt.Errorf("This error should never be used outside of tests: %w", err))
@@ -123,6 +123,18 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 			mu.Lock()
 			defer mu.Unlock()
+
+			finishedAt, finishedAtErr := r.ensureFinishedAt(time.Now())
+			if finishedAtErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if runErr == nil {
+					runErr = finishedAtErr
+				}
+				watchCancel()
+				return
+			}
 
 			deadline := finishedAt.Add(callbackDeliveryTimeout)
 			callbackCtx, callbackCancel := context.WithDeadline(runCtx, deadline)
@@ -193,6 +205,26 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			return err
 		}
 	}
+}
+
+func (r Runnable) ensureFinishedAt(candidate time.Time) (time.Time, error) {
+	finishedAtValue, err := r.db.Transact(func(tx fdb.Transaction) (any, error) {
+		existing, err := r.taskKey.FinishedAt().Get(tx).Get()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read finishedAt: %w", err)
+		}
+		if existing != nil {
+			return *existing, nil
+		}
+
+		finishedAt := candidate
+		r.taskKey.FinishedAt().Set(tx, &finishedAt)
+		return finishedAt, nil
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to persist finishedAt: %w", err)
+	}
+	return finishedAtValue.(time.Time), nil
 }
 
 func retryCallback(
