@@ -130,23 +130,6 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, taskID string) (taskState, bo
 	return state, exists
 }
 
-func setTaskLifecycleStatus(t *testing.T, db dbutil.DbRoot, taskID string, status task.LifecycleStatus) {
-	t.Helper()
-
-	taskDir, err := task.CreateOrOpenTasksDirectory(db)
-	require.NoError(t, err)
-
-	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		tkey, err := taskDir.Open(tx, task.Id(taskID))
-		if err != nil {
-			return nil, err
-		}
-		tkey.LifecycleStatus().Set(tx, status)
-		return nil, nil
-	})
-	require.NoError(t, err)
-}
-
 func setTaskRunnerAndLifecycleStatus(
 	t *testing.T,
 	db dbutil.DbRoot,
@@ -432,88 +415,121 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 
 		callbackUrlA := "https://example.com/a"
 		callbackUrlB := "https://example.com/b"
-		resp, err := c.BatchTaskOperations(context.Background(), &taskv1.BatchTaskOperationsRequest{
-			Operations: []*taskv1.BatchTaskOperation{
-				{
-					Operation: &taskv1.BatchTaskOperation_CreateTask{
-						CreateTask: &taskv1.ControlServiceCreateTaskRequest{
-							Revision: 1,
-							Request: &taskv1.CreateTaskRequest{
-								TaskId:      "batch-task-a",
-								ExecutorId:  "executor-a",
-								CallbackUrl: &callbackUrlA,
-								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
-							},
-						},
-					},
-				},
-				{
-					Operation: &taskv1.BatchTaskOperation_CreateTask{
-						CreateTask: &taskv1.ControlServiceCreateTaskRequest{
-							Revision: 2,
-							Request: &taskv1.CreateTaskRequest{
-								TaskId:      "batch-task-b",
-								ExecutorId:  "executor-b",
-								CallbackUrl: &callbackUrlB,
-								Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
-							},
-						},
-					},
-				},
-				{
-					Operation: &taskv1.BatchTaskOperation_UpdateTask{
-						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-							Revision: 2,
-							Request: &taskv1.UpdateTaskRequest{
-								TaskId:     "batch-task-a",
-								Parameters: &taskv1.TaskParameters{Input: []byte("v2")},
-							},
-						},
-					},
-				},
-				{
-					Operation: &taskv1.BatchTaskOperation_UpdateTask{
-						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-							Revision: 4,
-							Request: &taskv1.UpdateTaskRequest{
-								TaskId:     "batch-task-a",
-								Parameters: &taskv1.TaskParameters{Input: []byte("v4")},
-							},
-						},
-					},
-				},
-				{
-					Operation: &taskv1.BatchTaskOperation_UpdateTask{
-						UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-							Revision: 2,
-							Request: &taskv1.UpdateTaskRequest{
-								TaskId:     "batch-task-a",
-								Parameters: &taskv1.TaskParameters{Input: []byte("duplicate")},
-							},
-						},
-					},
-				},
-				{
-					Operation: &taskv1.BatchTaskOperation_DeleteTask{
-						DeleteTask: &taskv1.ControlServiceDeleteTaskRequest{
-							Revision: 1,
-							Request: &taskv1.DeleteTaskRequest{
-								TaskId: "batch-missing-delete",
-							},
+		operations := []*taskv1.BatchTaskOperation{
+			{
+				Operation: &taskv1.BatchTaskOperation_CreateTask{
+					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
+						Revision: 1,
+						Request: &taskv1.CreateTaskRequest{
+							TaskId:      "batch-task-a",
+							ExecutorId:  "executor-a",
+							CallbackUrl: &callbackUrlA,
+							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
 						},
 					},
 				},
 			},
+			{
+				Operation: &taskv1.BatchTaskOperation_CreateTask{
+					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
+						Revision: 2,
+						Request: &taskv1.CreateTaskRequest{
+							TaskId:      "batch-task-b",
+							ExecutorId:  "executor-b",
+							CallbackUrl: &callbackUrlB,
+							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+						},
+					},
+				},
+			},
+			{
+				Operation: &taskv1.BatchTaskOperation_UpdateTask{
+					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+						Revision: 2,
+						Request: &taskv1.UpdateTaskRequest{
+							TaskId:     "batch-task-a",
+							Parameters: &taskv1.TaskParameters{Input: []byte("v2")},
+						},
+					},
+				},
+			},
+			{
+				Operation: &taskv1.BatchTaskOperation_UpdateTask{
+					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+						Revision: 4,
+						Request: &taskv1.UpdateTaskRequest{
+							TaskId:     "batch-task-a",
+							Parameters: &taskv1.TaskParameters{Input: []byte("v4")},
+						},
+					},
+				},
+			},
+			{
+				Operation: &taskv1.BatchTaskOperation_UpdateTask{
+					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
+						Revision: 2,
+						Request: &taskv1.UpdateTaskRequest{
+							TaskId:     "batch-task-a",
+							Parameters: &taskv1.TaskParameters{Input: []byte("duplicate")},
+						},
+					},
+				},
+			},
+			{
+				Operation: &taskv1.BatchTaskOperation_DeleteTask{
+					DeleteTask: &taskv1.ControlServiceDeleteTaskRequest{
+						Revision: 1,
+						Request: &taskv1.DeleteTaskRequest{
+							TaskId: "batch-missing-delete",
+						},
+					},
+				},
+			},
+		}
+		resp, err := c.BatchTaskOperations(context.Background(), &taskv1.BatchTaskOperationsRequest{
+			Operations: operations,
 		})
 		require.NoError(t, err)
 		require.Len(t, resp.GetResults(), 6)
 
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[0].GetStatus())
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, resp.GetResults()[1].GetStatus())
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[2].GetStatus())
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, resp.GetResults()[3].GetStatus())
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE, resp.GetResults()[4].GetStatus())
-		require.Equal(t, taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED, resp.GetResults()[5].GetStatus())
+		expectedStatuses := []taskv1.BatchTaskOperationStatus{
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED,
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION,
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED,
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION,
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE,
+			taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED,
+		}
+		for i, operation := range operations {
+			result := resp.GetResults()[i]
+			require.Equal(t, expectedStatuses[i], result.GetStatus())
+
+			switch operation.GetOperation().(type) {
+			case *taskv1.BatchTaskOperation_CreateTask:
+				if response := result.GetResponse(); response != nil {
+					require.IsType(t, &taskv1.BatchTaskOperationResult_CreateTask{}, response)
+				}
+				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.NotNil(t, result.GetCreateTask())
+				}
+			case *taskv1.BatchTaskOperation_UpdateTask:
+				if response := result.GetResponse(); response != nil {
+					require.IsType(t, &taskv1.BatchTaskOperationResult_UpdateTask{}, response)
+				}
+				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.NotNil(t, result.GetUpdateTask())
+				}
+			case *taskv1.BatchTaskOperation_DeleteTask:
+				if response := result.GetResponse(); response != nil {
+					require.IsType(t, &taskv1.BatchTaskOperationResult_DeleteTask{}, response)
+				}
+				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.NotNil(t, result.GetDeleteTask())
+				}
+			default:
+				t.Fatalf("unexpected batch test operation type at index %d: %T", i, operation.GetOperation())
+			}
+		}
 
 		state, exists := readTaskState(t, db, "batch-task-a")
 		require.True(t, exists)

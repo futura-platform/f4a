@@ -95,14 +95,12 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 	}
 
 	results := make([]*taskv1.BatchTaskOperationResult, 0, len(req.GetOperations()))
-	for i, op := range req.GetOperations() {
+	for _, op := range req.GetOperations() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		result := &taskv1.BatchTaskOperationResult{
-			OperationIndex: uint32(i),
-		}
+		result := &taskv1.BatchTaskOperationResult{}
 
 		switch operation := op.GetOperation().(type) {
 		case *taskv1.BatchTaskOperation_CreateTask:

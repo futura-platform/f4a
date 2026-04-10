@@ -96,15 +96,14 @@ enum BatchTaskOperationStatus {
 }
 
 message BatchTaskOperationResult {
-  uint32 operation_index = 1;
-  BatchTaskOperationStatus status = 2;
-  string error_message = 3;
+  BatchTaskOperationStatus status = 1;
+  string error_message = 2;
   oneof response {
-    CreateTaskResponse create_task = 10;
-    UpdateTaskResponse update_task = 11;
-    ActivateTaskResponse activate_task = 12;
-    SuspendTaskResponse suspend_task = 13;
-    DeleteTaskResponse delete_task = 14;
+    CreateTaskResponse create_task = 3;
+    UpdateTaskResponse update_task = 4;
+    ActivateTaskResponse activate_task = 5;
+    SuspendTaskResponse suspend_task = 6;
+    DeleteTaskResponse delete_task = 7;
   }
 }
 

@@ -995,10 +995,9 @@ func (*BatchTaskOperation_SuspendTask) isBatchTaskOperation_Operation() {}
 func (*BatchTaskOperation_DeleteTask) isBatchTaskOperation_Operation() {}
 
 type BatchTaskOperationResult struct {
-	state          protoimpl.MessageState   `protogen:"open.v1"`
-	OperationIndex uint32                   `protobuf:"varint,1,opt,name=operation_index,json=operationIndex,proto3" json:"operation_index,omitempty"`
-	Status         BatchTaskOperationStatus `protobuf:"varint,2,opt,name=status,proto3,enum=task.v1.BatchTaskOperationStatus" json:"status,omitempty"`
-	ErrorMessage   string                   `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	state        protoimpl.MessageState   `protogen:"open.v1"`
+	Status       BatchTaskOperationStatus `protobuf:"varint,1,opt,name=status,proto3,enum=task.v1.BatchTaskOperationStatus" json:"status,omitempty"`
+	ErrorMessage string                   `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	// Types that are valid to be assigned to Response:
 	//
 	//	*BatchTaskOperationResult_CreateTask
@@ -1039,13 +1038,6 @@ func (x *BatchTaskOperationResult) ProtoReflect() protoreflect.Message {
 // Deprecated: Use BatchTaskOperationResult.ProtoReflect.Descriptor instead.
 func (*BatchTaskOperationResult) Descriptor() ([]byte, []int) {
 	return file_task_v1_control_proto_rawDescGZIP(), []int{18}
-}
-
-func (x *BatchTaskOperationResult) GetOperationIndex() uint32 {
-	if x != nil {
-		return x.OperationIndex
-	}
-	return 0
 }
 
 func (x *BatchTaskOperationResult) GetStatus() BatchTaskOperationStatus {
@@ -1119,23 +1111,23 @@ type isBatchTaskOperationResult_Response interface {
 }
 
 type BatchTaskOperationResult_CreateTask struct {
-	CreateTask *CreateTaskResponse `protobuf:"bytes,10,opt,name=create_task,json=createTask,proto3,oneof"`
+	CreateTask *CreateTaskResponse `protobuf:"bytes,3,opt,name=create_task,json=createTask,proto3,oneof"`
 }
 
 type BatchTaskOperationResult_UpdateTask struct {
-	UpdateTask *UpdateTaskResponse `protobuf:"bytes,11,opt,name=update_task,json=updateTask,proto3,oneof"`
+	UpdateTask *UpdateTaskResponse `protobuf:"bytes,4,opt,name=update_task,json=updateTask,proto3,oneof"`
 }
 
 type BatchTaskOperationResult_ActivateTask struct {
-	ActivateTask *ActivateTaskResponse `protobuf:"bytes,12,opt,name=activate_task,json=activateTask,proto3,oneof"`
+	ActivateTask *ActivateTaskResponse `protobuf:"bytes,5,opt,name=activate_task,json=activateTask,proto3,oneof"`
 }
 
 type BatchTaskOperationResult_SuspendTask struct {
-	SuspendTask *SuspendTaskResponse `protobuf:"bytes,13,opt,name=suspend_task,json=suspendTask,proto3,oneof"`
+	SuspendTask *SuspendTaskResponse `protobuf:"bytes,6,opt,name=suspend_task,json=suspendTask,proto3,oneof"`
 }
 
 type BatchTaskOperationResult_DeleteTask struct {
-	DeleteTask *DeleteTaskResponse `protobuf:"bytes,14,opt,name=delete_task,json=deleteTask,proto3,oneof"`
+	DeleteTask *DeleteTaskResponse `protobuf:"bytes,7,opt,name=delete_task,json=deleteTask,proto3,oneof"`
 }
 
 func (*BatchTaskOperationResult_CreateTask) isBatchTaskOperationResult_Response() {}
@@ -1200,7 +1192,7 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\x0eTaskParameters\x12\x14\n" +
 	"\x05input\x18\x01 \x01(\fR\x05input\"\xc8\x01\n" +
 	"\x11CreateTaskRequest\x12 \n" +
-	"\atask_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18 R\x06taskId\x12\x1f\n" +
+	"\atask_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18@R\x06taskId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
 	"executorId\x12&\n" +
 	"\fcallback_url\x18\x03 \x01(\tH\x00R\vcallbackUrl\x88\x01\x01\x127\n" +
@@ -1252,19 +1244,17 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\fsuspend_task\x18\x04 \x01(\v2).task.v1.ControlServiceSuspendTaskRequestH\x00R\vsuspendTask\x12K\n" +
 	"\vdelete_task\x18\x05 \x01(\v2(.task.v1.ControlServiceDeleteTaskRequestH\x00R\n" +
 	"deleteTaskB\v\n" +
-	"\toperation\"\xf8\x03\n" +
-	"\x18BatchTaskOperationResult\x12'\n" +
-	"\x0foperation_index\x18\x01 \x01(\rR\x0eoperationIndex\x129\n" +
-	"\x06status\x18\x02 \x01(\x0e2!.task.v1.BatchTaskOperationStatusR\x06status\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12>\n" +
-	"\vcreate_task\x18\n" +
-	" \x01(\v2\x1b.task.v1.CreateTaskResponseH\x00R\n" +
+	"\toperation\"\xcf\x03\n" +
+	"\x18BatchTaskOperationResult\x129\n" +
+	"\x06status\x18\x01 \x01(\x0e2!.task.v1.BatchTaskOperationStatusR\x06status\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12>\n" +
+	"\vcreate_task\x18\x03 \x01(\v2\x1b.task.v1.CreateTaskResponseH\x00R\n" +
 	"createTask\x12>\n" +
-	"\vupdate_task\x18\v \x01(\v2\x1b.task.v1.UpdateTaskResponseH\x00R\n" +
+	"\vupdate_task\x18\x04 \x01(\v2\x1b.task.v1.UpdateTaskResponseH\x00R\n" +
 	"updateTask\x12D\n" +
-	"\ractivate_task\x18\f \x01(\v2\x1d.task.v1.ActivateTaskResponseH\x00R\factivateTask\x12A\n" +
-	"\fsuspend_task\x18\r \x01(\v2\x1c.task.v1.SuspendTaskResponseH\x00R\vsuspendTask\x12>\n" +
-	"\vdelete_task\x18\x0e \x01(\v2\x1b.task.v1.DeleteTaskResponseH\x00R\n" +
+	"\ractivate_task\x18\x05 \x01(\v2\x1d.task.v1.ActivateTaskResponseH\x00R\factivateTask\x12A\n" +
+	"\fsuspend_task\x18\x06 \x01(\v2\x1c.task.v1.SuspendTaskResponseH\x00R\vsuspendTask\x12>\n" +
+	"\vdelete_task\x18\a \x01(\v2\x1b.task.v1.DeleteTaskResponseH\x00R\n" +
 	"deleteTaskB\n" +
 	"\n" +
 	"\bresponse\"Z\n" +
