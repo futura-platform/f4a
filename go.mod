@@ -8,7 +8,7 @@ require (
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250702211439-37fcf1c8ce08
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/deckarep/golang-set/v2 v2.8.0
-	github.com/futura-platform/futura v0.0.26
+	github.com/futura-platform/futura v0.0.27
 	github.com/google/uuid v1.6.0
 	github.com/mroth/weightedrand/v2 v2.1.0
 	github.com/puzpuzpuz/xsync/v4 v4.4.0
