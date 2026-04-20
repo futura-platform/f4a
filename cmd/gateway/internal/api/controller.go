@@ -163,7 +163,7 @@ var (
 )
 
 func (c *controller) createTaskRevisioned(
-	_ context.Context,
+	ctx context.Context,
 	req *taskv1.ControlServiceCreateTaskRequest,
 ) (*taskv1.CreateTaskResponse, task.RevisionDecision, error) {
 	inner := req.GetRequest()
@@ -176,6 +176,7 @@ func (c *controller) createTaskRevisioned(
 	}
 
 	decision, err := c.applyRevisionedOperation(
+		ctx,
 		task.Id(inner.GetTaskId()),
 		req.GetRevision(),
 		task.RevisionOperationCreate,
@@ -201,7 +202,7 @@ func (c *controller) createTaskRevisioned(
 }
 
 func (c *controller) updateTaskRevisioned(
-	_ context.Context,
+	ctx context.Context,
 	req *taskv1.ControlServiceUpdateTaskRequest,
 ) (*taskv1.UpdateTaskResponse, task.RevisionDecision, error) {
 	inner := req.GetRequest()
@@ -214,6 +215,7 @@ func (c *controller) updateTaskRevisioned(
 	}
 
 	decision, err := c.applyRevisionedOperation(
+		ctx,
 		task.Id(inner.GetTaskId()),
 		req.GetRevision(),
 		task.RevisionOperationMutate,
@@ -233,7 +235,7 @@ func (c *controller) updateTaskRevisioned(
 }
 
 func (c *controller) activateTaskRevisioned(
-	_ context.Context,
+	ctx context.Context,
 	req *taskv1.ControlServiceActivateTaskRequest,
 ) (*taskv1.ActivateTaskResponse, task.RevisionDecision, error) {
 	inner := req.GetRequest()
@@ -242,6 +244,7 @@ func (c *controller) activateTaskRevisioned(
 	}
 
 	decision, err := c.applyRevisionedOperation(
+		ctx,
 		task.Id(inner.GetTaskId()),
 		req.GetRevision(),
 		task.RevisionOperationMutate,
@@ -282,7 +285,7 @@ func (c *controller) activateTaskRevisioned(
 }
 
 func (c *controller) suspendTaskRevisioned(
-	_ context.Context,
+	ctx context.Context,
 	req *taskv1.ControlServiceSuspendTaskRequest,
 ) (*taskv1.SuspendTaskResponse, task.RevisionDecision, error) {
 	inner := req.GetRequest()
@@ -291,6 +294,7 @@ func (c *controller) suspendTaskRevisioned(
 	}
 
 	decision, err := c.applyRevisionedOperation(
+		ctx,
 		task.Id(inner.GetTaskId()),
 		req.GetRevision(),
 		task.RevisionOperationMutate,
@@ -333,7 +337,7 @@ func (c *controller) suspendTaskRevisioned(
 }
 
 func (c *controller) deleteTaskRevisioned(
-	_ context.Context,
+	ctx context.Context,
 	req *taskv1.ControlServiceDeleteTaskRequest,
 ) (*taskv1.DeleteTaskResponse, task.RevisionDecision, error) {
 	inner := req.GetRequest()
@@ -342,6 +346,7 @@ func (c *controller) deleteTaskRevisioned(
 	}
 
 	decision, err := c.applyRevisionedOperation(
+		ctx,
 		task.Id(inner.GetTaskId()),
 		req.GetRevision(),
 		task.RevisionOperationDelete,
@@ -366,6 +371,7 @@ func (c *controller) deleteTaskRevisioned(
 }
 
 func (c *controller) applyRevisionedOperation(
+	ctx context.Context,
 	id task.Id,
 	revision uint64,
 	operation task.RevisionOperation,
@@ -375,7 +381,7 @@ func (c *controller) applyRevisionedOperation(
 		return 0, fmt.Errorf("task id is too long: %d > %d", len(id), task.MAX_ID_LENGTH)
 	}
 
-	result, err := c.db.Transact(func(t fdb.Transaction) (any, error) {
+	result, err := c.db.TransactContext(ctx, func(t fdb.Transaction) (any, error) {
 		decision, applyErr := c.revisionStore.Apply(
 			t,
 			id,
