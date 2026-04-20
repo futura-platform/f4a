@@ -80,7 +80,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		},
 	)
 
-	var mu sync.Mutex
+	var mu, execSingleflightMu sync.Mutex
 	var cancelPrevious context.CancelCauseFunc
 
 	var runErr error
@@ -105,7 +105,10 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 		go func(input []byte, runCtx context.Context) {
 			defer execWg.Done()
 
+			execSingleflightMu.Lock()
 			result, err := executable.Execute(runCtx, input)
+			execSingleflightMu.Unlock()
+
 			if errors.Is(err, ErrRunFatal) {
 				if !testing.Testing() {
 					panic(fmt.Errorf("This error should never be used outside of tests: %w", err))

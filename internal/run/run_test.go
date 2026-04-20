@@ -12,10 +12,22 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
+	"github.com/futura-platform/f4a/pkg/execute"
+	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 )
+
+type rawStringMarshaller struct{}
+
+func (rawStringMarshaller) UnmarshalInput(data []byte) (string, error) {
+	return string(data), nil
+}
+
+func (rawStringMarshaller) MarshalOutput(data string) ([]byte, error) {
+	return []byte(data), nil
+}
 
 func setInput(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value []byte) {
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -330,6 +342,82 @@ func TestRun(t *testing.T) {
 				t.Fatal("callback not called")
 			}
 			assert.Equal(t, int32(2), executionCount.Load())
+		})
+	})
+
+	t.Run("real futura executor replays input changes during delayed exit", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			assert.NoError(t, err)
+
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			assert.NoError(t, err)
+			setInput(t, db, tkey, []byte("initial"))
+
+			type callbackResult struct {
+				output []byte
+				err    error
+			}
+
+			firstExecutionStarted := make(chan struct{})
+			callbackResultCh := make(chan callbackResult, 1)
+			executionCount := atomic.Int32{}
+			exitDelay := 200 * time.Millisecond
+
+			executor := execute.NewExecutor(
+				func(b futura.FlowBuilder, input string) (string, error) {
+					if executionCount.Add(1) == 1 {
+						close(firstExecutionStarted)
+						<-b.Done()
+						time.Sleep(exitDelay)
+						return "", context.Cause(b)
+					}
+					return "output:" + input, nil
+				},
+				rawStringMarshaller{},
+			)
+
+			runnable := Runnable{
+				db:        db.Database,
+				taskKey:   tkey,
+				executor:  executor,
+				execution: executiontype.NewInMemoryContainer(),
+			}
+
+			done := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = runnable.Run(t.Context(), t.Name(), func(_ context.Context, output []byte, err error) error {
+					callbackResultCh <- callbackResult{output: output, err: err}
+					return nil
+				})
+				close(done)
+			}()
+
+			select {
+			case <-firstExecutionStarted:
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for first execution to start")
+			}
+
+			setInput(t, db, tkey, []byte("updated"))
+
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("timeout waiting for Run to complete")
+			}
+
+			assert.NoError(t, runErr)
+			assert.Equal(t, int32(2), executionCount.Load())
+
+			select {
+			case result := <-callbackResultCh:
+				assert.NoError(t, result.err)
+				assert.Equal(t, []byte("output:updated"), result.output)
+			default:
+				t.Fatal("callback not called")
+			}
 		})
 	})
 
