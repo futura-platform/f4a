@@ -248,22 +248,49 @@ func TestWorkLoop(t *testing.T) {
 			}
 		})
 	})
-	t.Run("if a non-existent task is assigned, it causes RunWorkLoop to return an error", func(t *testing.T) {
+	t.Run("if a non-existent task is present in the initial assignment snapshot, it is ignored", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			assert.NoError(t, db.Options().SetTransactionRetryLimit(3)) // since we are accessing concurrently we can get conflicts
+			assert.NoError(t, db.Options().SetTransactionRetryLimit(3))
 
-			runWorkLoopErr := make(chan error)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			runWorkLoopErr := make(chan error, 1)
 			runnerId := "test-runner"
 			taskSet := openTaskSet(t, db, runnerId)
+			startedCh := make(chan task.Id, 1)
+			executorId := execute.ExecutorId("test-executor")
+			executor := &testutil.MockExecutor{
+				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+					startedCh <- task.Id(marshalledInput)
+					<-ctx.Done()
+					return nil, nil
+				},
+			}
+			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
+
+			validID := task.NewId()
+			require.NoError(t, seedTask(t, db, validID, executorId, "http://example.com/callback", runnerId))
+			addTasks(t, db, taskSet, []task.Id{task.NewId(), validID})
+
 			go func() {
-				runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, nil)
+				runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
 			}()
-			addTasks(t, db, taskSet, []task.Id{task.NewId()})
+
+			select {
+			case id := <-startedCh:
+				assert.Equal(t, validID, id)
+			case err := <-runWorkLoopErr:
+				t.Fatalf("work loop exited early: %v", err)
+			case <-time.After(waitTimeout):
+				t.Fatal("timeout waiting for valid task to start")
+			}
+
+			cancel()
 			select {
 			case err := <-runWorkLoopErr:
-				assert.ErrorContains(t, err, "failed to load runnables")
+				assert.ErrorIs(t, err, context.Canceled)
 			case <-time.After(waitTimeout):
-				t.Fatal("timeout waiting for RunWorkLoop to return an error")
+				t.Fatal("timeout waiting for RunWorkLoop to stop")
 			}
 		})
 	})

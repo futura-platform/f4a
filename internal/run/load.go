@@ -2,11 +2,13 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -33,20 +35,31 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 		return nil, fmt.Errorf("failed to open task directory: %w", err)
 	}
 
-	executorIdFutures := make([]*dbutil.Future[execute.ExecutorId], len(ids))
-	callbackUrlFutures := make([]*dbutil.Future[*string], len(ids))
-	taskKeys := make([]task.TaskKey, len(ids))
-	for i, id := range ids {
-		tkey, err := tasksDirectory.Open(db, id)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
-		}
-		taskKeys[i] = tkey
+	type taskLoad struct {
+		id                task.Id
+		taskKey           task.TaskKey
+		executorIdFuture  *dbutil.Future[execute.ExecutorId]
+		callbackUrlFuture *dbutil.Future[*string]
 	}
+
+	loads := make([]taskLoad, 0, len(ids))
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		for i := range ids {
-			executorIdFutures[i] = taskKeys[i].ExecutorId().Get(tx)
-			callbackUrlFutures[i] = taskKeys[i].CallbackUrl().Get(tx)
+		for _, id := range ids {
+			tkey, err := tasksDirectory.Open(tx, id)
+			if err != nil {
+				if errors.Is(err, directory.ErrDirNotExists) {
+					// Task assignment snapshots can briefly lag a concurrent delete.
+					// Skip missing tasks so stale queue entries do not crash the worker.
+					continue
+				}
+				return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
+			}
+			loads = append(loads, taskLoad{
+				id:                id,
+				taskKey:           tkey,
+				executorIdFuture:  tkey.ExecutorId().Get(tx),
+				callbackUrlFuture: tkey.CallbackUrl().Get(tx),
+			})
 		}
 		return nil, nil
 	})
@@ -54,28 +67,26 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 		return nil, fmt.Errorf("failed to transact: %w", err)
 	}
 
-	tasks := make([]RunnableTask, 0, len(ids))
+	tasks := make([]RunnableTask, 0, len(loads))
 	failures := make([]error, 0)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for i := range len(ids) {
-		id := ids[i]
-		executorIdFuture := executorIdFutures[i]
-		callbackUrlFuture := callbackUrlFutures[i]
+	for i := range len(loads) {
+		load := loads[i]
 		wg.Go(func() {
-			executorId, err := executorIdFuture.Get()
+			executorId, err := load.executorIdFuture.Get()
 			if err != nil {
 				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to get executor id %s: %w", id, err))
+				failures = append(failures, fmt.Errorf("failed to get executor id %s: %w", load.id, err))
 				mu.Unlock()
 				return
 			}
 			executor := router.Route(executorId)
 
-			callbackUrlValue, err := callbackUrlFuture.Get()
+			callbackUrlValue, err := load.callbackUrlFuture.Get()
 			if err != nil {
 				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to get callback url %s: %w", id, err))
+				failures = append(failures, fmt.Errorf("failed to get callback url %s: %w", load.id, err))
 				mu.Unlock()
 				return
 			}
@@ -84,13 +95,11 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 				callbackUrl, err = url.Parse(*callbackUrlValue)
 				if err != nil {
 					mu.Lock()
-					failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", id, err))
+					failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", load.id, err))
 					mu.Unlock()
 					return
 				}
 			}
-
-			tkey := taskKeys[i]
 
 			mu.Lock()
 			tasks = append(
@@ -99,8 +108,8 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 					Runnable: NewRunnable(
 						executor,
 						db.Database,
-						tkey,
-						fdbexec.NewContainer(id, db),
+						load.taskKey,
+						fdbexec.NewContainer(load.id, db),
 					),
 					callbackUrl: callbackUrl,
 				},
