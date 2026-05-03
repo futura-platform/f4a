@@ -62,8 +62,9 @@ type Scheduler struct {
 	db            dbutil.DbRoot
 	activeRunners pool.ActiveRunners
 	taskDir       task.TasksDirectory
-	pendingSet    *reliableset.Set
-	clients       *k8s.Clients
+	pendingSet,
+	suspendedSet *reliableset.Set
+	clients *k8s.Clients
 
 	scoreCache *scoreCache
 	logger     *slog.Logger
@@ -82,6 +83,10 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open pending set: %w", err)
 	}
+	suspendedSet, err := servicestate.CreateOrOpenSuspendedSet(db, db)
+	if err != nil {
+		return fmt.Errorf("failed to open suspended set: %w", err)
+	}
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
 	if err != nil {
 		return fmt.Errorf("failed to open active runners: %w", err)
@@ -93,6 +98,7 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 		activeRunners: activeRunners,
 		taskDir:       taskDir,
 		pendingSet:    pendingSet,
+		suspendedSet:  suspendedSet,
 		clients:       clients,
 		scoreCache:    newScoreCache(cfg.ScoreAlpha),
 		logger:        cfg.Logger,
@@ -136,13 +142,9 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		scores = xsync.NewMap[string, float64](xsync.WithPresize(1))
 	}
 
-	pendingTaskGauge, err := meter.Int64ObservableGauge("pending_task_count")
+	taskCountGauge, err := meter.Int64ObservableGauge("task_count")
 	if err != nil {
 		return fmt.Errorf("failed to create pending task count counter: %w", err)
-	}
-	runningTaskGauge, err := meter.Int64ObservableGauge("running_task_count")
-	if err != nil {
-		return fmt.Errorf("failed to create running task count counter: %w", err)
 	}
 	availableRunnerGauge, err := meter.Int64ObservableGauge("available_runner_count")
 	if err != nil {
@@ -151,13 +153,16 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	reg, err := meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		o.ObserveInt64(availableRunnerGauge, int64(scores.Size()))
 
-		var pendingSetSize uint64
+		const stateAttribute = "state"
+		var pendingSetSize, suspendedSetSize uint64
 		s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
 			snapshot := t.Snapshot()
 			pendingSetSize = s.pendingSet.Size(snapshot)
+			suspendedSetSize = s.suspendedSet.Size(snapshot)
 			return nil, nil
 		})
-		o.ObserveInt64(pendingTaskGauge, int64(pendingSetSize))
+		o.ObserveInt64(taskCountGauge, int64(pendingSetSize), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+		o.ObserveInt64(taskCountGauge, int64(suspendedSetSize), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
 		var runningCount uint64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
@@ -184,9 +189,9 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				return err
 			}
 		}
-		o.ObserveInt64(runningTaskGauge, int64(runningCount))
+		o.ObserveInt64(taskCountGauge, int64(runningCount), metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil
-	}, pendingTaskGauge, runningTaskGauge, availableRunnerGauge)
+	}, taskCountGauge, availableRunnerGauge)
 	if err != nil {
 		return fmt.Errorf("failed to register callback: %w", err)
 	}
