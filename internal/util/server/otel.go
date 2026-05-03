@@ -3,6 +3,8 @@ package serverutil
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -19,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
 )
 
 // isOTelDelegatingGlobalProvider reports whether v is still the concrete type
@@ -100,8 +103,16 @@ func BootstrapOTEL(ctx context.Context) (close func(ctx context.Context), err er
 		otel.SetTextMapPropagator(propagation.TraceContext{})
 	}
 
+	dialer := &net.Dialer{}
+	dialNetwork := os.Getenv("OTEL_EXPORTER_OTLP_DIAL_NETWORK")
+	if dialNetwork == "" {
+		dialNetwork = "tcp"
+	}
+	dialOption := grpc.WithContextDialer(func(ctx context.Context, s string) (net.Conn, error) {
+		return dialer.DialContext(ctx, dialNetwork, s)
+	})
 	if tracerProviderUnset(otel.GetTracerProvider()) {
-		traceExporter, err := otlptracegrpc.New(ctx)
+		traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithDialOption(dialOption))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 		}
@@ -110,7 +121,7 @@ func BootstrapOTEL(ctx context.Context) (close func(ctx context.Context), err er
 	}
 
 	if meterProviderUnset(otel.GetMeterProvider()) {
-		meterExporter, err := otlpmetricgrpc.New(ctx)
+		meterExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithDialOption(dialOption))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create meter exporter: %w", err)
 		}
@@ -120,7 +131,7 @@ func BootstrapOTEL(ctx context.Context) (close func(ctx context.Context), err er
 	}
 
 	if loggerProviderUnset(global.GetLoggerProvider()) {
-		logExporter, err := otlploggrpc.New(ctx)
+		logExporter, err := otlploggrpc.New(ctx, otlploggrpc.WithDialOption(dialOption))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create log exporter: %w", err)
 		}
