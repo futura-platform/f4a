@@ -95,6 +95,35 @@
 					},
 					"required": ["port"]
 				},
+				"envFrom": {
+					"type": "array",
+					"description": "Additional Kubernetes EnvFromSource entries appended to the gateway container.",
+					"items": {
+						"type": "object",
+						"additionalProperties": true
+					}
+				},
+				"env": {
+					"type": "array",
+					"description": "Additional Kubernetes EnvVar entries appended to the gateway container.",
+					"items": {
+						"type": "object",
+						"properties": {
+							"name": {
+								"type": "string",
+								"minLength": 1
+							},
+							"value": {
+								"type": "string"
+							},
+							"valueFrom": {
+								"type": "object"
+							}
+						},
+						"required": ["name"],
+						"additionalProperties": true
+					}
+				},
 				"resources": {
 					"type": "object"
 				}
@@ -171,9 +200,17 @@
 					},
 					"required": ["port"]
 				},
+				"envFrom": {
+					"type": "array",
+					"description": "Additional Kubernetes EnvFromSource entries appended to the dispatch container.",
+					"items": {
+						"type": "object",
+						"additionalProperties": true
+					}
+				},
 				"env": {
 					"type": "array",
-					"description": "Additional Kubernetes EnvVar entries appended to the worker container.",
+					"description": "Additional Kubernetes EnvVar entries appended to the dispatch container.",
 					"items": {
 						"type": "object",
 						"properties": {

@@ -16,6 +16,8 @@ gateway:
   service:
     type: ClusterIP
     port: 8080
+  envFrom: []
+  env: []
   resources: {}
 
 dispatch:
@@ -30,6 +32,8 @@ dispatch:
   scoreEmaAlpha: "0.5"
   service:
     port: 8082
+  envFrom: []
+  env: []
   resources: {}
 
 worker:
@@ -39,9 +43,7 @@ worker:
   startupProbe: {}
   service:
     port: 8081
-  # Additional Kubernetes EnvFromSource entries appended to the worker container.
   envFrom: []
-  # Additional Kubernetes EnvVar entries appended to the worker container.
   env: []
   resources:
     requests:

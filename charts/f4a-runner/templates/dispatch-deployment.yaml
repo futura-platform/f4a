@@ -33,6 +33,10 @@ spec:
         - name: dispatch
           image: {{ include "f4a-runner.dispatchImage" . | quote }}
           imagePullPolicy: {{ .Values.dispatch.image.pullPolicy }}
+          {{- if .Values.dispatch.envFrom }}
+          envFrom:
+            {{- toYaml .Values.dispatch.envFrom | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.dispatch.service.port }}
@@ -57,6 +61,9 @@ spec:
               value: {{ include "f4a-runner.dispatchName" . | quote }}
             - name: FDB_CLUSTER_FILE
               value: {{ printf "%s/%s" (ternary .Values.fdb.clusterFile.writable.mountPath .Values.fdb.clusterFile.writable.sourceMountPath .Values.fdb.clusterFile.writable.enabled) $clusterFileKey | quote }}
+            {{- if .Values.dispatch.env }}
+              {{- toYaml .Values.dispatch.env | nindent 12 }}
+            {{- end }}
           {{- include "f4a-runner.startupProbe" $startupProbe | nindent 10 }}
           livenessProbe:
             httpGet:

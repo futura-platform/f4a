@@ -55,6 +55,29 @@ helm install f4a-runner oci://ghcr.io/<owner>/f4a-runner \
   --set worker.startupProbe.periodSeconds=10
 ```
 
+## Additional Environment Variables
+
+The chart lets you append extra Kubernetes `envFrom` and `env` entries to the gateway and dispatch containers. This is useful for OTEL configuration such as exporter endpoints, headers, and resource attributes.
+
+Example values override:
+
+```yaml
+gateway:
+  envFrom:
+    - secretRef:
+        name: otel-shared-env
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: f4a-gateway
+
+dispatch:
+  env:
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://otel-collector.observability.svc.cluster.local:4317
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: service.name=f4a-dispatch,service.namespace=f4a
+```
+
 ## Waiting For An Async Cluster File Secret
 
 By default, the chart assumes `fdb.clusterFile.secret.name` already exists before pods start. If another controller or job creates that Secret later, enable `fdb.clusterFile.writable.wait.enabled` to make the init container poll the mounted source file until it exists and is non-empty.
