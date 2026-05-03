@@ -115,15 +115,7 @@ func enqueueTasksWithAssignmentInBatches(
 func readSetItems(t testing.TB, db dbutil.DbRoot, set *reliableset.Set) mapset.Set[string] {
 	t.Helper()
 
-	var items mapset.Set[string]
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		var err error
-		items, _, err = set.Items(tx)
-		if err != nil {
-			return nil, err
-		}
-		return nil, nil
-	})
+	items, _, err := set.Items(t.Context(), db.Database)
 	require.NoError(t, err)
 	return items
 }

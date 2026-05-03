@@ -2,8 +2,10 @@ package reliableset
 
 import (
 	"context"
+	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/cenkalti/backoff/v4"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 )
@@ -33,15 +35,24 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	}()
 	cursor := newLogCursor(s)
 	var initialEpochWatch fdb.FutureNil
-	initialValues, initialTail, err := s.Items(ctx, s.db)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	_, err = s.db.Transact(func(tx fdb.Transaction) (any, error) {
 		initialEpochWatch = tx.Watch(s.epochKey)
 		if err != nil {
 			return nil, err
 		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	initialValues, initialTail, activeLease, err := s.LeasedItems(ctx, s.db.Database)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+
+	_, err = s.db.Transact(func(tx fdb.Transaction) (any, error) {
 		cursor.register(tx, initialTail)
 		return nil, nil
 	})

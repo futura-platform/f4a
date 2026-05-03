@@ -5,17 +5,19 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	"github.com/cenkalti/backoff/v4"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/futura-platform/f4a/internal/reliablelock"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 // Set is a log-structured set built on FoundationDB.
 // It is gauranteed to be contention free on write operations
-// (unless versiontimestamp collisions occur across FDB shards).
 type Set struct {
 	db dbutil.DbRoot
 
@@ -170,15 +172,48 @@ func (s *Set) releaseRuntime() {
 	s.compactor.release()
 }
 
-func (s *Set) Items(ctx context.Context, tr fdb.ReadTransactor) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
-	snapshot, err := s.snapshot(ctx, tr)
+func (s *Set) Items(ctx context.Context, db fdb.Database) (
+	items mapset.Set[string],
+	tail fdb.KeyConvertible,
+	err error,
+) {
+	items, tail, activeLease, err := s.LeasedItems(ctx, db)
 	if err != nil {
 		return nil, nil, err
 	}
-	begin, _ := s.logSubspace.FDBRangeKeys()
-	logEntries, err := s.readLog(ctx, tr, begin)
+
+	return items, tail, activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+}
+
+func (s *Set) LeasedItems(ctx context.Context, db fdb.Database) (
+	items mapset.Set[string],
+	tail fdb.KeyConvertible,
+	compactionLease *reliablelock.ActiveLease,
+	err error,
+) {
+	// TODO: make compactor.lock use a RW lock so that this is not a bottleneck.
+	l, err := s.compactor.lock.Acquire(ctx, db, reliablelock.DefaultLeaseOptions())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	activeLease, err := l.Activate(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
+		}
+	}()
+
+	snapshot, err := s.snapshot(ctx, db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	begin, _ := s.logSubspace.FDBRangeKeys()
+	logEntries, err := s.readLog(ctx, db, begin)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	tail = begin
 	for _, l := range logEntries {
@@ -188,11 +223,11 @@ func (s *Set) Items(ctx context.Context, tr fdb.ReadTransactor) (items mapset.Se
 		case LogOperationRemove:
 			snapshot.Remove(string(l.entry.Value))
 		default:
-			return nil, nil, fmt.Errorf("unknown log operation: %d", l.entry.Op)
+			return nil, nil, nil, fmt.Errorf("unknown log operation: %d", l.entry.Op)
 		}
 		tail = l.key
 	}
-	return snapshot, tail, nil
+	return snapshot, tail, activeLease, nil
 }
 
 // Clear stops background runtime and removes this set directory recursively.

@@ -48,7 +48,7 @@ func DrainTaskRunner(
 	// 	hangingTasks = tasks
 	// 	return nil, nil
 	// })
-	hangingTasks, _, err = taskSet.Items(ctx, dbr)
+	hangingTasks, _, err = taskSet.Items(ctx, dbr.Database)
 	if err != nil {
 		return fmt.Errorf("failed to get task set items: %w", err)
 	}

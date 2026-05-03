@@ -74,12 +74,7 @@ func removeBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
 
 func readSetValues(t testing.TB, db dbutil.DbRoot, set *Set) mapset.Set[string] {
 	t.Helper()
-	var items mapset.Set[string]
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		var err error
-		items, _, err = set.Items(t.Context(), tx)
-		return nil, err
-	})
+	items, _, err := set.Items(t.Context(), db.Database)
 	require.NoError(t, err)
 	return items
 }

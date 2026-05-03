@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync/atomic"
+	"testing"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
@@ -66,6 +67,10 @@ var hasBootstrappedOTEL atomic.Bool
 // BootstrapOTEL bootstraps the OTEL SDK and returns a function to clean up the OTEL SDK.
 // The function will only bootstrap OTEL providers if they have not been bootstrapped yet.
 func BootstrapOTEL(ctx context.Context) (close func(ctx context.Context), err error) {
+	if testing.Testing() {
+		return func(ctx context.Context) {}, nil
+	}
+
 	if !hasBootstrappedOTEL.CompareAndSwap(false, true) {
 		panic("OTEL already bootstrapped (this should never happen)")
 	}

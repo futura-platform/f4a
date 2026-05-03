@@ -251,26 +251,14 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory,
 
 func requireSetContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
 	t.Helper()
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		items, _, err := set.Items(t.Context(), tx)
-		if err != nil {
-			return nil, err
-		}
-		require.True(t, items.ContainsOne(string(id)), "expected task %q in set, items=%v", id, items.ToSlice())
-		return nil, nil
-	})
+	items, _, err := set.Items(t.Context(), db.Database)
 	require.NoError(t, err)
+	require.True(t, items.ContainsOne(string(id)), "expected task %q in set, items=%v", id, items.ToSlice())
 }
 
 func requireSetNotContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
 	t.Helper()
-	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		items, _, err := set.Items(t.Context(), tx)
-		if err != nil {
-			return nil, err
-		}
-		require.False(t, items.ContainsOne(string(id)))
-		return nil, nil
-	})
+	items, _, err := set.Items(t.Context(), db.Database)
 	require.NoError(t, err)
+	require.False(t, items.ContainsOne(string(id)))
 }
