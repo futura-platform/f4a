@@ -2,7 +2,6 @@ package reliableset
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -23,9 +22,6 @@ type Set struct {
 
 	// this key should be incremented for every new log entry
 	epochKey fdb.Key
-
-	// this key is used to store the size of the set. All operations on the set should increment this key atomically.
-	sizeKey fdb.Key
 
 	setDirectories
 
@@ -88,20 +84,11 @@ func constructWith[T fdb.ReadTransactor](
 	s := &Set{
 		db:             db,
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
-		sizeKey:        dirs.metadataSubspace.Pack(tuple.Tuple{"size"}),
 		setDirectories: dirs,
 		clearFunc:      clearFunc,
 	}
 	s.compactor = newSetCompactor(s, dirs.compactionLockSubspace)
 	return s, nil
-}
-
-func (s *Set) Size(tx fdb.ReadTransaction) uint64 {
-	size := tx.Get(s.sizeKey).MustGet()
-	if size == nil {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(size)
 }
 
 func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {

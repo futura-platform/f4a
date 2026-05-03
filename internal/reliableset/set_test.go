@@ -365,26 +365,6 @@ func TestCleanDeadCursors(t *testing.T) {
 	})
 }
 
-func TestSetSize(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		set := newSet(t, db, "size")
-		db.Transact(func(tx fdb.Transaction) (any, error) {
-			t.Run("starts at 0", func(t *testing.T) {
-				assert.Equal(t, uint64(0), set.Size(tx))
-			})
-			t.Run("increments on add", func(t *testing.T) {
-				set.Add(tx, []byte("a"))
-				assert.Equal(t, uint64(1), set.Size(tx))
-			})
-			t.Run("decrements on remove", func(t *testing.T) {
-				set.Remove(tx, []byte("a"))
-				assert.Equal(t, uint64(0), set.Size(tx))
-			})
-			return nil, nil
-		})
-	})
-}
-
 func BenchmarkSetAdd(b *testing.B) {
 	testutil.WithEphemeralDBRoot(b, func(db dbutil.DbRoot) {
 		set := newSet(b, db, "bench_add")

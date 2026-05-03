@@ -154,17 +154,18 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		o.ObserveInt64(availableRunnerGauge, int64(scores.Size()))
 
 		const stateAttribute = "state"
-		var pendingSetSize, suspendedSetSize uint64
-		s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
-			snapshot := t.Snapshot()
-			pendingSetSize = s.pendingSet.Size(snapshot)
-			suspendedSetSize = s.suspendedSet.Size(snapshot)
-			return nil, nil
-		})
-		o.ObserveInt64(taskCountGauge, int64(pendingSetSize), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
-		o.ObserveInt64(taskCountGauge, int64(suspendedSetSize), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
+		pendingSetItems, _, err := s.pendingSet.Items(ctx, s.db.Database)
+		if err != nil {
+			return err
+		}
+		suspendedSetItems, _, err := s.suspendedSet.Items(ctx, s.db.Database)
+		if err != nil {
+			return err
+		}
+		o.ObserveInt64(taskCountGauge, int64(pendingSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+		o.ObserveInt64(taskCountGauge, int64(suspendedSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
-		var runningCount uint64
+		var runningCount int64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
 			if err, ok := kvOrErr.Left(); ok {
 				return err
@@ -181,15 +182,13 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				}
 				return err
 			}
-			_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
-				runningCount += runnerSet.Size(t.Snapshot())
-				return nil, nil
-			})
+			runningSetItems, _, err := runnerSet.Items(ctx, s.db.Database)
 			if err != nil {
 				return err
 			}
+			runningCount += int64(runningSetItems.Cardinality())
 		}
-		o.ObserveInt64(taskCountGauge, int64(runningCount), metric.WithAttributes(attribute.String(stateAttribute, "running")))
+		o.ObserveInt64(taskCountGauge, runningCount, metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil
 	}, taskCountGauge, availableRunnerGauge)
 	if err != nil {
