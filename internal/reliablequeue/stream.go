@@ -7,6 +7,7 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 type StreamEventType int
@@ -31,7 +32,7 @@ type epochChunk struct {
 // Stream establishes the necessary things for the consumer to construct the list of queued items, and have it update in realtime.
 // It is gauranteed to eventually send every change that happens to the queue, in order (unless there is an error).
 // The events channel is a channel of batches of events, each batch is a slice of StreamEvent.
-func (q *FIFO) Stream(ctx context.Context) (
+func (q *FIFO) Stream(ctx context.Context, initialReadBatchSize int) (
 	initialValues [][]byte,
 	events <-chan StreamEventBatch,
 	errCh <-chan error,
@@ -39,30 +40,27 @@ func (q *FIFO) Stream(ctx context.Context) (
 ) {
 	var initialEpochWatch fdb.FutureNil
 	begin, end := q.subspace.FDBRangeKeys()
-	var currentKvs []fdb.KeyValue
-	var initialHeadKey fdb.Key
-	var initialTailKey fdb.Key
 	_, err = q.db.Transact(func(tx fdb.Transaction) (any, error) {
 		initialEpochWatch = tx.Watch(q.epochKey)
-		// walk the entire subspace to get the initial values
-		currentKvs, err = tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{Mode: fdb.StreamingModeWantAll}).GetSliceWithError()
-		if err != nil {
-			return nil, err
-		}
-		if len(currentKvs) > 0 {
-			// if there are initial values, set the head and tail of the queue
-			initialHeadKey = currentKvs[0].Key
-			initialTailKey = currentKvs[len(currentKvs)-1].Key
-		}
 		return nil, nil
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to construct initial state: %w", err)
 	}
 
-	initialValues = make([][]byte, len(currentKvs))
-	for i, kv := range currentKvs {
-		initialValues[i] = kv.Value
+	currentKvs := make([]fdb.KeyValue, 0)
+	for kvOrErr := range dbutil.UnboundedIterate(ctx, q.db, fdb.KeyRange{Begin: begin, End: end}, initialReadBatchSize) {
+		if err, ok := kvOrErr.Left(); ok {
+			return nil, nil, nil, err
+		}
+		kv := kvOrErr.MustRight()
+		currentKvs = append(currentKvs, kv)
+		initialValues = append(initialValues, kv.Value)
+	}
+	var initialHeadKey, initialTailKey fdb.Key
+	if len(currentKvs) > 0 {
+		initialHeadKey = currentKvs[0].Key
+		initialTailKey = currentKvs[len(currentKvs)-1].Key
 	}
 
 	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(

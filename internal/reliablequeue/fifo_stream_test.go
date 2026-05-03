@@ -29,7 +29,7 @@ func TestFIFOStreamInitialSnapshotAndSequence(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
+		initialValues, events, errCh, err := queue.Stream(ctx, 256)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 
@@ -62,7 +62,7 @@ func TestFIFOStreamEmptyQueueTransitions(t *testing.T) {
 		queue := newFIFO(db, "stream_empty")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
+		initialValues, events, errCh, err := queue.Stream(ctx, 256)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 
@@ -95,7 +95,7 @@ func TestFIFOStreamEnqueueBatchSingleEvent(t *testing.T) {
 		queue := newFIFO(db, "stream_enqueue_batch")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
+		initialValues, events, errCh, err := queue.Stream(ctx, 256)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 
@@ -130,7 +130,7 @@ func TestFIFOStreamDequeueBatchSingleEvent(t *testing.T) {
 		enqueueBatch(t, db, queue, items)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
+		initialValues, events, errCh, err := queue.Stream(ctx, 256)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 
@@ -154,7 +154,7 @@ func TestFIFOStreamHighActivity(t *testing.T) {
 		queue := newFIFO(db, "stream_high_activity")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-		initialValues, events, errCh, err := queue.Stream(ctx)
+		initialValues, events, errCh, err := queue.Stream(ctx, 256)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 
@@ -209,7 +209,7 @@ func FuzzFIFOStreamHighActivity(f *testing.F) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			queue := newFIFO(db, "stream_fuzz")
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-			initialValues, events, errCh, err := queue.Stream(ctx)
+			initialValues, events, errCh, err := queue.Stream(ctx, 256)
 			require.NoError(t, err)
 			defer drainStream(t, cancel, errCh)
 
@@ -392,7 +392,7 @@ func FuzzFIFOStreamConcurrentReadersWriters(f *testing.F) {
 				readerCancels = append(readerCancels, streamCancel)
 				readerCancelMu.Unlock()
 
-				initialValues, events, streamErrCh, err := queue.Stream(streamCtx)
+				initialValues, events, streamErrCh, err := queue.Stream(streamCtx, 256)
 				require.NoError(t, err)
 
 				reader := &readerState{

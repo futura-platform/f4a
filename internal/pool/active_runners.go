@@ -69,7 +69,7 @@ func (a ActiveRunners) SetActive(tx fdb.Transaction, runnerId string, active boo
 	}
 }
 
-func (a ActiveRunners) Iterate(ctx context.Context, tr fdb.ReadTransactor) iter.Seq[mo.Either[error, dbutil.KeyValue]] {
+func (a ActiveRunners) Iterate(ctx context.Context, tr fdb.ReadTransactor) iter.Seq[mo.Either[error, fdb.KeyValue]] {
 	begin, end := a.livenessMarkers.FDBRangeKeys()
 	return dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: begin, End: end}, 100)
 }
