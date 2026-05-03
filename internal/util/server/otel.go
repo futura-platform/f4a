@@ -88,6 +88,7 @@ func BootstrapOTEL(ctx context.Context) (close func(ctx context.Context), err er
 		if lp != nil {
 			_ = lp.Shutdown(ctx)
 		}
+		hasBootstrappedOTEL.Store(false)
 	}
 	defer func() {
 		if err != nil {

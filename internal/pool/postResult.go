@@ -15,6 +15,8 @@ import (
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/futura/flog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"schneider.vip/problem"
 )
 
@@ -91,6 +93,7 @@ func (m *taskManager) postResult(ctx context.Context, runnable run.RunnableTask,
 	}
 
 	req.Header.Set("Content-Type", contentType)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	resp, err := m.c.Do(req)
 	if err != nil {
 		if req.Body != nil {

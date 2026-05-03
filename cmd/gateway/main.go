@@ -15,6 +15,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	serverutil "github.com/futura-platform/f4a/internal/util/server"
 	"github.com/futura-platform/f4a/pkg/constants"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // This program is designed to run as a stateless http server that receives
@@ -65,7 +66,8 @@ func run() error {
 	}
 	slog.Info("gateway listening", "port", port)
 	s.Addr = fmt.Sprintf(":%d", port)
-	mux.Handle(taskv1connect.NewControlServiceHandler(controller))
+	controlPath, controlHandler := taskv1connect.NewControlServiceHandler(controller)
+	mux.Handle(controlPath, otelhttp.NewHandler(controlHandler, taskv1connect.ControlServiceName))
 
 	err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, nil)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
