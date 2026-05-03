@@ -12,7 +12,7 @@ import (
 func (s *Set) snapshot(ctx context.Context, tr fdb.ReadTransactor) (mapset.Set[string], error) {
 	begin, end := s.snapshotSubspace.FDBRangeKeys()
 	snapshot := mapset.NewSet[string]()
-	for kvOrErr := range dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: begin, End: end}, 100) {
+	for kvOrErr := range dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: begin, End: end}, 256) {
 		if err, ok := kvOrErr.Left(); ok {
 			return nil, err
 		}
