@@ -13,6 +13,7 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
+	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,7 @@ func TestRunMap(t *testing.T) {
 						return []byte("output"), nil
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
@@ -96,6 +98,7 @@ func TestRunMap(t *testing.T) {
 						return []byte("output"), ctx.Err()
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
@@ -152,6 +155,7 @@ func TestRunMap(t *testing.T) {
 							return nil, ctx.Err()
 						},
 					},
+					execute.ExecutorId("test"),
 					db.Database,
 					tkey,
 					executiontype.NewInMemoryContainer(),
@@ -199,6 +203,7 @@ func TestRunMap(t *testing.T) {
 							return nil, ctx.Err()
 						},
 					},
+					execute.ExecutorId("test"),
 					db.Database,
 					tkey,
 					executiontype.NewInMemoryContainer(),
@@ -239,6 +244,7 @@ func TestRunMap(t *testing.T) {
 						return nil, expectedErr
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
@@ -277,6 +283,7 @@ func TestRunMap(t *testing.T) {
 						return nil, nil
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
@@ -311,6 +318,7 @@ func TestRunMap(t *testing.T) {
 						return nil, ctx.Err()
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
@@ -353,6 +361,7 @@ func TestRunMap(t *testing.T) {
 						return nil, ctx.Err()
 					},
 				},
+				execute.ExecutorId("test"),
 				db.Database,
 				tkey,
 				executiontype.NewInMemoryContainer(),
