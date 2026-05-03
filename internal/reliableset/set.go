@@ -1,6 +1,7 @@
 package reliableset
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -169,13 +170,13 @@ func (s *Set) releaseRuntime() {
 	s.compactor.release()
 }
 
-func (s *Set) Items(tx fdb.ReadTransaction) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
-	snapshot, err := s.snapshot(tx)
+func (s *Set) Items(ctx context.Context, tr fdb.ReadTransactor) (items mapset.Set[string], tail fdb.KeyConvertible, err error) {
+	snapshot, err := s.snapshot(ctx, tr)
 	if err != nil {
 		return nil, nil, err
 	}
 	begin, _ := s.logSubspace.FDBRangeKeys()
-	logEntries, err := s.readLog(tx, begin)
+	logEntries, err := s.readLog(ctx, tr, begin)
 	if err != nil {
 		return nil, nil, err
 	}

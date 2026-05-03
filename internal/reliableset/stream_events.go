@@ -26,12 +26,19 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	err error,
 ) {
 	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer func() {
+		if err != nil {
+			streamCancel()
+		}
+	}()
 	cursor := newLogCursor(s)
 	var initialEpochWatch fdb.FutureNil
-	var initialTail fdb.KeyConvertible
+	initialValues, initialTail, err := s.Items(ctx, s.db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	_, err = s.db.Transact(func(tx fdb.Transaction) (any, error) {
 		initialEpochWatch = tx.Watch(s.epochKey)
-		initialValues, initialTail, err = s.Items(tx)
 		if err != nil {
 			return nil, err
 		}
@@ -39,7 +46,6 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		return nil, nil
 	})
 	if err != nil {
-		streamCancel()
 		return nil, nil, nil, err
 	}
 
@@ -47,7 +53,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 	_errCh := make(chan error, 1)
 	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(streamCtx, s.db, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
 		func(tx fdb.ReadTransaction, _ fdb.KeyConvertible, l epochChunk) (epochChunk, error) {
-			logEntries, err := s.readLog(tx, l.tailKey)
+			logEntries, err := s.readLog(streamCtx, tx, l.tailKey)
 			if err != nil {
 				return epochChunk{}, err
 			}

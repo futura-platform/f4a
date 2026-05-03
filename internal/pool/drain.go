@@ -35,21 +35,22 @@ func DrainTaskRunner(
 		return fmt.Errorf("failed to mark runner as inactive: %w", err)
 	}
 
-	// fetch the task set items to be drained, in a separate transaction,
-	// so failures here do not block the runner from being marked as inactive.
-	_, err = dbr.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (any, error) {
-		// since the task set is unbounded, this can overload the tx size limit.
-		// this is an acceptable compromise for now.
-		// TODO: implement an iterator in reliableset so cases like this can be properly handled.
-		tasks, _, err := taskSet.Items(tx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get task set items: %w", err)
-		}
-		hangingTasks = tasks
-		return nil, nil
-	})
+	// // fetch the task set items to be drained, in a separate transaction,
+	// // so failures here do not block the runner from being marked as inactive.
+	// _, err = dbr.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (any, error) {
+	// 	// since the task set is unbounded, this can overload the tx size limit.
+	// 	// this is an acceptable compromise for now.
+	// 	// TODO: implement an iterator in reliableset so cases like this can be properly handled.
+	// 	tasks, _, err := taskSet.Items(tx)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("failed to get task set items: %w", err)
+	// 	}
+	// 	hangingTasks = tasks
+	// 	return nil, nil
+	// })
+	hangingTasks, _, err = taskSet.Items(ctx, dbr)
 	if err != nil {
-		return fmt.Errorf("failed to mark runner as inactive: %w", err)
+		return fmt.Errorf("failed to get task set items: %w", err)
 	}
 
 	// do a best effort to drain the task set, using batching to avoid overloading the tx size limit.

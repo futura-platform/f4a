@@ -1,6 +1,7 @@
 package reliableset
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 
@@ -91,25 +92,25 @@ type KeyedLogEntry struct {
 
 // readLog reads the log entries from the log subspace starting at (but not including) the given key.
 // It returns the log entries in the order they were written.
-func (s *Set) readLog(tx fdb.ReadTransaction, begin fdb.KeyConvertible) ([]KeyedLogEntry, error) {
+func (s *Set) readLog(ctx context.Context, tr fdb.ReadTransactor, begin fdb.KeyConvertible) ([]KeyedLogEntry, error) {
 	_, end := s.logSubspace.FDBRangeKeys()
 	start := begin
 	key := begin.FDBKey()
 	if len(key) > 0 {
 		start = dbutil.KeyAfter(key)
 	}
-	logEntries, err := tx.GetRange(fdb.KeyRange{Begin: start, End: end}, fdb.RangeOptions{}).GetSliceWithError()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get range: %w", err)
-	}
-	entries := make([]KeyedLogEntry, 0, len(logEntries))
-	for i, e := range logEntries {
-		var entry LogEntry
-		err := entry.UnmarshalBinary(e.Value)
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal log entry[%d]: %w", i, err)
+	entries := make([]KeyedLogEntry, 0)
+	for kvOrErr := range dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: start, End: end}, 256) {
+		if err, ok := kvOrErr.Left(); ok {
+			return nil, err
 		}
-		entries = append(entries, KeyedLogEntry{key: e.Key, entry: entry})
+		kv := kvOrErr.MustRight()
+		var entry LogEntry
+		err := entry.UnmarshalBinary(kv.Value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal log entry: %w", err)
+		}
+		entries = append(entries, KeyedLogEntry{key: kv.Key, entry: entry})
 	}
 	return entries, nil
 }

@@ -252,7 +252,7 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory,
 func requireSetContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
 	t.Helper()
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		items, _, err := set.Items(tx)
+		items, _, err := set.Items(t.Context(), tx)
 		if err != nil {
 			return nil, err
 		}
@@ -265,7 +265,7 @@ func requireSetContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set
 func requireSetNotContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
 	t.Helper()
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		items, _, err := set.Items(tx)
+		items, _, err := set.Items(t.Context(), tx)
 		if err != nil {
 			return nil, err
 		}

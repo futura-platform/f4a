@@ -77,7 +77,7 @@ func readSetValues(t testing.TB, db dbutil.DbRoot, set *Set) mapset.Set[string] 
 	var items mapset.Set[string]
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 		var err error
-		items, _, err = set.Items(tx)
+		items, _, err = set.Items(t.Context(), tx)
 		return nil, err
 	})
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestSetCompactLog(t *testing.T) {
 			var logEntries []KeyedLogEntry
 			_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 				var err error
-				logEntries, err = set.readLog(tx, begin)
+				logEntries, err = set.readLog(t.Context(), db, begin)
 				return nil, err
 			})
 			require.NoError(t, err)
@@ -513,7 +513,7 @@ func readLogEntries(t testing.TB, db dbutil.DbRoot, set *Set) []KeyedLogEntry {
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 		begin, _ := set.logSubspace.FDBRangeKeys()
 		var err error
-		entries, err = set.readLog(tx, begin)
+		entries, err = set.readLog(t.Context(), tx, begin)
 		return nil, err
 	})
 	require.NoError(t, err)
