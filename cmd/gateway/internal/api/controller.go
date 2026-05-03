@@ -16,6 +16,9 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 func NewController(
@@ -370,16 +373,41 @@ func (c *controller) deleteTaskRevisioned(
 	return &taskv1.DeleteTaskResponse{}, decision, nil
 }
 
+var (
+	tracer           = otel.Tracer("f4a.cmd.gateway")
+	meter            = otel.Meter("f4a.cmd.gateway")
+	operationCounter = func() metric.Int64Counter {
+		counter, err := meter.Int64Counter("operation_count")
+		if err != nil {
+			panic(err)
+		}
+		return counter
+	}()
+)
+
 func (c *controller) applyRevisionedOperation(
 	ctx context.Context,
 	id task.Id,
 	revision uint64,
 	operation task.RevisionOperation,
 	apply func(t fdb.Transaction) error,
-) (task.RevisionDecision, error) {
+) (_ task.RevisionDecision, err error) {
 	if len(id) > task.MAX_ID_LENGTH {
 		return 0, fmt.Errorf("task id is too long: %d > %d", len(id), task.MAX_ID_LENGTH)
 	}
+
+	operationCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", operation.String())))
+
+	ctx, span := tracer.Start(ctx, "applyRevisionedOperation")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+	span.SetAttributes(attribute.String("task_id", string(id)))
+	span.SetAttributes(attribute.Int64("revision", int64(revision)))
+	span.SetAttributes(attribute.String("operation", operation.String()))
 
 	result, err := c.db.TransactContext(ctx, func(t fdb.Transaction) (any, error) {
 		decision, applyErr := c.revisionStore.Apply(
@@ -409,6 +437,8 @@ func (c *controller) applyRevisionedOperation(
 		"operation", operation.String(),
 		"decision", decision.String(),
 	)
+	span.SetAttributes(attribute.String("decision", decision.String()))
+
 	return decision, nil
 }
 
