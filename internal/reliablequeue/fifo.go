@@ -61,7 +61,7 @@ func (q *FIFO) Enqueue(tx fdb.Transaction, item []byte) error {
 		return err
 	}
 	tx.SetVersionstampedKey(k, item)
-	dbutil.AtomicIncrement(tx, q.epochKey)
+	dbutil.AtomicIncrement(tx, q.epochKey, 1)
 	return nil
 }
 
@@ -84,6 +84,6 @@ func (q *FIFO) Dequeue(tx fdb.Transaction) ([]byte, error) {
 	}
 	kv := kvs[0]
 	tx.Clear(kv.Key)
-	dbutil.AtomicIncrement(tx, q.epochKey)
+	dbutil.AtomicIncrement(tx, q.epochKey, 1)
 	return kv.Value, nil
 }

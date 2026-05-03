@@ -7,6 +7,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestActiveRunners(t *testing.T) {
@@ -48,5 +49,34 @@ func TestActiveRunners(t *testing.T) {
 			})
 			assert.NoError(t, err)
 		})
+	})
+}
+
+func TestRunnerIDFromLivenessKeyIterate(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		activeRunners, err := CreateOrOpenActiveRunners(db)
+		require.NoError(t, err)
+
+		knownRunnerID := "runner-known-id"
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			activeRunners.SetActive(tx, knownRunnerID, true)
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		var saw bool
+		for kvOrErr := range activeRunners.Iterate(t.Context(), db) {
+			err, ok := kvOrErr.Left()
+			if ok {
+				t.Fatal(err)
+			}
+			kv := kvOrErr.MustRight()
+			runnerID, err := activeRunners.RunnerIDFromLivenessKey(kv.Key)
+			require.NoError(t, err)
+			assert.Equal(t, knownRunnerID, runnerID)
+			saw = true
+			break
+		}
+		assert.True(t, saw, "expected Iterate to yield the liveness key")
 	})
 }

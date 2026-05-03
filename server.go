@@ -53,6 +53,12 @@ func Start(ctx context.Context, executors map[string]execute.Executor, options .
 }
 
 func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
+	shutdownOTEL, err := serverutil.BootstrapOTEL(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to bootstrap OTEL: %w", err)
+	}
+	defer shutdownOTEL(context.Background())
+
 	options := new(StartOptions)
 	for _, o := range opts {
 		o(options)

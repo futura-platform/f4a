@@ -13,10 +13,15 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	"go.opentelemetry.io/otel"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1 "k8s.io/client-go/listers/core/v1"
+)
+
+var (
+	tracer = otel.Tracer("f4a.dispatch.reaper")
 )
 
 // SpawnReaperRoutine spins off a goroutine that runs a loop that scans for orphaned task sets and re queues all the tasks in them to be scheduled.
@@ -24,17 +29,14 @@ import (
 // This can happen when a runner fails to drain itself before being force killed.
 // activeRunnerSets is expected to be updated in real time as a liveActiveRunnerSets return value.
 func SpawnReaperRoutine(
+	ctx context.Context,
 	db dbutil.DbRoot,
 	cachedPods corev1.PodNamespaceLister,
 	livePods corev1client.PodInterface,
 	pollInterval time.Duration,
 ) (_ context.CancelFunc, err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		if err != nil {
-			cancel()
-		}
-	}()
+	ctx, span := tracer.Start(ctx, "spawn")
+	defer span.End()
 
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
 	if err != nil {
@@ -49,7 +51,10 @@ func SpawnReaperRoutine(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or open task directory: %w", err)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
+		defer cancel()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 		for {
@@ -57,10 +62,13 @@ func SpawnReaperRoutine(
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				ctx, span := tracer.Start(ctx, "reapAll")
 				err := reapAll(ctx, db, cachedPods, livePods, activeRunners, pendingSet, taskDirectory)
 				if err != nil {
+					span.RecordError(err)
 					slog.Error("reaper: failed to reap", "error", err)
 				}
+				span.End()
 			}
 		}
 	}()

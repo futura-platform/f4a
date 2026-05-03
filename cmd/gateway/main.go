@@ -22,6 +22,13 @@ import (
 
 func main() {
 	slog.Info("starting gateway")
+	shutdownOTEL, err := serverutil.BootstrapOTEL(context.Background())
+	if err != nil {
+		slog.Error("otel bootstrap failed", "error", err)
+		os.Exit(1)
+	}
+	defer shutdownOTEL(context.Background())
+
 	if err := run(); err != nil {
 		slog.Error("fatal error", "error", err)
 		os.Exit(1)

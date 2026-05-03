@@ -25,6 +25,10 @@ import (
 	"github.com/futura-platform/f4a/pkg/constants"
 	weightedrand "github.com/mroth/weightedrand/v2"
 	"github.com/puzpuzpuz/xsync/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -70,25 +74,6 @@ const (
 )
 
 func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients) error {
-	if cfg.Namespace == "" {
-		return fmt.Errorf("namespace is required")
-	}
-	if cfg.StatefulSetName == "" {
-		return fmt.Errorf("statefulset name is required")
-	}
-	if cfg.MetricsInterval <= 0 {
-		return fmt.Errorf("metrics interval is required")
-	}
-	if cfg.ScoreAlpha <= 0 || cfg.ScoreAlpha > 1 {
-		return fmt.Errorf("score EMA alpha must be between 0 and 1")
-	}
-	if cfg.BatchTxParallelism <= 0 {
-		return fmt.Errorf("batch tx parallelism must be greater than 0")
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
@@ -112,20 +97,25 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 		scoreCache:    newScoreCache(cfg.ScoreAlpha),
 		logger:        cfg.Logger,
 	}
-	return s.run(ctx)
+	return s.commandRunners(ctx)
 }
 
-// run is the main loop of the scheduler. It is expected to run as a singleton scoped to the whole cluster.
+var (
+	tracer = otel.Tracer("f4a.dispatch.scheduler")
+	meter  = otel.Meter("f4a.dispatch.scheduler")
+)
+
+// commandRunners is the main loop of the scheduler. It is expected to commandRunners as a singleton scoped to the whole cluster.
 // It assigns tasks to the fittest workers exactly once per pending task.
 // It also periodically refreshes the worker scores to evaluate fitness.
-func (s *Scheduler) run(ctx context.Context) error {
-	cancelPendingCompaction := s.pendingSet.RunCompactor()
-	defer cancelPendingCompaction()
-
-	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to stream pending set: %w", err)
-	}
+func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
+	ctx, span := tracer.Start(ctx, "commandRunners")
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	runnerPodInformer, cancel, err := liveRunnerPods(
 		ctx,
@@ -138,7 +128,80 @@ func (s *Scheduler) run(ctx context.Context) error {
 	}
 	defer cancel()
 
+	activeRunnerSets := newRunnerSetCache(s.db, runnerPodInformer.Informer())
+
+	scores, err := s.refreshScores(ctx)
+	if err != nil {
+		s.logger.Error("failed to refresh worker scores, using default scores", "error", err)
+		scores = xsync.NewMap[string, float64](xsync.WithPresize(1))
+	}
+
+	pendingTaskGauge, err := meter.Int64ObservableGauge("pending_task_count")
+	if err != nil {
+		return fmt.Errorf("failed to create pending task count counter: %w", err)
+	}
+	runningTaskGauge, err := meter.Int64ObservableGauge("running_task_count")
+	if err != nil {
+		return fmt.Errorf("failed to create running task count counter: %w", err)
+	}
+	availableRunnerGauge, err := meter.Int64ObservableGauge("available_runner_count")
+	if err != nil {
+		return fmt.Errorf("failed to create runner count counter: %w", err)
+	}
+	reg, err := meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		o.ObserveInt64(availableRunnerGauge, int64(scores.Size()))
+
+		var pendingSetSize uint64
+		s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
+			snapshot := t.Snapshot()
+			pendingSetSize = s.pendingSet.Size(snapshot)
+			return nil, nil
+		})
+		o.ObserveInt64(pendingTaskGauge, int64(pendingSetSize))
+
+		var runningCount uint64
+		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
+			if err, ok := kvOrErr.Left(); ok {
+				return err
+			}
+			kv := kvOrErr.MustRight()
+			runnerID, err := s.activeRunners.RunnerIDFromLivenessKey(kv.Key)
+			if err != nil {
+				return err
+			}
+			runnerSet, err := activeRunnerSets.open(runnerID)
+			if err != nil {
+				if errors.Is(err, directory.ErrDirNotExists) {
+					continue
+				}
+				return err
+			}
+			_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
+				runningCount += runnerSet.Size(t.Snapshot())
+				return nil, nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		o.ObserveInt64(runningTaskGauge, int64(runningCount))
+		return nil
+	}, pendingTaskGauge, runningTaskGauge, availableRunnerGauge)
+	if err != nil {
+		return fmt.Errorf("failed to register callback: %w", err)
+	}
+	defer reg.Unregister()
+
+	cancelPendingCompaction := s.pendingSet.RunCompactor()
+	defer cancelPendingCompaction()
+
+	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to stream pending set: %w", err)
+	}
+
 	cancelReaper, err := reaper.SpawnReaperRoutine(
+		ctx,
 		s.db,
 		runnerPodInformer.Lister().Pods(s.cfg.Namespace),
 		s.clients.Core.CoreV1().Pods(s.cfg.Namespace),
@@ -148,14 +211,6 @@ func (s *Scheduler) run(ctx context.Context) error {
 		return fmt.Errorf("failed to spawn reaper routine: %w", err)
 	}
 	defer cancelReaper()
-
-	scores, err := s.refreshScores(ctx)
-	if err != nil {
-		s.logger.Error("failed to refresh worker scores, using default scores", "error", err)
-		scores = xsync.NewMap[string, float64](xsync.WithPresize(1))
-	}
-
-	activeRunnerSets := newRunnerSetCache(s.db, runnerPodInformer.Informer())
 
 	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), scores, activeRunnerSets)
 	if err != nil {
@@ -174,6 +229,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 				return nil
 			}
 
+			span.AddEvent("event_batch_received")
 			for _, entry := range batch {
 				switch entry.Op {
 				case reliableset.LogOperationAdd:
@@ -209,7 +265,15 @@ func (s *Scheduler) run(ctx context.Context) error {
 	}
 }
 
-func (s *Scheduler) refreshScores(ctx context.Context) (*xsync.Map[string, float64], error) {
+func (s *Scheduler) refreshScores(ctx context.Context) (_ *xsync.Map[string, float64], err error) {
+	ctx, span := tracer.Start(ctx, "refreshScores")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+
 	utilization, err := k8s.WorkerUtilizationSnapshot(ctx, s.clients, s.cfg.Namespace, s.cfg.StatefulSetName)
 	if err != nil {
 		return nil, err
@@ -232,10 +296,26 @@ func (s *Scheduler) assignPending(
 	scores *xsync.Map[string, float64],
 	activeRunnerSets *runnerSetCache,
 ) (retryAssignLater mapset.Set[string], err error) {
+	ctx, span := tracer.Start(ctx, "assignPending")
+	span.SetAttributes(
+		attribute.Int("pending_ids_count", len(pendingIds)),
+	)
+
 	assignmentRecord := []string{}
 
 	var couldntSelect, batchTransactionFailed atomic.Int32
 	defer func() {
+		span.SetAttributes(
+			attribute.Int("assignment_count", len(assignmentRecord)),
+			attribute.Int("retry_assign_later_count", retryAssignLater.Cardinality()),
+			attribute.Int("couldnt_select_count", int(couldntSelect.Load())),
+			attribute.Int("batch_transaction_failed_count", int(batchTransactionFailed.Load())),
+		)
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+
 		if len(pendingIds) == 0 {
 			return
 		}
@@ -371,10 +451,8 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 	if err := runnerSet.Add(tx, []byte(id)); err != nil {
 		return err
 	}
-	if err := s.pendingSet.Remove(tx, []byte(id)); err != nil {
-		return err
-	}
-	return nil
+
+	return s.pendingSet.Remove(tx, []byte(id))
 }
 
 func selectWeightedRunner(scores *xsync.Map[string, float64]) (string, bool) {

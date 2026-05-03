@@ -74,7 +74,13 @@ func (s *Set) writeLog(tx fdb.Transaction, entry LogEntry) error {
 		return err
 	}
 	tx.SetVersionstampedKey(logKey, entryBytes)
-	dbutil.AtomicIncrement(tx, s.epochKey)
+	dbutil.AtomicIncrement(tx, s.epochKey, 1)
+	switch entry.Op {
+	case LogOperationAdd:
+		dbutil.AtomicIncrement(tx, s.sizeKey, 1)
+	case LogOperationRemove:
+		dbutil.AtomicIncrement(tx, s.sizeKey, -1)
+	}
 	return nil
 }
 

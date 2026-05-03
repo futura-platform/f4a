@@ -40,6 +40,12 @@ func main() {
 }
 
 func run() error {
+	shutdownOTEL, err := serverutil.BootstrapOTEL(context.Background())
+	if err != nil {
+		return fmt.Errorf("otel bootstrap: %w", err)
+	}
+	defer shutdownOTEL(context.Background())
+
 	cfg, leaderElectionName, err := loadConfig()
 	if err != nil {
 		return err

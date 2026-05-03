@@ -1,10 +1,15 @@
 package pool
 
 import (
+	"context"
+	"fmt"
+	"iter"
+
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	"github.com/samber/mo"
 )
 
 // ActiveRunners is a set of runners that can accept tasks.
@@ -32,6 +37,22 @@ func (a ActiveRunners) livenessMarkerKey(runnerId string) fdb.Key {
 	return a.livenessMarkers.Pack(tuple.Tuple{runnerId})
 }
 
+// RunnerIDFromLivenessKey unpacks runner ID from a key in the active_runners liveness range.
+func (a ActiveRunners) RunnerIDFromLivenessKey(key fdb.Key) (string, error) {
+	decoded, err := a.livenessMarkers.Unpack(key)
+	if err != nil {
+		return "", fmt.Errorf("unpack active runner liveness key: %w", err)
+	}
+	if len(decoded) != 1 {
+		return "", fmt.Errorf("active runner liveness key: expected 1-tuple, got %d", len(decoded))
+	}
+	runnerID, ok := decoded[0].(string)
+	if !ok {
+		return "", fmt.Errorf("active runner liveness key: expected string runner id")
+	}
+	return runnerID, nil
+}
+
 func (a ActiveRunners) IsActive(tx fdb.ReadTransaction, runnerId string) *dbutil.Future[bool] {
 	f := tx.Get(a.livenessMarkerKey(runnerId))
 
@@ -46,4 +67,9 @@ func (a ActiveRunners) SetActive(tx fdb.Transaction, runnerId string, active boo
 	} else {
 		tx.Clear(a.livenessMarkerKey(runnerId))
 	}
+}
+
+func (a ActiveRunners) Iterate(ctx context.Context, tr fdb.ReadTransactor) iter.Seq[mo.Either[error, dbutil.KeyValue]] {
+	begin, end := a.livenessMarkers.FDBRangeKeys()
+	return dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: begin, End: end}, 100)
 }
