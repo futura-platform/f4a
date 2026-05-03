@@ -107,6 +107,7 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 				RunnableTask{
 					Runnable: NewRunnable(
 						executor,
+						executorId,
 						db.Database,
 						load.taskKey,
 						fdbexec.NewContainer(load.id, db),

@@ -12,7 +12,8 @@ import (
 // Runnable execution is a distributed singleton,
 // meaning that only one instance of the execution will run for a given input.
 type Runnable struct {
-	executor execute.Executor
+	executor   execute.Executor
+	executorId execute.ExecutorId
 
 	db      fdb.Database
 	taskKey task.TaskKey
@@ -24,20 +25,26 @@ func (r Runnable) Id() task.Id {
 	return r.taskKey.Id()
 }
 
+func (r Runnable) ExecutorId() execute.ExecutorId {
+	return r.executorId
+}
+
 func (r Runnable) TaskKey() task.TaskKey {
 	return r.taskKey
 }
 
 func NewRunnable(
 	executor execute.Executor,
+	executorId execute.ExecutorId,
 	db fdb.Database,
 	taskKey task.TaskKey,
 	execution executiontype.TransactionalContainer,
 ) Runnable {
 	return Runnable{
-		executor:  executor,
-		db:        db,
-		taskKey:   taskKey,
-		execution: execution,
+		executor:   executor,
+		executorId: executorId,
+		db:         db,
+		taskKey:    taskKey,
+		execution:  execution,
 	}
 }

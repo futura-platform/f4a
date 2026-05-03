@@ -374,7 +374,7 @@ func (c *controller) deleteTaskRevisioned(
 }
 
 var (
-	tracer           = otel.Tracer("f4a.cmd.gateway")
+	tracer           = otel.Tracer("f4a.gateway.controller")
 	meter            = otel.Meter("f4a.cmd.gateway")
 	operationCounter = func() metric.Int64Counter {
 		counter, err := meter.Int64Counter("operation_count")

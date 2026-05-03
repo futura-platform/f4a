@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,10 @@ import (
 	"github.com/futura-platform/f4a/internal/reliablelock"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 	"github.com/futura-platform/futura/flog"
+	"github.com/futura-platform/futura/fopt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -29,6 +34,10 @@ const (
 	callbackRetryMaxDelay     = 30 * time.Second
 	callbackAttemptTimeout    = 10 * time.Second
 	callbackDeliveryTimeout   = time.Minute
+)
+
+var (
+	tracer = otel.Tracer("f4a.runner.run")
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
@@ -88,6 +97,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 
 	// Once callback delivery finishes, later input changes are ignored.
 	var executionResultDeliveryFinished atomic.Bool
+	span := trace.SpanFromContext(ctx)
 	startExecution := func(marshalledInput []byte) {
 		mu.Lock()
 		if executionResultDeliveryFinished.Load() || watchCtx.Err() != nil {
@@ -106,7 +116,22 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			defer execWg.Done()
 
 			execSingleflightMu.Lock()
-			result, err := executable.Execute(runCtx, input)
+			result, err := executable.Execute(runCtx, input, fopt.WithStepWrapper(func(
+				ctx context.Context,
+				fnLabel string,
+				args any,
+				callstack []runtime.Frame,
+				call func() (output any, err error),
+			) (errOverride error) {
+				ctx, span := tracer.Start(ctx, fnLabel)
+				defer span.End()
+				span.SetAttributes(attribute.String("label", fnLabel))
+				_, err := call()
+				if err != nil {
+					span.RecordError(err)
+				}
+				return nil
+			}))
 			execSingleflightMu.Unlock()
 
 			if errors.Is(err, ErrRunFatal) {
@@ -142,12 +167,15 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			deadline := finishedAt.Add(callbackDeliveryTimeout)
 			callbackCtx, callbackCancel := context.WithDeadline(runCtx, deadline)
 			defer callbackCancel()
+			callbackCtx, span := tracer.Start(callbackCtx, "callback")
+			defer span.End()
 			deliveryErr := retryCallback(
 				callbackCtx,
 				func(callbackCtx context.Context) error {
 					return callback(callbackCtx, result, err)
 				},
 				func(err error, duration time.Duration) {
+					span.RecordError(err)
 					flog.FromContext(watchCtx).LogAttrs(
 						watchCtx, slog.LevelDebug, "callback failed, retrying",
 						slog.String("task_id", string(r.Id())),
@@ -173,6 +201,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 					return
 				}
 			} else {
+				span.AddEvent("delivered callback")
 				flog.FromContext(ctx).LogAttrs(
 					ctx, slog.LevelDebug, "delivered callback",
 					slog.String("task_id", string(r.Id())),
@@ -191,6 +220,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				valuesCh = nil
 				continue
 			}
+			span.AddEvent("input changed")
 			startExecution(marshalledInput)
 		case err, ok := <-errCh:
 			if !ok {

@@ -16,6 +16,8 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/flog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var (
@@ -33,6 +35,10 @@ type taskManager struct {
 	c             *http.Client
 }
 
+var (
+	tracer = otel.Tracer("f4a.runner.workLoop")
+)
+
 // RunWorkLoop handles the task execution management for a pool.
 // It watches the task assignments assigned to the pool
 // (which is implied to be scoped to the given dbRoot),
@@ -48,6 +54,10 @@ func RunWorkLoop(
 	taskSet *reliableset.Set,
 	router execute.Router,
 ) error {
+	ctx, span := tracer.Start(ctx, "RunWorkLoop")
+	defer span.End()
+	span.SetAttributes(attribute.String("runner_id", runnerId))
+
 	taskDirectory, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
@@ -153,6 +163,10 @@ func processAddedBatch(
 	router execute.Router,
 	items mapset.Set[string],
 ) error {
+	ctx, span := tracer.Start(ctx, "processAddedBatch")
+	defer span.End()
+	span.SetAttributes(attribute.Int("item_count", items.Cardinality()))
+
 	l := flog.FromContext(ctx)
 	previewTaskIdsString := util.JoinWithMaxPreview(items.ToSlice(), logPreviewLength)
 	l.LogAttrs(ctx, slog.LevelDebug, "processing added batch",

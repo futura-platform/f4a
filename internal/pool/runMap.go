@@ -7,6 +7,7 @@ import (
 
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // runMap is a type to keep track of all the running tasks in a pool.
@@ -41,8 +42,14 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 	defer m.mu.Unlock()
 
 	newState := newRunState(ctx, func(runCtx context.Context) {
+		runCtx, span := tracer.Start(runCtx, "run")
+		defer span.End()
+		span.SetAttributes(attribute.String("task_id", string(r.Id())))
+		span.SetAttributes(attribute.String("executor_id", string(r.ExecutorId())))
+
 		err := r.Run(runCtx, m.runnerId, callback)
 		if err != nil && runCtx.Err() == nil {
+			span.RecordError(err)
 			m.onRunError(r.Id(), err)
 		}
 	})
