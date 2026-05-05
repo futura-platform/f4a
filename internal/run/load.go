@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"runtime"
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -13,6 +14,7 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
+	"golang.org/x/sync/semaphore"
 )
 
 type RunnableTask struct {
@@ -46,8 +48,15 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 	failures := make([]error, 0)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	sem := semaphore.NewWeighted(
+		int64(runtime.GOMAXPROCS(0)) *
+			// this is mostly io bound, so we can afford to be more greedy with the semaphore.
+			64,
+	)
 	for _, id := range ids {
+		sem.Acquire(ctx, 1)
 		wg.Go(func() {
+			defer sem.Release(1)
 			var taskKey task.TaskKey
 			var executorId execute.ExecutorId
 			var callbackUrlValue *string
@@ -56,8 +65,14 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 				if err != nil {
 					return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
 				}
-				executorId = taskKey.ExecutorId().Get(tx).MustGet()
-				callbackUrlValue = taskKey.CallbackUrl().Get(tx).MustGet()
+				executorId, err = taskKey.ExecutorId().Get(tx).Get()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get executor id for %s: %w", id, err)
+				}
+				callbackUrlValue, err = taskKey.CallbackUrl().Get(tx).Get()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get callback url for %s: %w", id, err)
+				}
 				return nil, nil
 			})
 			if err != nil {
