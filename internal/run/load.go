@@ -42,60 +42,42 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 		callbackUrlFuture *dbutil.Future[*string]
 	}
 
-	loads := make([]taskLoad, 0, len(ids))
-	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		for _, id := range ids {
-			tkey, err := tasksDirectory.Open(tx, id)
+	tasks := make([]RunnableTask, 0, len(ids))
+	failures := make([]error, 0)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Go(func() {
+			var taskKey task.TaskKey
+			var executorId execute.ExecutorId
+			var callbackUrlValue *string
+			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+				taskKey, err = tasksDirectory.Open(tx, id)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
+				}
+				executorId = taskKey.ExecutorId().Get(tx).MustGet()
+				callbackUrlValue = taskKey.CallbackUrl().Get(tx).MustGet()
+				return nil, nil
+			})
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
 					// Task assignment snapshots can briefly lag a concurrent delete.
 					// Skip missing tasks so stale queue entries do not crash the worker.
-					continue
+					return
 				}
-				return nil, fmt.Errorf("failed to get task key for %s: %w", id, err)
-			}
-			loads = append(loads, taskLoad{
-				id:                id,
-				taskKey:           tkey,
-				executorIdFuture:  tkey.ExecutorId().Get(tx),
-				callbackUrlFuture: tkey.CallbackUrl().Get(tx),
-			})
-		}
-		return nil, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to transact: %w", err)
-	}
-
-	tasks := make([]RunnableTask, 0, len(loads))
-	failures := make([]error, 0)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for i := range len(loads) {
-		load := loads[i]
-		wg.Go(func() {
-			executorId, err := load.executorIdFuture.Get()
-			if err != nil {
 				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to get executor id %s: %w", load.id, err))
+				failures = append(failures, fmt.Errorf("failed to load task for %s: %w", id, err))
 				mu.Unlock()
 				return
 			}
 			executor := router.Route(executorId)
-
-			callbackUrlValue, err := load.callbackUrlFuture.Get()
-			if err != nil {
-				mu.Lock()
-				failures = append(failures, fmt.Errorf("failed to get callback url %s: %w", load.id, err))
-				mu.Unlock()
-				return
-			}
 			var callbackUrl *url.URL
 			if callbackUrlValue != nil {
 				callbackUrl, err = url.Parse(*callbackUrlValue)
 				if err != nil {
 					mu.Lock()
-					failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", load.id, err))
+					failures = append(failures, fmt.Errorf("failed to parse callback url %s: %w", id, err))
 					mu.Unlock()
 					return
 				}
@@ -109,8 +91,8 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 						executor,
 						executorId,
 						db.Database,
-						load.taskKey,
-						fdbexec.NewContainer(load.id, db),
+						taskKey,
+						fdbexec.NewContainer(id, db),
 					),
 					callbackUrl: callbackUrl,
 				},
