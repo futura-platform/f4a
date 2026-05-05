@@ -173,6 +173,9 @@ func (t *executionReadTransaction) HasMoment(identity moment.Identity) bool {
 	return string(kv.Key) == string(key)
 }
 
+// this is a potential failure point considering that the range scan is potentially unbounded...
+// this will require rethinking in futura to be more thoughtful about potentially unbounded methods.
+// TODO: fix this upstream in futura
 func (t *executionReadTransaction) KnownMoments() iter.Seq[moment.Identity] {
 	return func(yield func(moment.Identity) bool) {
 		memoBegin, memoEnd := t.memoTable.FDBRangeKeys()
