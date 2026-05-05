@@ -158,11 +158,12 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
+		o.ObserveInt64(taskCountGauge, int64(pendingSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+
 		suspendedSetItems, _, err := s.suspendedSet.Items(ctx, s.db.Database)
 		if err != nil {
 			return err
 		}
-		o.ObserveInt64(taskCountGauge, int64(pendingSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
 		o.ObserveInt64(taskCountGauge, int64(suspendedSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
 		var runningCount int64
