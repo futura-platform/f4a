@@ -26,10 +26,13 @@ func NewBaseK8sService(
 	readyKey := fdb.Key(fmt.Sprintf("%d/ready", time.Now().UnixNano()))
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		expected := []byte("ok")
-		var actual fdb.FutureByteSlice
-		_, err := dbr.TransactContext(r.Context(), func(tr fdb.Transaction) (any, error) {
+		var actual []byte
+		_, err := dbr.TransactContext(r.Context(), func(tr fdb.Transaction) (_ any, err error) {
 			tr.Set(readyKey, expected)
-			actual = tr.Get(readyKey)
+			actual, err = tr.Get(readyKey).Get()
+			if err != nil {
+				return nil, err
+			}
 			tr.Clear(readyKey)
 			return nil, nil
 		})
@@ -37,8 +40,8 @@ func NewBaseK8sService(
 			fmt.Println("readyz transaction failed", err)
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
-		} else if !bytes.Equal(actual.MustGet(), expected) {
-			fmt.Println("readyz transaction integrity check failed", string(actual.MustGet()))
+		} else if !bytes.Equal(actual, expected) {
+			fmt.Println("readyz transaction integrity check failed", string(actual))
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
