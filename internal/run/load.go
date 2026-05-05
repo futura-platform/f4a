@@ -54,7 +54,10 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 			64,
 	)
 	for _, id := range ids {
-		sem.Acquire(ctx, 1)
+		err := sem.Acquire(ctx, 1)
+		if err != nil {
+			return nil, err
+		}
 		wg.Go(func() {
 			defer sem.Release(1)
 			var taskKey task.TaskKey
