@@ -182,15 +182,6 @@ func loadConfig() (scheduler.Config, string, error) {
 		return scheduler.Config{}, "", fmt.Errorf("invalid %s: %w", constants.MetricsInterval, err)
 	}
 
-	scoreAlphaValue := strings.TrimSpace(os.Getenv(constants.ScoreEmaAlpha))
-	if scoreAlphaValue == "" {
-		return scheduler.Config{}, "", fmt.Errorf("%s is required", constants.ScoreEmaAlpha)
-	}
-	scoreAlpha, err := strconv.ParseFloat(scoreAlphaValue, 64)
-	if err != nil {
-		return scheduler.Config{}, "", fmt.Errorf("invalid %s: %w", constants.ScoreEmaAlpha, err)
-	}
-
 	batchTxParallelism := scheduler.DefaultBatchParallelism
 	if value := strings.TrimSpace(os.Getenv(constants.AssignmentBatchParallelism)); value != "" {
 		batchTxParallelism, err = strconv.Atoi(value)
@@ -206,7 +197,6 @@ func loadConfig() (scheduler.Config, string, error) {
 		Namespace:          namespace,
 		StatefulSetName:    statefulSetName,
 		MetricsInterval:    metricsInterval,
-		ScoreAlpha:         scoreAlpha,
 		BatchTxParallelism: batchTxParallelism,
 		Logger:             slog.Default(),
 	}

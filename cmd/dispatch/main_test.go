@@ -21,8 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
-	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 )
 
 func TestLoadConfigUsesDefaultBatchParallelism(t *testing.T) {
@@ -60,7 +58,6 @@ func setRequiredDispatchEnv(t *testing.T) {
 	t.Setenv(constants.StatefulSetName, "test-statefulset")
 	t.Setenv(constants.LeaderElectionName, "test-leader-election")
 	t.Setenv(constants.MetricsInterval, "5s")
-	t.Setenv(constants.ScoreEmaAlpha, "0.5")
 }
 
 func TestRunWithLeaderElection(t *testing.T) {
@@ -69,7 +66,6 @@ func TestRunWithLeaderElection(t *testing.T) {
 			Namespace:          "test-namespace",
 			StatefulSetName:    "test-statefulset",
 			MetricsInterval:    5 * time.Second,
-			ScoreAlpha:         0.5,
 			BatchTxParallelism: 1,
 		}
 		testRunnerId := "test-runner-id"
@@ -115,33 +111,8 @@ func TestRunWithLeaderElection(t *testing.T) {
 					},
 				},
 			}
-			podMetrics := &metricsv1beta1.PodMetrics{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      testRunnerId,
-					Namespace: testCfg.Namespace,
-					Labels:    map[string]string{"app": testCfg.StatefulSetName},
-				},
-				Containers: []metricsv1beta1.ContainerMetrics{
-					{
-						Name: "runner",
-						Usage: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("50m"),
-							corev1.ResourceMemory: resource.MustParse("64Mi"),
-						},
-					},
-				},
-			}
-			metricsClient := metricsfake.NewSimpleClientset()
-			err := metricsClient.Tracker().Create(
-				metricsv1beta1.SchemeGroupVersion.WithResource("pods"),
-				podMetrics,
-				testCfg.Namespace,
-			)
-			require.NoError(t, err)
 			clients := &k8s.Clients{
 				Core: fake.NewClientset(sts, pod),
-				// ignore this deprecation, k8s.io/metrics v0.36.0 should fix this when it's released
-				Metrics: metricsClient,
 			}
 
 			pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)

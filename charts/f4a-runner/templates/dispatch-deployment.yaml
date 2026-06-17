@@ -51,8 +51,6 @@ spec:
               value: {{ .Values.worker.name | quote }}
             - name: METRICS_INTERVAL
               value: {{ .Values.dispatch.metricsInterval | quote }}
-            - name: SCORE_EMA_ALPHA
-              value: {{ .Values.dispatch.scoreEmaAlpha | quote }}
             {{- if .Values.dispatch.assignmentBatchParallelism }}
             - name: ASSIGNMENT_BATCH_PARALLELISM
               value: {{ .Values.dispatch.assignmentBatchParallelism | quote }}

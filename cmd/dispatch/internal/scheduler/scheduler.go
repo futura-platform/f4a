@@ -12,7 +12,6 @@ import (
 	v1 "k8s.io/client-go/listers/core/v1"
 
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
-	schedulermetrics "github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler/metrics"
 	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
@@ -47,7 +46,6 @@ type Config struct {
 	Namespace          string
 	StatefulSetName    string
 	MetricsInterval    time.Duration
-	ScoreAlpha         float64
 	BatchTxParallelism int
 	Logger             *slog.Logger
 }
@@ -61,7 +59,6 @@ type Scheduler struct {
 	suspendedSet *reliableset.Set
 	activeRunnerSets *runnerSetCache
 	runnerPodLister  v1.PodNamespaceLister
-	runnerMetrics    schedulermetrics.RunnerMetrics
 	clients          *k8s.Clients
 
 	logger *slog.Logger
@@ -122,7 +119,7 @@ var (
 
 // commandRunners is the main loop of the scheduler. It is expected to commandRunners as a singleton scoped to the whole cluster.
 // It assigns tasks to the fittest workers exactly once per pending task.
-// It also periodically refreshes the worker scores to evaluate fitness.
+// It also periodically retries tasks that were left in the pending backlog.
 func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ctx, span := tracer.Start(ctx, "commandRunners")
 	defer func() {

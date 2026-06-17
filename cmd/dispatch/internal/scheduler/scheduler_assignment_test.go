@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -13,15 +14,10 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
-
-func scoresMap(m map[string]float64) *xsync.Map[string, float64] {
-	out := xsync.NewMap[string, float64](xsync.WithPresize(len(m)))
-	for k, v := range m {
-		out.Store(k, v)
-	}
-	return out
-}
 
 func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
@@ -29,7 +25,9 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		taskID := task.Id("pending-task-retry")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
-		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)}, scoresMap(map[string]float64{}), newMockedRunnerSetCache(db, map[string]*reliableset.Set{}))
+		s.runnerPodLister = podListerForRunners()
+		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*reliableset.Set{})
+		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)})
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
 
@@ -38,7 +36,9 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		require.Nil(t, runnerID)
 		requireSetContainsTask(t, db, pendingSet, taskID)
 
-		retryAssignLater, err = s.assignPending(t.Context(), retryAssignLater.ToSlice(), scoresMap(map[string]float64{"worker-0": 0.8}), activeRunnerSets)
+		s.runnerPodLister = podListerForRunners("worker-0")
+		s.activeRunnerSets = activeRunnerSets
+		retryAssignLater, err = s.assignPending(t.Context(), retryAssignLater.ToSlice())
 		require.NoError(t, err)
 		require.Zero(t, retryAssignLater.Cardinality())
 
@@ -53,7 +53,7 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		const inactiveRunner = "worker-inactive"
 
-		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, inactiveRunner)
+		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, inactiveRunner)
 		taskID := task.Id("pending-task-inactive-runner")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
@@ -63,17 +63,12 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		scores := scoresMap(map[string]float64{inactiveRunner: 0.5})
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
 			[]string{string(taskID)},
-			scores,
-			activeRunnerSets,
 		)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
-		_, ok := scores.Load(inactiveRunner)
-		require.False(t, ok, "inactive runner score should be evicted to avoid repeated retries")
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -89,7 +84,7 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 			missingSetRunner = "worker-missing-set"
 		)
 
-		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, healthyRunner)
+		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, healthyRunner)
 		taskID := task.Id("pending-task-missing-runner-set")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
@@ -99,17 +94,13 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		scores := scoresMap(map[string]float64{missingSetRunner: 0.8})
+		s.runnerPodLister = podListerForRunners(missingSetRunner)
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
 			[]string{string(taskID)},
-			scores,
-			activeRunnerSets,
 		)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
-		_, ok := scores.Load(missingSetRunner)
-		require.False(t, ok, "runner score should be evicted when runner queue directory is gone")
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -120,15 +111,13 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 
 func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, "worker-1")
+		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, "worker-1")
 		taskID := task.Id("pending-task-live")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
 			[]string{"missing-task-id", string(taskID)},
-			scoresMap(map[string]float64{"worker-1": 0.3}),
-			activeRunnerSets,
 		)
 		require.NoError(t, err)
 		require.Zero(t, retryAssignLater.Cardinality())
@@ -142,7 +131,7 @@ func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 
 func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, "worker-2")
+		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, "worker-2")
 		taskID := task.Id("pending-task-invalid-runner")
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
@@ -159,8 +148,6 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 		_, err = s.assignPending(
 			t.Context(),
 			[]string{string(taskID)},
-			scoresMap(map[string]float64{"worker-2": 0.7}),
-			activeRunnerSets,
 		)
 		require.Error(t, err)
 		require.ErrorIs(t, err, task.ErrNonRunningTaskHasRunnerID)
@@ -202,7 +189,37 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 		activeRunners: activeRunners,
 		logger:        slog.Default(),
 	}
-	return s, tasksDir, pendingSet, newMockedRunnerSetCache(db, map[string]*reliableset.Set{workerID: workerSet})
+	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*reliableset.Set{workerID: workerSet})
+	s.activeRunnerSets = activeRunnerSets
+	s.runnerPodLister = podListerForRunners(workerID)
+	return s, tasksDir, pendingSet, activeRunnerSets
+}
+
+type staticPodNamespaceLister struct {
+	pods []*corev1.Pod
+}
+
+func podListerForRunners(runnerIDs ...string) staticPodNamespaceLister {
+	pods := make([]*corev1.Pod, 0, len(runnerIDs))
+	for _, runnerID := range runnerIDs {
+		pods = append(pods, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: runnerID},
+		})
+	}
+	return staticPodNamespaceLister{pods: pods}
+}
+
+func (l staticPodNamespaceLister) List(selector labels.Selector) ([]*corev1.Pod, error) {
+	return l.pods, nil
+}
+
+func (l staticPodNamespaceLister) Get(name string) (*corev1.Pod, error) {
+	for _, pod := range l.pods {
+		if pod.Name == name {
+			return pod, nil
+		}
+	}
+	return nil, fmt.Errorf("pod %q not found", name)
 }
 
 func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*reliableset.Set) *runnerSetCache {

@@ -5,35 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sort"
 	"sync/atomic"
-	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
-	schedulermetrics "github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler/metrics"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
-	weightedrand "github.com/mroth/weightedrand/v2"
-	"github.com/puzpuzpuz/xsync/v4"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-const schedulingDecisionLookbackDuration = time.Minute * 5
-
-// assignPending assigns all given tasks in the pending set to the most fit workers.
-// Fitness is determines by selectWeightedWorker.
+// assignPending assigns all given tasks in the pending set to active runner pods.
 // If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
 func (s *Scheduler) assignPending(
 	ctx context.Context,
 	pendingIds []string,
-	// scores *xsync.Map[string, float64], TODO: implement new scoring logic, inline in this method
 ) (retryAssignLater mapset.Set[string], err error) {
 	ctx, span := tracer.Start(ctx, "assignPending")
 	span.SetAttributes(
@@ -45,33 +36,15 @@ func (s *Scheduler) assignPending(
 		return nil, fmt.Errorf("failed to list runner pods: %w", err)
 	}
 
-	now := time.Now()
-	runnerLoads := make(map[string]float64)
-	totalLoad := 0.0
+	runnerIDs := make([]string, 0, len(pods))
 	for _, pod := range pods {
-		cpuLoad, err := s.runnerMetrics.Cpu(ctx, schedulermetrics.QueryParameters{
-			RunnerId:         pod.Name,
-			From:             now,
-			LookbackDuration: schedulingDecisionLookbackDuration,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get cpu load for pod %s: %w", pod.Name, err)
-		}
-		memoryLoad, err := s.runnerMetrics.Memory(ctx, schedulermetrics.QueryParameters{
-			RunnerId:         pod.Name,
-			From:             now,
-			LookbackDuration: schedulingDecisionLookbackDuration,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get memory load for pod %s: %w", pod.Name, err)
-		}
-		bottleneckLoad := math.Max(cpuLoad, memoryLoad)
-		runnerLoads[pod.Name] = bottleneckLoad
-		totalLoad += bottleneckLoad
+		runnerIDs = append(runnerIDs, pod.Name)
 	}
+	sort.Strings(runnerIDs)
 
 	assignmentRecord := []string{}
 	var couldntSelect, batchTransactionFailed atomic.Int32
+	var nextRunnerSelection atomic.Uint64
 	defer func() {
 		span.SetAttributes(
 			attribute.Int("assignment_count", len(assignmentRecord)),
@@ -114,11 +87,9 @@ func (s *Scheduler) assignPending(
 		group.Go(func() error {
 			defer activeTxSem.Release(1)
 			var txScopedRetryAssignLater mapset.Set[string]
-			var txScopedRunnerScoreEvictions mapset.Set[string]
 
 			_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 				txScopedRetryAssignLater = mapset.NewSet[string]()
-				txScopedRunnerScoreEvictions = mapset.NewSet[string]()
 				rejectedRunners := mapset.NewSet[string]()
 
 				// Keep this scoped to a single transaction attempt so retries do not
@@ -126,7 +97,11 @@ func (s *Scheduler) assignPending(
 				txRunnerActiveStates := make(map[string]bool)
 				for _, id := range batch {
 				retryRunnerSelection:
-					runnerId, ok := selectWeightedRunnerExcluding(scores, rejectedRunners)
+					runnerId, ok := selectRunnerExcluding(
+						runnerIDs,
+						rejectedRunners,
+						int(nextRunnerSelection.Add(1)-1),
+					)
 					if !ok {
 						couldntSelect.Add(1)
 						txScopedRetryAssignLater.Add(id)
@@ -141,10 +116,7 @@ func (s *Scheduler) assignPending(
 					}
 					if !runnerState {
 						slog.Info("runner is not active, skipping assignment", "runner_id", runnerId)
-						// this runner is no longer active, skip assignment for it.
-						// evict from score cache only after transaction commit.
 						rejectedRunners.Add(runnerId)
-						txScopedRunnerScoreEvictions.Add(runnerId)
 						// then retry the assignment for this task.
 						goto retryRunnerSelection
 					}
@@ -152,9 +124,8 @@ func (s *Scheduler) assignPending(
 					runnerSet, err := s.activeRunnerSets.open(runnerId)
 					if err != nil {
 						if errors.Is(err, directory.ErrDirNotExists) {
-							// the runner set is no longer active, evict score on commit and retry assignment.
+							// The runner set is no longer active. Try another visible runner.
 							rejectedRunners.Add(runnerId)
-							txScopedRunnerScoreEvictions.Add(runnerId)
 							goto retryRunnerSelection
 						}
 						return nil, err
@@ -175,9 +146,6 @@ func (s *Scheduler) assignPending(
 				retryAssignLater.Append(batch...)
 			} else {
 				retryAssignLater.Append(txScopedRetryAssignLater.ToSlice()...)
-				for runnerID := range txScopedRunnerScoreEvictions.Iter() {
-					scores.Delete(runnerID)
-				}
 			}
 			return err
 		})
@@ -223,50 +191,16 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 	return s.pendingSet.Remove(tx, []byte(id))
 }
 
-func selectWeightedRunner(scores *xsync.Map[string, float64]) (string, bool) {
-	return selectWeightedRunnerExcluding(scores, nil)
-}
-
-func selectWeightedRunnerExcluding(scores *xsync.Map[string, float64], excluded mapset.Set[string]) (string, bool) {
-	if scores.Size() == 0 {
+func selectRunnerExcluding(runnerIDs []string, excluded mapset.Set[string], offset int) (string, bool) {
+	if len(runnerIDs) == 0 {
 		return "", false
 	}
-
-	keys := make([]string, 0, scores.Size())
-	maxScore := math.Inf(-1)
-	scores.Range(func(worker string, scoreValue float64) bool {
-		if excluded != nil && excluded.ContainsOne(worker) {
-			return true
+	for i := range runnerIDs {
+		idx := (offset + i) % len(runnerIDs)
+		runnerID := runnerIDs[idx]
+		if excluded == nil || !excluded.ContainsOne(runnerID) {
+			return runnerID, true
 		}
-		keys = append(keys, worker)
-		if scoreValue > maxScore {
-			maxScore = scoreValue
-		}
-		return true
-	})
-	if len(keys) == 0 {
-		return "", false
 	}
-	sort.Strings(keys)
-
-	const weightScale = 1000.0
-	choices := make([]weightedrand.Choice[string, uint], 0, len(keys))
-	for _, worker := range keys {
-		scoreVal, ok := scores.Load(worker)
-		if !ok {
-			continue
-		}
-		delta := maxScore - scoreVal
-		if delta < 0 {
-			delta = 0
-		}
-		weight := uint(math.Round(delta*weightScale)) + 1
-		choices = append(choices, weightedrand.NewChoice(worker, weight))
-	}
-
-	chooser, err := weightedrand.NewChooser(choices...)
-	if err != nil {
-		return "", false
-	}
-	return chooser.Pick(), true
+	return "", false
 }
