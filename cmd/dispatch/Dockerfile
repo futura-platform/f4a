@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # FDB client library stage - extract from community image with headers
 FROM celrenheit/foundationdb:7.3.46 AS fdb
 
@@ -15,7 +16,8 @@ COPY --from=fdb /usr/include/foundationdb /usr/include/foundationdb
 WORKDIR /workspace/f4a
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=f4a-gomod,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
