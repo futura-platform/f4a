@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // assignPending assigns all given tasks in the pending set to the most fit workers.
@@ -29,12 +30,16 @@ func (s *Scheduler) assignPending(
 	ctx context.Context,
 	pendingIds []string,
 	// scores *xsync.Map[string, float64], TODO: implement new scoring logic, inline in this method
-	activeRunnerSets *runnerSetCache,
 ) (retryAssignLater mapset.Set[string], err error) {
 	ctx, span := tracer.Start(ctx, "assignPending")
 	span.SetAttributes(
 		attribute.Int("pending_ids_count", len(pendingIds)),
 	)
+
+	pods, err := runnerPods.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runner pods: %w", err)
+	}
 
 	assignmentRecord := []string{}
 

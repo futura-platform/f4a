@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	v1 "k8s.io/client-go/listers/core/v1"
 
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
@@ -57,7 +58,9 @@ type Scheduler struct {
 	taskDir       task.TasksDirectory
 	pendingSet,
 	suspendedSet *reliableset.Set
-	clients *k8s.Clients
+	activeRunnerSets *runnerSetCache
+	runnerPodLister  v1.PodNamespaceLister
+	clients          *k8s.Clients
 
 	logger *slog.Logger
 }
@@ -84,15 +87,28 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 		return fmt.Errorf("failed to open active runners: %w", err)
 	}
 
+	runnerPodInformer, cancel, err := liveRunnerPods(
+		ctx,
+		clients,
+		cfg.Namespace,
+		cfg.StatefulSetName,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to watch runner pods: %w", err)
+	}
+	defer cancel()
+
 	s := &Scheduler{
-		cfg:           cfg,
-		db:            db,
-		activeRunners: activeRunners,
-		taskDir:       taskDir,
-		pendingSet:    pendingSet,
-		suspendedSet:  suspendedSet,
-		clients:       clients,
-		logger:        cfg.Logger,
+		cfg:              cfg,
+		db:               db,
+		activeRunners:    activeRunners,
+		taskDir:          taskDir,
+		pendingSet:       pendingSet,
+		suspendedSet:     suspendedSet,
+		clients:          clients,
+		logger:           cfg.Logger,
+		activeRunnerSets: newRunnerSetCache(db, runnerPodInformer.Informer()),
+		runnerPodLister:  runnerPodInformer.Lister().Pods(cfg.Namespace),
 	}
 	return s.commandRunners(ctx)
 }
@@ -113,19 +129,6 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		}
 		span.End()
 	}()
-
-	runnerPodInformer, cancel, err := liveRunnerPods(
-		ctx,
-		s.clients,
-		s.cfg.Namespace,
-		s.cfg.StatefulSetName,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to watch runner pods: %w", err)
-	}
-	defer cancel()
-
-	activeRunnerSets := newRunnerSetCache(s.db, runnerPodInformer.Informer())
 
 	taskCountGauge, err := meter.Int64ObservableGauge("task_count")
 	if err != nil {
@@ -155,7 +158,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			runnerSet, err := activeRunnerSets.open(runnerID)
+			runnerSet, err := s.activeRunnerSets.open(runnerID)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
 					continue
@@ -187,7 +190,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	cancelReaper, err := reaper.SpawnReaperRoutine(
 		ctx,
 		s.db,
-		runnerPodInformer.Lister().Pods(s.cfg.Namespace),
+		s.runnerPodLister,
 		s.clients.Core.CoreV1().Pods(s.cfg.Namespace),
 		reaperPollInterval,
 	)
@@ -196,7 +199,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	defer cancelReaper()
 
-	backlog, err := s.assignPending(ctx, initialValues.ToSlice(), activeRunnerSets)
+	backlog, err := s.assignPending(ctx, initialValues.ToSlice())
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
@@ -222,7 +225,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 					backlog.Remove(string(entry.Value))
 				}
 			}
-			backlog, err = s.assignPending(ctx, backlog.ToSlice(), activeRunnerSets)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice())
 			if err != nil {
 				return fmt.Errorf("failed to assign pending tasks: %w", err)
 			}
@@ -234,7 +237,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				return fmt.Errorf("pending set stream failed: %w", err)
 			}
 		case <-ticker.C:
-			backlog, err = s.assignPending(ctx, backlog.ToSlice(), activeRunnerSets)
+			backlog, err = s.assignPending(ctx, backlog.ToSlice())
 			if err != nil {
 				return fmt.Errorf("failed to assign pending backlog: %w", err)
 			}
