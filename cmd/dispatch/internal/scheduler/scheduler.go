@@ -131,13 +131,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to create pending task count counter: %w", err)
 	}
-	availableRunnerGauge, err := meter.Int64ObservableGauge("available_runner_count")
-	if err != nil {
-		return fmt.Errorf("failed to create runner count counter: %w", err)
-	}
 	reg, err := meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
-		o.ObserveInt64(availableRunnerGauge, int64(scores.Size()))
-
 		const stateAttribute = "state"
 		pendingSetItems, _, err := s.pendingSet.Items(ctx, s.db.Database)
 		if err != nil {
@@ -176,7 +170,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		}
 		o.ObserveInt64(taskCountGauge, runningCount, metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil
-	}, taskCountGauge, availableRunnerGauge)
+	}, taskCountGauge)
 	if err != nil {
 		return fmt.Errorf("failed to register callback: %w", err)
 	}
