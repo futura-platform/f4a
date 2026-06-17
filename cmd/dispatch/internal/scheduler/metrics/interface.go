@@ -16,7 +16,8 @@ const (
 
 type QueryParameters struct {
 	AggregateType AggregateType
-	RunnerId      string
+
+	RunnerId string
 
 	// queries the range [From - LookbackDuration, From)
 	From             time.Time

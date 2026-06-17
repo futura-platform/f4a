@@ -195,6 +195,7 @@ func (c *controller) createTaskRevisioned(
 			tkey.CallbackUrl().Set(t, inner.CallbackUrl)
 			tkey.Input().Set(t, parameters.GetInput())
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
+			tkey.ResourceRequest().Set(t, inner.GetResourceRequest())
 			return c.suspendedSet.Add(t, []byte(tkey.Id()))
 		},
 	)

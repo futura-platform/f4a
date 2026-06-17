@@ -12,6 +12,7 @@ import (
 	v1 "k8s.io/client-go/listers/core/v1"
 
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
+	schedulermetrics "github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler/metrics"
 	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
@@ -60,6 +61,7 @@ type Scheduler struct {
 	suspendedSet *reliableset.Set
 	activeRunnerSets *runnerSetCache
 	runnerPodLister  v1.PodNamespaceLister
+	runnerMetrics    schedulermetrics.RunnerMetrics
 	clients          *k8s.Clients
 
 	logger *slog.Logger

@@ -8,10 +8,12 @@ import (
 	"math"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
+	schedulermetrics "github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler/metrics"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
@@ -22,6 +24,8 @@ import (
 	"golang.org/x/sync/semaphore"
 	"k8s.io/apimachinery/pkg/labels"
 )
+
+const schedulingDecisionLookbackDuration = time.Minute * 5
 
 // assignPending assigns all given tasks in the pending set to the most fit workers.
 // Fitness is determines by selectWeightedWorker.
@@ -36,13 +40,37 @@ func (s *Scheduler) assignPending(
 		attribute.Int("pending_ids_count", len(pendingIds)),
 	)
 
-	pods, err := runnerPods.List(labels.Everything())
+	pods, err := s.runnerPodLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runner pods: %w", err)
 	}
 
-	assignmentRecord := []string{}
+	now := time.Now()
+	runnerLoads := make(map[string]float64)
+	totalLoad := 0.0
+	for _, pod := range pods {
+		cpuLoad, err := s.runnerMetrics.Cpu(ctx, schedulermetrics.QueryParameters{
+			RunnerId:         pod.Name,
+			From:             now,
+			LookbackDuration: schedulingDecisionLookbackDuration,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cpu load for pod %s: %w", pod.Name, err)
+		}
+		memoryLoad, err := s.runnerMetrics.Memory(ctx, schedulermetrics.QueryParameters{
+			RunnerId:         pod.Name,
+			From:             now,
+			LookbackDuration: schedulingDecisionLookbackDuration,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get memory load for pod %s: %w", pod.Name, err)
+		}
+		bottleneckLoad := math.Max(cpuLoad, memoryLoad)
+		runnerLoads[pod.Name] = bottleneckLoad
+		totalLoad += bottleneckLoad
+	}
 
+	assignmentRecord := []string{}
 	var couldntSelect, batchTransactionFailed atomic.Int32
 	defer func() {
 		span.SetAttributes(
@@ -121,7 +149,7 @@ func (s *Scheduler) assignPending(
 						goto retryRunnerSelection
 					}
 
-					runnerSet, err := activeRunnerSets.open(runnerId)
+					runnerSet, err := s.activeRunnerSets.open(runnerId)
 					if err != nil {
 						if errors.Is(err, directory.ErrDirNotExists) {
 							// the runner set is no longer active, evict score on commit and retry assignment.
