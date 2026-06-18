@@ -206,6 +206,9 @@ func podListerForRunners(runnerIDs ...string) staticPodNamespaceLister {
 	for _, runnerID := range runnerIDs {
 		pods = append(pods, &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: runnerID},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			},
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name: "runner",

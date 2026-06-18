@@ -60,6 +60,9 @@ func (s *Scheduler) assignPending(
 	runnerGroup, _ := errgroup.WithContext(ctx)
 	runnerGroup.SetLimit(s.batchTxParallelism())
 	for _, pod := range pods {
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
 		runnerGroup.Go(func() error {
 			resources, ok, err := remainingResourcesFromRunner(s.db, s.db, s.activeRunners, pod)
 			if err != nil {
