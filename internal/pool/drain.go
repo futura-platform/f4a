@@ -21,7 +21,7 @@ func DrainTaskRunner(
 	dbr dbutil.DbRoot,
 	runnerId string,
 	activeRunners ActiveRunners,
-	taskSet *reliableset.Set,
+	taskSet *RunnerSet,
 	pendingSet *reliableset.Set,
 	taskDir task.TasksDirectory,
 ) error {
@@ -78,7 +78,7 @@ func DrainTaskRunner(
 					continue
 				}
 
-				err = taskSet.Remove(tx, []byte(taskID))
+				err = taskSet.Remove(tx, tkey)
 				if err != nil {
 					return nil, fmt.Errorf("failed to remove task from task set: %w", err)
 				}

@@ -29,7 +29,7 @@ type taskManager struct {
 	*runMap
 	db            dbutil.DbRoot
 	runnerId      string
-	taskSet       *reliableset.Set
+	taskSet       *RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
 	c             *http.Client
@@ -51,7 +51,7 @@ func RunWorkLoop(
 	ctx context.Context,
 	runnerId string,
 	db dbutil.DbRoot,
-	taskSet *reliableset.Set,
+	taskSet *RunnerSet,
 	router execute.Router,
 ) error {
 	ctx, span := tracer.Start(ctx, "RunWorkLoop")

@@ -26,6 +26,13 @@ func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
 	return c
 }
 
+func testResourceRequest() *taskv1.TaskResourceRequest {
+	return &taskv1.TaskResourceRequest{
+		CpuMillis:   500,
+		MemoryBytes: 1024,
+	}
+}
+
 type taskState struct {
 	ExecutorID      string
 	CallbackURL     *string
@@ -44,10 +51,11 @@ func mustCreateTask(
 	_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 		Revision: revision,
 		Request: &taskv1.CreateTaskRequest{
-			TaskId:      taskID,
-			ExecutorId:  executorID,
-			CallbackUrl: &callbackURL,
-			Parameters:  &taskv1.TaskParameters{Input: input},
+			TaskId:          taskID,
+			ExecutorId:      executorID,
+			CallbackUrl:     &callbackURL,
+			Parameters:      &taskv1.TaskParameters{Input: input},
+			ResourceRequest: testResourceRequest(),
 		},
 	})
 	require.NoError(t, err)
@@ -330,10 +338,11 @@ func TestControllerRevisionRules(t *testing.T) {
 			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 				Revision: 2,
 				Request: &taskv1.CreateTaskRequest{
-					TaskId:      "bad-create-revision",
-					ExecutorId:  "executor-a",
-					CallbackUrl: &callbackURL,
-					Parameters:  &taskv1.TaskParameters{Input: []byte("payload")},
+					TaskId:          "bad-create-revision",
+					ExecutorId:      "executor-a",
+					CallbackUrl:     &callbackURL,
+					Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+					ResourceRequest: testResourceRequest(),
 				},
 			})
 			require.Error(t, err)
@@ -385,10 +394,11 @@ func TestControllerRejectsMissingParameters(t *testing.T) {
 			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 				Revision: 1,
 				Request: &taskv1.CreateTaskRequest{
-					TaskId:      "missing-create-params",
-					ExecutorId:  "executor-a",
-					CallbackUrl: &callbackURL,
-					Parameters:  nil,
+					TaskId:          "missing-create-params",
+					ExecutorId:      "executor-a",
+					CallbackUrl:     &callbackURL,
+					Parameters:      nil,
+					ResourceRequest: testResourceRequest(),
 				},
 			})
 			require.ErrorIs(t, err, ErrMissingParameters)
@@ -421,10 +431,11 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
 						Revision: 1,
 						Request: &taskv1.CreateTaskRequest{
-							TaskId:      "batch-task-a",
-							ExecutorId:  "executor-a",
-							CallbackUrl: &callbackUrlA,
-							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							TaskId:          "batch-task-a",
+							ExecutorId:      "executor-a",
+							CallbackUrl:     &callbackUrlA,
+							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
+							ResourceRequest: testResourceRequest(),
 						},
 					},
 				},
@@ -434,10 +445,11 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
 						Revision: 2,
 						Request: &taskv1.CreateTaskRequest{
-							TaskId:      "batch-task-b",
-							ExecutorId:  "executor-b",
-							CallbackUrl: &callbackUrlB,
-							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							TaskId:          "batch-task-b",
+							ExecutorId:      "executor-b",
+							CallbackUrl:     &callbackUrlB,
+							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
+							ResourceRequest: testResourceRequest(),
 						},
 					},
 				},

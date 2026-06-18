@@ -138,7 +138,7 @@ func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.
 		}
 
 		_, err = m.revisionStore.ApplyNext(tx, runnable.Id(), task.RevisionOperationDelete, func() error {
-			if err := m.taskSet.Remove(tx, []byte(runnable.Id())); err != nil {
+			if err := m.taskSet.Remove(tx, taskKey); err != nil {
 				return fmt.Errorf("failed to remove task from task queue: %w", err)
 			}
 			if err := taskKey.Clear(tx); err != nil {

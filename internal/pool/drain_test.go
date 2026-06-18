@@ -52,7 +52,7 @@ func isRunnerActive(t testing.TB, db dbutil.DbRoot, activeRunners ActiveRunners,
 func enqueueTaskWithAssignment(
 	t testing.TB,
 	db dbutil.DbRoot,
-	taskSet *reliableset.Set,
+	taskSet *RunnerSet,
 	taskDir task.TasksDirectory,
 	id task.Id,
 	status task.LifecycleStatus,
@@ -67,7 +67,8 @@ func enqueueTaskWithAssignment(
 		}
 		tkey.LifecycleStatus().Set(tx, status)
 		tkey.RunnerId().Set(tx, runnerID)
-		if err := taskSet.Add(tx, []byte(id)); err != nil {
+		tkey.ResourceRequest().Set(tx, testResourceRequest())
+		if err := taskSet.Add(tx, tkey); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -78,7 +79,7 @@ func enqueueTaskWithAssignment(
 func enqueueTasksWithAssignmentInBatches(
 	t testing.TB,
 	db dbutil.DbRoot,
-	taskSet *reliableset.Set,
+	taskSet *RunnerSet,
 	taskDir task.TasksDirectory,
 	ids []task.Id,
 	status task.LifecycleStatus,
@@ -88,10 +89,7 @@ func enqueueTasksWithAssignmentInBatches(
 
 	const createBatchSize = 64
 	for batchStart := 0; batchStart < len(ids); batchStart += createBatchSize {
-		batchEnd := batchStart + createBatchSize
-		if batchEnd > len(ids) {
-			batchEnd = len(ids)
-		}
+		batchEnd := min(batchStart+createBatchSize, len(ids))
 		batch := ids[batchStart:batchEnd]
 
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -102,7 +100,8 @@ func enqueueTasksWithAssignmentInBatches(
 				}
 				tkey.LifecycleStatus().Set(tx, status)
 				tkey.RunnerId().Set(tx, runnerID)
-				if err := taskSet.Add(tx, []byte(id)); err != nil {
+				tkey.ResourceRequest().Set(tx, testResourceRequest())
+				if err := taskSet.Add(tx, tkey); err != nil {
 					return nil, err
 				}
 			}
@@ -112,7 +111,9 @@ func enqueueTasksWithAssignmentInBatches(
 	}
 }
 
-func readSetItems(t testing.TB, db dbutil.DbRoot, set *reliableset.Set) mapset.Set[string] {
+func readSetItems(t testing.TB, db dbutil.DbRoot, set interface {
+	Items(context.Context, fdb.Database) (mapset.Set[string], fdb.KeyConvertible, error)
+}) mapset.Set[string] {
 	t.Helper()
 
 	items, _, err := set.Items(t.Context(), db.Database)
@@ -229,8 +230,8 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 		for i := range taskCount {
 			id := task.Id(fmt.Sprintf("drain-task-%03d", i))
 			taskIDs = append(taskIDs, id)
-			enqueueTaskWithAssignment(t, db, taskSet, taskDir, id, task.LifecycleStatusRunning, stringPointer(runnerID))
 		}
+		enqueueTasksWithAssignmentInBatches(t, db, taskSet, taskDir, taskIDs, task.LifecycleStatusRunning, stringPointer(runnerID))
 
 		err = DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
 		require.NoError(t, err)
@@ -426,16 +427,16 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 
 							switch op {
 							case 0:
-								if err := taskSet.Remove(tx, []byte(id)); err != nil {
+								if err := taskSet.Remove(tx, tkey); err != nil {
 									return false, err
 								}
-								if err := reassignedTaskSet.Add(tx, []byte(id)); err != nil {
+								if err := reassignedTaskSet.Add(tx, tkey); err != nil {
 									return false, err
 								}
 								tkey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
 								tkey.RunnerId().Set(tx, stringPointer(reassignedRunnerID))
 							case 1:
-								if err := taskSet.Remove(tx, []byte(id)); err != nil {
+								if err := taskSet.Remove(tx, tkey); err != nil {
 									return false, err
 								}
 								if err := pendingSet.Add(tx, []byte(id)); err != nil {
@@ -444,7 +445,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 								tkey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
 								tkey.RunnerId().Set(tx, nil)
 							default:
-								if err := taskSet.Remove(tx, []byte(id)); err != nil {
+								if err := taskSet.Remove(tx, tkey); err != nil {
 									return false, err
 								}
 								if err := tkey.Clear(tx); err != nil {

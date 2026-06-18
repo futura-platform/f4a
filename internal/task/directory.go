@@ -29,7 +29,7 @@ func (d TasksDirectory) Create(db fdb.Transactor, id Id) (TaskKey, error) {
 	}, nil
 }
 
-func (d TasksDirectory) Open(db fdb.Transactor, id Id) (TaskKey, error) {
+func (d TasksDirectory) Open(db fdb.ReadTransactor, id Id) (TaskKey, error) {
 	path := []string{string(id)}
 	task, err := d.d.Open(db, path, nil)
 	if err != nil {

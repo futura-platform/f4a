@@ -7,6 +7,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -146,6 +147,10 @@ func TestRunWithLeaderElection(t *testing.T) {
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				taskKey.RunnerId().Set(tx, nil)
 				taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
+				taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
+					CpuMillis:   50,
+					MemoryBytes: 64 * 1024 * 1024,
+				})
 				if err := pendingSet.Add(tx, []byte(testTaskId)); err != nil {
 					return nil, err
 				}

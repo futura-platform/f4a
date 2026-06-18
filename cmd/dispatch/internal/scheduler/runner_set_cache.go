@@ -5,7 +5,6 @@ import (
 	"reflect"
 
 	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sync/singleflight"
@@ -19,13 +18,13 @@ import (
 type runnerSetCache struct {
 	db           dbutil.DbRoot
 	accessFlight singleflight.Group
-	activeSets   *xsync.Map[string, *reliableset.Set]
+	activeSets   *xsync.Map[string, *pool.RunnerSet]
 }
 
-func (r *runnerSetCache) open(runnerId string) (*reliableset.Set, error) {
+func (r *runnerSetCache) open(runnerId string) (*pool.RunnerSet, error) {
 	set, err, _ := r.accessFlight.Do(runnerId, func() (any, error) {
 		var loadErr error
-		set, _ := r.activeSets.LoadOrCompute(runnerId, func() (newValue *reliableset.Set, cancel bool) {
+		set, _ := r.activeSets.LoadOrCompute(runnerId, func() (newValue *pool.RunnerSet, cancel bool) {
 			set, err := pool.OpenTaskSetForRunner(r.db, r.db, runnerId)
 			if err != nil {
 				loadErr = err
@@ -38,13 +37,13 @@ func (r *runnerSetCache) open(runnerId string) (*reliableset.Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	return set.(*reliableset.Set), nil
+	return set.(*pool.RunnerSet), nil
 }
 
 func newRunnerSetCache(db dbutil.DbRoot, runnerInformer cache.SharedIndexInformer) *runnerSetCache {
 	cache := &runnerSetCache{
 		db:         db,
-		activeSets: xsync.NewMap[string, *reliableset.Set](),
+		activeSets: xsync.NewMap[string, *pool.RunnerSet](),
 	}
 	runnerInformer.AddEventHandler(cache)
 	return cache

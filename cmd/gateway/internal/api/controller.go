@@ -191,11 +191,15 @@ func (c *controller) createTaskRevisioned(
 				}
 				return fmt.Errorf("failed to create task: %w", err)
 			}
+			resourceRequest := inner.GetResourceRequest()
+			if resourceRequest == nil {
+				return fmt.Errorf("missing resource request")
+			}
+			tkey.ResourceRequest().Set(t, resourceRequest)
 			tkey.ExecutorId().Set(t, execute.ExecutorId(inner.GetExecutorId()))
 			tkey.CallbackUrl().Set(t, inner.CallbackUrl)
 			tkey.Input().Set(t, parameters.GetInput())
 			tkey.LifecycleStatus().Set(t, task.LifecycleStatusSuspended)
-			tkey.ResourceRequest().Set(t, inner.GetResourceRequest())
 			return c.suspendedSet.Add(t, []byte(tkey.Id()))
 		},
 	)
@@ -490,7 +494,7 @@ func (c *controller) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 			}
 			return fmt.Errorf("failed to open task set: %w", err)
 		}
-		if err := taskSet.Remove(t, []byte(tkey.Id())); err != nil {
+		if err := taskSet.Remove(t, tkey); err != nil {
 			return fmt.Errorf("failed to remove task from task set: %w", err)
 		}
 

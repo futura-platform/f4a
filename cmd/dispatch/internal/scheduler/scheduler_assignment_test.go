@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -15,6 +16,7 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -26,7 +28,7 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
 		s.runnerPodLister = podListerForRunners()
-		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*reliableset.Set{})
+		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*pool.RunnerSet{})
 		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)})
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
@@ -189,7 +191,7 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 		activeRunners: activeRunners,
 		logger:        slog.Default(),
 	}
-	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*reliableset.Set{workerID: workerSet})
+	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*pool.RunnerSet{workerID: workerSet})
 	s.activeRunnerSets = activeRunnerSets
 	s.runnerPodLister = podListerForRunners(workerID)
 	return s, tasksDir, pendingSet, activeRunnerSets
@@ -204,6 +206,17 @@ func podListerForRunners(runnerIDs ...string) staticPodNamespaceLister {
 	for _, runnerID := range runnerIDs {
 		pods = append(pods, &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: runnerID},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name: "runner",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("1000m"),
+							corev1.ResourceMemory: resource.MustParse("1Gi"),
+						},
+					},
+				}},
+			},
 		})
 	}
 	return staticPodNamespaceLister{pods: pods}
@@ -222,10 +235,10 @@ func (l staticPodNamespaceLister) Get(name string) (*corev1.Pod, error) {
 	return nil, fmt.Errorf("pod %q not found", name)
 }
 
-func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*reliableset.Set) *runnerSetCache {
+func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*pool.RunnerSet) *runnerSetCache {
 	cache := &runnerSetCache{
 		db:         db,
-		activeSets: xsync.NewMap[string, *reliableset.Set](xsync.WithPresize(len(src))),
+		activeSets: xsync.NewMap[string, *pool.RunnerSet](xsync.WithPresize(len(src))),
 	}
 	for k, v := range src {
 		cache.activeSets.Store(k, v)
@@ -242,6 +255,10 @@ func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirector
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
 		taskKey.RunnerId().Set(tx, nil)
+		taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
+			CpuMillis:   100,
+			MemoryBytes: 128 * 1024 * 1024,
+		})
 		if err := pendingSet.Add(tx, []byte(id)); err != nil {
 			return nil, err
 		}
