@@ -41,7 +41,7 @@ func DrainTaskRunner(
 	}
 
 	// do a best effort to drain the task set, using batching to avoid overloading the tx size limit.
-	const drainBatchSize = 256
+	const drainBatchSize = 128
 	for hangingTasks.Cardinality() > 0 {
 		currentBatch := mapset.NewSet[string]()
 		for range drainBatchSize {

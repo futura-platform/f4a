@@ -18,6 +18,22 @@ func testResourceRequest() *taskv1.TaskResourceRequest {
 	}
 }
 
+func requireRunnerSetUtilization(t testing.TB, db dbutil.DbRoot, runnerSet *RunnerSet, expectedCpuMillis, expectedMemoryBytes int64) {
+	t.Helper()
+
+	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+		cpuUtilization, err := runnerSet.GetUtilization(tx, UtilizationDimensionCPU)
+		require.NoError(t, err)
+		require.Equal(t, expectedCpuMillis, cpuUtilization)
+
+		memoryUtilization, err := runnerSet.GetUtilization(tx, UtilizationDimensionMemory)
+		require.NoError(t, err)
+		require.Equal(t, expectedMemoryBytes, memoryUtilization)
+		return nil, nil
+	})
+	require.NoError(t, err)
+}
+
 func TestRunnerSet(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		runnerSet, err := createOrOpenRunnerSet(db, db, "test-runner")
@@ -57,6 +73,17 @@ func TestRunnerSet(t *testing.T) {
 			require.NoError(t, err)
 		})
 
+		t.Run("adding a task twice does not double count the aggregate", func(t *testing.T) {
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				err := runnerSet.Add(tx, taskKey)
+				require.NoError(t, err)
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			requireRunnerSetUtilization(t, db, runnerSet, int64(resourceRequest.CpuMillis), int64(resourceRequest.MemoryBytes))
+		})
+
 		t.Run("removing tasks should automatically update the utilization aggregate", func(t *testing.T) {
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				err := runnerSet.Remove(tx, taskKey)
@@ -73,6 +100,17 @@ func TestRunnerSet(t *testing.T) {
 				return nil, nil
 			})
 			require.NoError(t, err)
+		})
+
+		t.Run("removing a task twice does not make the aggregate negative", func(t *testing.T) {
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				err := runnerSet.Remove(tx, taskKey)
+				require.NoError(t, err)
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			requireRunnerSetUtilization(t, db, runnerSet, 0, 0)
 		})
 	})
 }
