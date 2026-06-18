@@ -81,7 +81,7 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) {
 			taskKey, err := tasksDirectory.Open(tx, id)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
-					if err := set.Set.Add(tx, []byte(id)); err != nil {
+					if err := set.set.Add(tx, []byte(id)); err != nil {
 						return nil, err
 					}
 					continue
@@ -108,7 +108,7 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) 
 			taskKey, err := tasksDirectory.Open(tx, id)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
-					if err := set.Set.Remove(tx, []byte(id)); err != nil {
+					if err := set.set.Remove(tx, []byte(id)); err != nil {
 						return nil, err
 					}
 					continue
