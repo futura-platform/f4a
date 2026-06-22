@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/kubectl/pkg/util/podutils"
 )
 
 type remainingResources struct {
@@ -60,7 +61,7 @@ func (s *Scheduler) assignPending(
 	runnerGroup, _ := errgroup.WithContext(ctx)
 	runnerGroup.SetLimit(s.batchTxParallelism())
 	for _, pod := range pods {
-		if pod.Status.Phase != corev1.PodRunning {
+		if !podutils.IsPodReady(pod) {
 			continue
 		}
 		runnerGroup.Go(func() error {
