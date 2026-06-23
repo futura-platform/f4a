@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sync/singleflight"
@@ -18,14 +18,14 @@ import (
 type runnerSetCache struct {
 	db           dbutil.DbRoot
 	accessFlight singleflight.Group
-	activeSets   *xsync.Map[string, *pool.RunnerSet]
+	activeSets   *xsync.Map[string, *servicestate.RunnerSet]
 }
 
-func (r *runnerSetCache) open(runnerId string) (*pool.RunnerSet, error) {
+func (r *runnerSetCache) open(runnerId string) (*servicestate.RunnerSet, error) {
 	set, err, _ := r.accessFlight.Do(runnerId, func() (any, error) {
 		var loadErr error
-		set, _ := r.activeSets.LoadOrCompute(runnerId, func() (newValue *pool.RunnerSet, cancel bool) {
-			set, err := pool.OpenTaskSetForRunner(r.db, r.db, runnerId)
+		set, _ := r.activeSets.LoadOrCompute(runnerId, func() (newValue *servicestate.RunnerSet, cancel bool) {
+			set, err := servicestate.OpenTaskSetForRunner(r.db, r.db, runnerId)
 			if err != nil {
 				loadErr = err
 				return nil, true
@@ -37,13 +37,13 @@ func (r *runnerSetCache) open(runnerId string) (*pool.RunnerSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return set.(*pool.RunnerSet), nil
+	return set.(*servicestate.RunnerSet), nil
 }
 
 func newRunnerSetCache(db dbutil.DbRoot, runnerInformer cache.SharedIndexInformer) *runnerSetCache {
 	cache := &runnerSetCache{
 		db:         db,
-		activeSets: xsync.NewMap[string, *pool.RunnerSet](),
+		activeSets: xsync.NewMap[string, *servicestate.RunnerSet](),
 	}
 	runnerInformer.AddEventHandler(cache)
 	return cache

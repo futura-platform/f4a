@@ -51,12 +51,11 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg           Config
-	db            dbutil.DbRoot
-	activeRunners pool.ActiveRunners
-	taskDir       task.TasksDirectory
-	pendingSet,
-	suspendedSet *reliableset.Set
+	cfg              Config
+	db               dbutil.DbRoot
+	activeRunners    pool.ActiveRunners
+	taskDir          task.TasksDirectory
+	taskPlacer       *servicestate.TaskPlacer
 	activeRunnerSets *runnerSetCache
 	runnerPodLister  v1.PodNamespaceLister
 	clients          *k8s.Clients
@@ -73,18 +72,17 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
 	}
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
-	if err != nil {
-		return fmt.Errorf("failed to open pending set: %w", err)
-	}
-	suspendedSet, err := servicestate.CreateOrOpenSuspendedSet(db, db)
-	if err != nil {
-		return fmt.Errorf("failed to open suspended set: %w", err)
-	}
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
 	if err != nil {
 		return fmt.Errorf("failed to open active runners: %w", err)
 	}
+
+	taskPlacer, runCompactor, err := servicestate.CreateOrOpenTaskPlacer(db)
+	if err != nil {
+		return fmt.Errorf("failed to create or open task placer: %w", err)
+	}
+	cancelCompactor := runCompactor()
+	defer cancelCompactor()
 
 	runnerPodInformer, cancel, err := liveRunnerPods(
 		ctx,
@@ -102,8 +100,7 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 		db:               db,
 		activeRunners:    activeRunners,
 		taskDir:          taskDir,
-		pendingSet:       pendingSet,
-		suspendedSet:     suspendedSet,
+		taskPlacer:       taskPlacer,
 		clients:          clients,
 		logger:           cfg.Logger,
 		activeRunnerSets: newRunnerSetCache(db, runnerPodInformer.Informer()),
@@ -135,17 +132,17 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	reg, err := meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		const stateAttribute = "state"
-		pendingSetItems, _, err := s.pendingSet.Items(ctx, s.db.Database)
+		pendingTaskIds, _, err := s.taskPlacer.PendingTasks(ctx)
 		if err != nil {
 			return err
 		}
-		o.ObserveInt64(taskCountGauge, int64(pendingSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+		o.ObserveInt64(taskCountGauge, int64(pendingTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
 
-		suspendedSetItems, _, err := s.suspendedSet.Items(ctx, s.db.Database)
+		suspendedTaskIds, _, err := s.taskPlacer.SuspendedTasks(ctx)
 		if err != nil {
 			return err
 		}
-		o.ObserveInt64(taskCountGauge, int64(suspendedSetItems.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
+		o.ObserveInt64(taskCountGauge, int64(suspendedTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
 		var runningCount int64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
@@ -178,10 +175,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	defer reg.Unregister()
 
-	cancelPendingCompaction := s.pendingSet.RunCompactor()
-	defer cancelPendingCompaction()
-
-	initialValues, eventsCh, streamErrCh, err := s.pendingSet.Stream(ctx)
+	initialValues, eventsCh, streamErrCh, err := s.taskPlacer.StreamPendingTasks(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}

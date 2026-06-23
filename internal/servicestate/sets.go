@@ -6,10 +6,10 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-func CreateOrOpenReadySet(tr fdb.Transactor, db dbutil.DbRoot) (*reliableset.Set, error) {
+func createOrOpenReadySet(tr fdb.Transactor, db dbutil.DbRoot) (*reliableset.Set, error) {
 	return reliableset.CreateOrOpen(tr, db, []string{"ready"})
 }
 
-func CreateOrOpenSuspendedSet(tr fdb.Transactor, db dbutil.DbRoot) (*reliableset.Set, error) {
+func createOrOpenSuspendedSet(tr fdb.Transactor, db dbutil.DbRoot) (*reliableset.Set, error) {
 	return reliableset.CreateOrOpen(tr, db, []string{"suspended"})
 }

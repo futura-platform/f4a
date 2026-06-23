@@ -34,11 +34,11 @@ func ReadAssignmentState(tx fdb.ReadTransaction, taskKey TaskKey) (AssignmentSta
 	}, nil
 }
 
-// ValidateRunnerLifecycleInvariant enforces the canonical invariant for task
+// ValidateRunnerIdInvariant enforces the canonical invariant for task
 // assignment metadata:
 //   - running => non-empty runner_id
 //   - non-running => nil runner_id
-func (s AssignmentState) ValidateRunnerLifecycleInvariant() error {
+func (s AssignmentState) ValidateRunnerIdInvariant() error {
 	lifecycleStatus, err := s.LifecycleStatusFuture.Get()
 	if err != nil {
 		return fmt.Errorf("failed to get lifecycle status: %w", err)

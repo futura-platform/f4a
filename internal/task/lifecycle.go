@@ -20,6 +20,9 @@ const (
 	// When a task is in this state, it MUST have a non-empty runner_id and it MUST
 	// exist in that runner's task queue.
 	LifecycleStatusRunning
+
+	// LifecycleStatusNone means the task is not in any lifecycle state.
+	LifecycleStatusNone
 )
 
 func (s LifecycleStatus) String() string {
@@ -30,6 +33,8 @@ func (s LifecycleStatus) String() string {
 		return "pending"
 	case LifecycleStatusRunning:
 		return "running"
+	case LifecycleStatusNone:
+		return "none"
 	}
 	return "unknown"
 }
@@ -43,7 +48,9 @@ func (l lifecycleStatusSerializer) Marshal(v LifecycleStatus) []byte {
 
 // Unmarshal implements dbutil.serializable.
 func (l lifecycleStatusSerializer) Unmarshal(bytes []byte) (LifecycleStatus, error) {
-	if len(bytes) != 1 {
+	if len(bytes) == 0 {
+		return LifecycleStatusNone, nil
+	} else if len(bytes) != 1 {
 		return 0, fmt.Errorf("invalid lifecycle status: %v", bytes)
 	}
 	s := bytes[0]

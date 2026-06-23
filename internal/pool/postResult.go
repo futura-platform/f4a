@@ -127,7 +127,7 @@ func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.
 		if err != nil {
 			return nil, err
 		}
-		if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+		if err := assignmentState.ValidateRunnerIdInvariant(); err != nil {
 			return nil, fmt.Errorf("task assignment invariant violation: %w", err)
 		}
 		isRunningOnThisRunner, err := assignmentState.IsRunningOn(m.runnerId)

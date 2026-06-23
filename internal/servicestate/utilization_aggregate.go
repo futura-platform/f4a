@@ -1,4 +1,4 @@
-package pool
+package servicestate
 
 import (
 	"encoding/binary"

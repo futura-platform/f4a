@@ -8,7 +8,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/reliableset"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
@@ -19,10 +19,10 @@ import (
 func DrainTaskRunner(
 	ctx context.Context,
 	dbr dbutil.DbRoot,
+	placer *servicestate.TaskPlacer,
 	runnerId string,
 	activeRunners ActiveRunners,
-	taskSet *RunnerSet,
-	pendingSet *reliableset.Set,
+	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
 ) error {
 	// immediately mark runner as inactive when draining the pod.
@@ -66,7 +66,7 @@ func DrainTaskRunner(
 				if err != nil {
 					return nil, fmt.Errorf("failed to read task assignment state: %w", err)
 				}
-				if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+				if err := assignmentState.ValidateRunnerIdInvariant(); err != nil {
 					return nil, fmt.Errorf("task assignment invariant violation: %w", err)
 				}
 				isRunningOnThisRunner, err := assignmentState.IsRunningOn(runnerId)
@@ -78,16 +78,10 @@ func DrainTaskRunner(
 					continue
 				}
 
-				err = taskSet.Remove(tx, tkey)
+				err = placer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, tkey)
 				if err != nil {
-					return nil, fmt.Errorf("failed to remove task from task set: %w", err)
+					return nil, fmt.Errorf("failed to place task in pending set: %w", err)
 				}
-				err = pendingSet.Add(tx, []byte(taskID))
-				if err != nil {
-					return nil, fmt.Errorf("failed to add task to pending set: %w", err)
-				}
-				tkey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-				tkey.RunnerId().Set(tx, nil)
 			}
 			return nil, nil
 		})

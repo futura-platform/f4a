@@ -56,7 +56,7 @@ func newRunnerIDFuture(runnerID *string, err error) *dbutil.Future[*string] {
 	)
 }
 
-func TestAssignmentStateValidateRunnerLifecycleInvariant(t *testing.T) {
+func TestAssignmentStateValidateRunnerIdInvariant(t *testing.T) {
 	runnerID := "runner-1"
 	empty := ""
 
@@ -64,41 +64,41 @@ func TestAssignmentStateValidateRunnerLifecycleInvariant(t *testing.T) {
 		assert.ErrorIs(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusRunning, nil),
 			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
-		}.ValidateRunnerLifecycleInvariant(), ErrRunningTaskMissingRunnerID)
+		}.ValidateRunnerIdInvariant(), ErrRunningTaskMissingRunnerID)
 
 		assert.ErrorIs(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusRunning, nil),
 			RunnerIDFuture:        newRunnerIDFuture(&empty, nil),
-		}.ValidateRunnerLifecycleInvariant(), ErrRunningTaskMissingRunnerID)
+		}.ValidateRunnerIdInvariant(), ErrRunningTaskMissingRunnerID)
 	})
 
 	t.Run("non-running requires nil runner id", func(t *testing.T) {
 		assert.ErrorIs(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusPending, nil),
 			RunnerIDFuture:        newRunnerIDFuture(&runnerID, nil),
-		}.ValidateRunnerLifecycleInvariant(), ErrNonRunningTaskHasRunnerID)
+		}.ValidateRunnerIdInvariant(), ErrNonRunningTaskHasRunnerID)
 
 		assert.ErrorIs(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusSuspended, nil),
 			RunnerIDFuture:        newRunnerIDFuture(&runnerID, nil),
-		}.ValidateRunnerLifecycleInvariant(), ErrNonRunningTaskHasRunnerID)
+		}.ValidateRunnerIdInvariant(), ErrNonRunningTaskHasRunnerID)
 	})
 
 	t.Run("valid combinations pass", func(t *testing.T) {
 		assert.NoError(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusRunning, nil),
 			RunnerIDFuture:        newRunnerIDFuture(&runnerID, nil),
-		}.ValidateRunnerLifecycleInvariant())
+		}.ValidateRunnerIdInvariant())
 
 		assert.NoError(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusPending, nil),
 			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
-		}.ValidateRunnerLifecycleInvariant())
+		}.ValidateRunnerIdInvariant())
 
 		assert.NoError(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusSuspended, nil),
 			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
-		}.ValidateRunnerLifecycleInvariant())
+		}.ValidateRunnerIdInvariant())
 	})
 
 	t.Run("future errors are surfaced", func(t *testing.T) {
@@ -106,7 +106,7 @@ func TestAssignmentStateValidateRunnerLifecycleInvariant(t *testing.T) {
 		err := AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusPending, lifecycleErr),
 			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
-		}.ValidateRunnerLifecycleInvariant()
+		}.ValidateRunnerIdInvariant()
 		require.Error(t, err)
 		require.ErrorIs(t, err, lifecycleErr)
 
@@ -114,7 +114,7 @@ func TestAssignmentStateValidateRunnerLifecycleInvariant(t *testing.T) {
 		err = AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusPending, nil),
 			RunnerIDFuture:        newRunnerIDFuture(nil, runnerErr),
-		}.ValidateRunnerLifecycleInvariant()
+		}.ValidateRunnerIdInvariant()
 		require.Error(t, err)
 		require.ErrorIs(t, err, runnerErr)
 	})

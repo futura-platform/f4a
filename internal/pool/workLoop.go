@@ -11,6 +11,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -29,7 +30,7 @@ type taskManager struct {
 	*runMap
 	db            dbutil.DbRoot
 	runnerId      string
-	taskSet       *RunnerSet
+	taskSet       *servicestate.RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
 	c             *http.Client
@@ -51,7 +52,7 @@ func RunWorkLoop(
 	ctx context.Context,
 	runnerId string,
 	db dbutil.DbRoot,
-	taskSet *RunnerSet,
+	taskSet *servicestate.RunnerSet,
 	router execute.Router,
 ) error {
 	ctx, span := tracer.Start(ctx, "RunWorkLoop")

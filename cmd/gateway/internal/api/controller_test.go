@@ -8,6 +8,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -325,7 +326,7 @@ func TestControllerSuspendTask_RunningTaskMissingQueueIsInvariantViolation(t *te
 				TaskId: taskID,
 			},
 		})
-		require.ErrorIs(t, err, ErrRunningTaskQueueInvariant)
+		require.ErrorIs(t, err, servicestate.ErrRunnerSetDoesNotExist)
 	})
 }
 

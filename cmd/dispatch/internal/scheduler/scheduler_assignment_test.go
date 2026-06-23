@@ -28,7 +28,7 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
 
 		s.runnerPodLister = podListerForRunners()
-		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*pool.RunnerSet{})
+		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{})
 		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)})
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
@@ -191,7 +191,7 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 		activeRunners: activeRunners,
 		logger:        slog.Default(),
 	}
-	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*pool.RunnerSet{workerID: workerSet})
+	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{workerID: workerSet})
 	s.activeRunnerSets = activeRunnerSets
 	s.runnerPodLister = podListerForRunners(workerID)
 	return s, tasksDir, pendingSet, activeRunnerSets
@@ -238,10 +238,10 @@ func (l staticPodNamespaceLister) Get(name string) (*corev1.Pod, error) {
 	return nil, fmt.Errorf("pod %q not found", name)
 }
 
-func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*pool.RunnerSet) *runnerSetCache {
+func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*servicestate.RunnerSet) *runnerSetCache {
 	cache := &runnerSetCache{
 		db:         db,
-		activeSets: xsync.NewMap[string, *pool.RunnerSet](xsync.WithPresize(len(src))),
+		activeSets: xsync.NewMap[string, *servicestate.RunnerSet](xsync.WithPresize(len(src))),
 	}
 	for k, v := range src {
 		cache.activeSets.Store(k, v)

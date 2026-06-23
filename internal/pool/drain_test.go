@@ -185,7 +185,7 @@ func readTaskAssignments(
 			if err != nil {
 				return nil, err
 			}
-			if err := state.ValidateRunnerLifecycleInvariant(); err != nil {
+			if err := state.ValidateRunnerIdInvariant(); err != nil {
 				return nil, err
 			}
 			status, err := state.LifecycleStatusFuture.Get()
@@ -414,7 +414,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 							if err != nil {
 								return false, err
 							}
-							if err := state.ValidateRunnerLifecycleInvariant(); err != nil {
+							if err := state.ValidateRunnerIdInvariant(); err != nil {
 								return false, err
 							}
 							isOnRunnerA, err := state.IsRunningOn(runnerID)

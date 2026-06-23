@@ -10,6 +10,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"go.opentelemetry.io/otel/attribute"
@@ -255,7 +256,7 @@ func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activ
 			return nil, nil
 		}
 
-		runnerSet, err := pool.OpenTaskSetForRunner(t, db, pod.Name)
+		runnerSet, err := servicestate.OpenTaskSetForRunner(t, db, pod.Name)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
@@ -264,11 +265,11 @@ func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activ
 			}
 			return nil, err
 		}
-		inUseCpuMillis, err = runnerSet.GetUtilization(t, pool.UtilizationDimensionCPU)
+		inUseCpuMillis, err = runnerSet.GetUtilization(t, servicestate.UtilizationDimensionCPU)
 		if err != nil {
 			return nil, err
 		}
-		inUseMemoryBytes, err = runnerSet.GetUtilization(t, pool.UtilizationDimensionMemory)
+		inUseMemoryBytes, err = runnerSet.GetUtilization(t, servicestate.UtilizationDimensionMemory)
 		if err != nil {
 			return nil, err
 		}
@@ -308,7 +309,7 @@ var (
 	ErrTaskNotInAssignableState = errors.New("task not in assignable state")
 )
 
-func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, runnerSet *pool.RunnerSet) error {
+func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, runnerSet *servicestate.RunnerSet) error {
 	taskKey, err := s.taskDir.Open(tx, id)
 	if err != nil {
 		if errors.Is(err, directory.ErrDirNotExists) {
@@ -317,26 +318,5 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
-	assignmentState, err := task.ReadAssignmentState(tx, taskKey)
-	if err != nil {
-		return err
-	}
-	if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
-		return fmt.Errorf("task assignment invariant violation: %w", err)
-	}
-	lifecycleStatus, err := assignmentState.LifecycleStatusFuture.Get()
-	if err != nil {
-		return fmt.Errorf("failed to get task lifecycle status: %w", err)
-	}
-	if lifecycleStatus != task.LifecycleStatusPending {
-		return ErrTaskNotInAssignableState
-	}
-	// Preserve lifecycle invariant atomically: running status implies queue membership.
-	taskKey.RunnerId().Set(tx, &runnerId)
-	taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-	if err := runnerSet.Add(tx, taskKey); err != nil {
-		return err
-	}
-
-	return s.pendingSet.Remove(tx, []byte(id))
+	return s.taskPlacer.PlaceTaskOnRunner(tx, runnerId, runnerSet, taskKey)
 }

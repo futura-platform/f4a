@@ -9,7 +9,6 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -43,7 +42,7 @@ func SpawnReaperRoutine(
 		return nil, fmt.Errorf("failed to create or open active runners: %w", err)
 	}
 
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+	placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or open pending set: %w", err)
 	}
@@ -63,7 +62,7 @@ func SpawnReaperRoutine(
 				return
 			case <-ticker.C:
 				ctx, span := tracer.Start(ctx, "reapAll")
-				err := reapAll(ctx, db, cachedPods, livePods, activeRunners, pendingSet, taskDirectory)
+				err := reapAll(ctx, db, placer, cachedPods, livePods, activeRunners, taskDirectory)
 				if err != nil {
 					span.RecordError(err)
 					slog.Error("reaper: failed to reap", "error", err)
@@ -79,15 +78,15 @@ func SpawnReaperRoutine(
 func reapAll(
 	ctx context.Context,
 	db dbutil.DbRoot,
+	placer *servicestate.TaskPlacer,
 	cachedPods corev1.PodNamespaceLister,
 	livePods corev1client.PodInterface,
 	activeRunners pool.ActiveRunners,
-	pendingSet *reliableset.Set,
 	taskDirectory task.TasksDirectory,
 ) error {
 	var runnerIds []string
 	_, err := db.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (_ any, err error) {
-		runnerIds, err = pool.ListTaskSets(tx, db)
+		runnerIds, err = servicestate.ListTaskSets(tx, db)
 		return nil, err
 	})
 	if err != nil {
@@ -104,7 +103,7 @@ func reapAll(
 			continue
 		}
 
-		err = reapForRunner(ctx, db, activeRunners, pendingSet, taskDirectory, runnerId)
+		err = reapForRunner(ctx, db, placer, activeRunners, taskDirectory, runnerId)
 		if err != nil {
 			reapErrs = append(reapErrs, err)
 		}
@@ -118,18 +117,18 @@ func reapAll(
 func reapForRunner(
 	ctx context.Context,
 	db dbutil.DbRoot,
+	placer *servicestate.TaskPlacer,
 	activeRunners pool.ActiveRunners,
-	pendingSet *reliableset.Set,
 	taskDirectory task.TasksDirectory,
 	runnerId string,
 ) error {
-	taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
+	taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 	if err != nil {
 		return err
 	}
 
 	// call a shared drain function here to drain the task set for the given runner id
-	err = pool.DrainTaskRunner(ctx, db, runnerId, activeRunners, taskSet, pendingSet, taskDirectory)
+	err = pool.DrainTaskRunner(ctx, db, placer, runnerId, activeRunners, taskSet, taskDirectory)
 	if err != nil {
 		return err
 	}
