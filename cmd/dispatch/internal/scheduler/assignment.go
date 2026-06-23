@@ -263,6 +263,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 	}
 	if err := group.Wait(); err != nil {
 		span.RecordError(err)
+		return failures, err
 	}
 
 	return failures, nil

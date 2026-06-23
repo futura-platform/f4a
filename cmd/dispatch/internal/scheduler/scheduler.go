@@ -257,6 +257,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
+	lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
 
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()

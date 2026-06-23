@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	mapset "github.com/deckarep/golang-set/v2"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -28,9 +29,9 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 
 		s.runnerPodLister = podListerForRunners()
 		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{})
-		retryAssignLater, err := s.assignPending(t.Context(), []task.Id{taskID})
+		assignmentFailures, err := s.assignPending(t.Context(), taskIDSet(taskID))
 		require.NoError(t, err)
-		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
+		requireAssignmentFailures(t, assignmentFailures, []task.Id{taskID}, nil)
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -39,9 +40,9 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 
 		s.runnerPodLister = podListerForRunners("worker-0")
 		s.activeRunnerSets = activeRunnerSets
-		retryAssignLater, err = s.assignPending(t.Context(), retryAssignLater.ToSlice())
+		assignmentFailures, err = s.assignPending(t.Context(), assignmentFailures.All())
 		require.NoError(t, err)
-		require.Zero(t, retryAssignLater.Cardinality())
+		requireAssignmentFailures(t, assignmentFailures, nil, nil)
 
 		status, runnerID = readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusRunning, status)
@@ -64,12 +65,12 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		retryAssignLater, err := s.assignPending(
+		assignmentFailures, err := s.assignPending(
 			t.Context(),
-			[]task.Id{taskID},
+			taskIDSet(taskID),
 		)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
+		requireAssignmentFailures(t, assignmentFailures, []task.Id{taskID}, nil)
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -96,12 +97,12 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 		require.NoError(t, err)
 
 		s.runnerPodLister = podListerForRunners(missingSetRunner)
-		retryAssignLater, err := s.assignPending(
+		assignmentFailures, err := s.assignPending(
 			t.Context(),
-			[]task.Id{taskID},
+			taskIDSet(taskID),
 		)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
+		requireAssignmentFailures(t, assignmentFailures, []task.Id{taskID}, nil)
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -116,12 +117,12 @@ func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 		taskID := task.Id("pending-task-live")
 		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
-		retryAssignLater, err := s.assignPending(
+		assignmentFailures, err := s.assignPending(
 			t.Context(),
-			[]task.Id{task.Id("missing-task-id"), taskID},
+			taskIDSet(task.Id("missing-task-id"), taskID),
 		)
 		require.NoError(t, err)
-		require.Zero(t, retryAssignLater.Cardinality())
+		requireAssignmentFailures(t, assignmentFailures, nil, nil)
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusRunning, status)
@@ -148,11 +149,31 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 
 		_, err = s.assignPending(
 			t.Context(),
-			[]task.Id{taskID},
+			taskIDSet(taskID),
 		)
 		require.Error(t, err)
 		require.ErrorIs(t, err, task.ErrNonRunningTaskHasRunnerID)
 	})
+}
+
+func taskIDSet(ids ...task.Id) mapset.Set[task.Id] {
+	return mapset.NewSet(ids...)
+}
+
+func requireAssignmentFailures(
+	t testing.TB,
+	failures assignmentFailures,
+	expectedNoResources []task.Id,
+	expectedRunnerInactive []task.Id,
+) {
+	t.Helper()
+
+	require.ElementsMatch(t, expectedNoResources, failures.noResources.ToSlice())
+	require.ElementsMatch(t, expectedRunnerInactive, failures.runnerInactive.ToSlice())
+
+	expectedAll := append([]task.Id{}, expectedNoResources...)
+	expectedAll = append(expectedAll, expectedRunnerInactive...)
+	require.ElementsMatch(t, expectedAll, failures.All().ToSlice())
 }
 
 func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
