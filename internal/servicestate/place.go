@@ -116,23 +116,45 @@ func (p *TaskPlacer) handleAggregateUpdate(
 	t task.TaskKey,
 	oldLifecycleStatus, newLifecycleStatus task.LifecycleStatus,
 ) error {
-	changeMultiplier := int64(0)
-	if oldLifecycleStatus == task.LifecycleStatusNone &&
-		newLifecycleStatus != task.LifecycleStatusNone { // task was added to a queue
-		changeMultiplier = 1
-	} else if oldLifecycleStatus != task.LifecycleStatusNone &&
-		newLifecycleStatus == task.LifecycleStatusNone { // task was removed from a queue
-		changeMultiplier = -1
+	oldAggregate, err := p.utilizationAggregateForLifecycleStatus(oldLifecycleStatus)
+	if err != nil {
+		return err
 	}
-	if changeMultiplier != 0 {
-		resourceRequest, err := t.ResourceRequest().Get(tx).Get()
-		if err != nil {
-			return err
-		}
-		p.globalUtilization.add(tx, UtilizationDimensionCPU, changeMultiplier*int64(resourceRequest.CpuMillis))
-		p.globalUtilization.add(tx, UtilizationDimensionMemory, changeMultiplier*int64(resourceRequest.MemoryBytes))
+	newAggregate, err := p.utilizationAggregateForLifecycleStatus(newLifecycleStatus)
+	if err != nil {
+		return err
 	}
+	if oldAggregate == newAggregate {
+		return nil
+	}
+
+	resourceRequest, err := t.ResourceRequest().Get(tx).Get()
+	if err != nil {
+		return err
+	}
+	if oldAggregate != nil {
+		oldAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.CpuMillis))
+		oldAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.MemoryBytes))
+	}
+	if newAggregate != nil {
+		newAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.CpuMillis))
+		newAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.MemoryBytes))
+	}
+
 	return nil
+}
+
+func (p *TaskPlacer) utilizationAggregateForLifecycleStatus(status task.LifecycleStatus) (*utilizationAggregate, error) {
+	switch status {
+	case task.LifecycleStatusPending, task.LifecycleStatusRunning:
+		return p.activeDemandUtilization, nil
+	case task.LifecycleStatusSuspended:
+		return p.suspendedUtilization, nil
+	case task.LifecycleStatusNone:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unknown status '%s'", status)
+	}
 }
 
 var (

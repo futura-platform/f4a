@@ -10,7 +10,7 @@ import (
 )
 
 // TaskPlacer is responsible for placing tasks in the system.
-// It maintains task lifecycle status, the task runner id field, global utilization aggregates.
+// It maintains task lifecycle status, the task runner id field, and utilization aggregates.
 type TaskPlacer struct {
 	db dbutil.DbRoot
 
@@ -19,8 +19,10 @@ type TaskPlacer struct {
 	// a queue of tasks that are suspended (have state, but are not executing).
 	suspendedSet *reliableset.Set
 
-	// a global utilization aggregate that tracks the total utilization of all placed tasks in the system.
-	globalUtilization *utilizationAggregate
+	// utilization requested by tasks that should influence runner capacity.
+	activeDemandUtilization *utilizationAggregate
+	// utilization requested by suspended tasks.
+	suspendedUtilization *utilizationAggregate
 }
 
 func CreateOrOpenTaskPlacer(db dbutil.DbRoot) (
@@ -36,15 +38,20 @@ func CreateOrOpenTaskPlacer(db dbutil.DbRoot) (
 	if err != nil {
 		return nil, nil, err
 	}
-	globalUtilization, err := createOrOpenUtilizationAggregate(db, db, []string{"global_utilization"})
+	activeDemandUtilization, err := createOrOpenUtilizationAggregate(db, db, []string{"active_demand_utilization"})
+	if err != nil {
+		return nil, nil, err
+	}
+	suspendedUtilization, err := createOrOpenUtilizationAggregate(db, db, []string{"suspended_utilization"})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &TaskPlacer{
-			db:                db,
-			pendingSet:        pendingSet,
-			suspendedSet:      suspendedSet,
-			globalUtilization: globalUtilization,
+			db:                      db,
+			pendingSet:              pendingSet,
+			suspendedSet:            suspendedSet,
+			activeDemandUtilization: activeDemandUtilization,
+			suspendedUtilization:    suspendedUtilization,
 		}, func() (cancel func()) {
 			cancelPendingSetCompaction := pendingSet.RunCompactor()
 			cancelSuspendedSetCompaction := suspendedSet.RunCompactor()
@@ -55,8 +62,12 @@ func CreateOrOpenTaskPlacer(db dbutil.DbRoot) (
 		}, nil
 }
 
-func (p TaskPlacer) GetGlobalUtilization(tx fdb.ReadTransaction, dimension UtilizationDimension) (int64, error) {
-	return p.globalUtilization.get(tx, dimension)
+func (p TaskPlacer) GetActiveDemandUtilization(tx fdb.ReadTransaction, dimension UtilizationDimension) (int64, error) {
+	return p.activeDemandUtilization.get(tx, dimension)
+}
+
+func (p TaskPlacer) GetSuspendedUtilization(tx fdb.ReadTransaction, dimension UtilizationDimension) (int64, error) {
+	return p.suspendedUtilization.get(tx, dimension)
 }
 
 func (p TaskPlacer) StreamPendingTasks(ctx context.Context) (initialValues mapset.Set[string], events <-chan []reliableset.LogEntry, errCh <-chan error, err error) {

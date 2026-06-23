@@ -54,13 +54,7 @@ func TestTaskPlacer(t *testing.T) {
 					if err != nil {
 						return nil, err
 					}
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(0), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(0), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, 0, 0, 0, 0)
 
 					return nil, tkey.Clear(tx)
 				})
@@ -69,15 +63,9 @@ func TestTaskPlacer(t *testing.T) {
 			return tkey, nil
 		}
 
-		t.Run("should start with zero global utilization", func(t *testing.T) {
+		t.Run("should start with zero utilization", func(t *testing.T) {
 			_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-				cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-				require.NoError(t, err)
-				require.Equal(t, int64(0), cpuUtilization)
-
-				memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-				require.NoError(t, err)
-				require.Equal(t, int64(0), memoryUtilization)
+				requireTaskPlacerUtilization(t, tx, placer, 0, 0, 0, 0)
 				return nil, nil
 			})
 			require.NoError(t, err)
@@ -103,13 +91,7 @@ func TestTaskPlacer(t *testing.T) {
 				require.Contains(t, items.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskCpuMillis), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskMemoryBytes), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, 0, 0, testingTaskCpuMillis, testingTaskMemoryBytes)
 					return nil, nil
 				})
 				require.NoError(t, err)
@@ -129,13 +111,7 @@ func TestTaskPlacer(t *testing.T) {
 				require.Contains(t, items.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskCpuMillis), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskMemoryBytes), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)
 					return nil, nil
 				})
 				require.NoError(t, err)
@@ -160,13 +136,7 @@ func TestTaskPlacer(t *testing.T) {
 				require.NotContains(t, items.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(0), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(0), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, 0, 0, 0, 0)
 					return nil, nil
 				})
 				require.NoError(t, err)
@@ -203,13 +173,7 @@ func TestTaskPlacer(t *testing.T) {
 				require.NotContains(t, pendingItems.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskCpuMillis), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskMemoryBytes), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, 0, 0, testingTaskCpuMillis, testingTaskMemoryBytes)
 					return nil, nil
 				})
 				require.NoError(t, err)
@@ -233,13 +197,7 @@ func TestTaskPlacer(t *testing.T) {
 				require.NotContains(t, suspendedItems.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskCpuMillis), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskMemoryBytes), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)
 					return nil, nil
 				})
 				require.NoError(t, err)
@@ -268,17 +226,39 @@ func TestTaskPlacer(t *testing.T) {
 				require.NotContains(t, pendingItems.ToSlice(), string(tkey.Id()))
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-					cpuUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionCPU)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskCpuMillis), cpuUtilization)
-
-					memoryUtilization, err := placer.GetGlobalUtilization(tx, UtilizationDimensionMemory)
-					require.NoError(t, err)
-					require.Equal(t, int64(testingTaskMemoryBytes), memoryUtilization)
+					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)
 					return nil, nil
 				})
 				require.NoError(t, err)
 			})
 		})
 	})
+}
+
+func requireTaskPlacerUtilization(
+	t testing.TB,
+	tx fdb.ReadTransaction,
+	placer *TaskPlacer,
+	expectedActiveCpuMillis,
+	expectedActiveMemoryBytes,
+	expectedSuspendedCpuMillis,
+	expectedSuspendedMemoryBytes int64,
+) {
+	t.Helper()
+
+	activeCpuUtilization, err := placer.GetActiveDemandUtilization(tx, UtilizationDimensionCPU)
+	require.NoError(t, err)
+	require.Equal(t, expectedActiveCpuMillis, activeCpuUtilization)
+
+	activeMemoryUtilization, err := placer.GetActiveDemandUtilization(tx, UtilizationDimensionMemory)
+	require.NoError(t, err)
+	require.Equal(t, expectedActiveMemoryBytes, activeMemoryUtilization)
+
+	suspendedCpuUtilization, err := placer.GetSuspendedUtilization(tx, UtilizationDimensionCPU)
+	require.NoError(t, err)
+	require.Equal(t, expectedSuspendedCpuMillis, suspendedCpuUtilization)
+
+	suspendedMemoryUtilization, err := placer.GetSuspendedUtilization(tx, UtilizationDimensionMemory)
+	require.NoError(t, err)
+	require.Equal(t, expectedSuspendedMemoryBytes, suspendedMemoryUtilization)
 }

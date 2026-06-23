@@ -8,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	v1 "k8s.io/client-go/listers/core/v1"
 
@@ -126,12 +127,35 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		span.End()
 	}()
 
-	taskCountGauge, err := meter.Int64ObservableGauge("task_count")
+	taskCountGauge, err := meter.Int64ObservableGauge(
+		"task_count",
+		metric.WithUnit("{task}"),
+		metric.WithDescription("Tasks by lifecycle state."),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create pending task count counter: %w", err)
 	}
+	requestedCpuGauge, err := meter.Float64ObservableGauge(
+		"requested_cpu",
+		metric.WithUnit("{cpu}"),
+		metric.WithDescription("Requested CPU by placement class."),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create requested cpu gauge: %w", err)
+	}
+	requestedMemoryBytesGauge, err := meter.Int64ObservableGauge(
+		"requested_memory",
+		metric.WithUnit("By"),
+		metric.WithDescription("Requested memory by placement class."),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create requested memory bytes gauge: %w", err)
+	}
 	reg, err := meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
-		const stateAttribute = "state"
+		const (
+			stateAttribute          = "state"
+			placementClassAttribute = "placement_class"
+		)
 		pendingTaskIds, _, err := s.taskPlacer.PendingTasks(ctx)
 		if err != nil {
 			return err
@@ -143,6 +167,34 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			return err
 		}
 		o.ObserveInt64(taskCountGauge, int64(suspendedTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
+
+		var activeDemandCpuMillis, activeDemandMemoryBytes, suspendedCpuMillis, suspendedMemoryBytes int64
+		_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
+			activeDemandCpuMillis, err = s.taskPlacer.GetActiveDemandUtilization(t, servicestate.UtilizationDimensionCPU)
+			if err != nil {
+				return nil, err
+			}
+			activeDemandMemoryBytes, err = s.taskPlacer.GetActiveDemandUtilization(t, servicestate.UtilizationDimensionMemory)
+			if err != nil {
+				return nil, err
+			}
+			suspendedCpuMillis, err = s.taskPlacer.GetSuspendedUtilization(t, servicestate.UtilizationDimensionCPU)
+			if err != nil {
+				return nil, err
+			}
+			suspendedMemoryBytes, err = s.taskPlacer.GetSuspendedUtilization(t, servicestate.UtilizationDimensionMemory)
+			if err != nil {
+				return nil, err
+			}
+			return nil, nil
+		})
+		if err != nil {
+			return err
+		}
+		o.ObserveFloat64(requestedCpuGauge, float64(activeDemandCpuMillis)/1000, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
+		o.ObserveInt64(requestedMemoryBytesGauge, activeDemandMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
+		o.ObserveFloat64(requestedCpuGauge, float64(suspendedCpuMillis)/1000, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
+		o.ObserveInt64(requestedMemoryBytesGauge, suspendedMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
 
 		var runningCount int64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
@@ -169,7 +221,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		}
 		o.ObserveInt64(taskCountGauge, runningCount, metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil
-	}, taskCountGauge)
+	}, taskCountGauge, requestedCpuGauge, requestedMemoryBytesGauge)
 	if err != nil {
 		return fmt.Errorf("failed to register callback: %w", err)
 	}
