@@ -14,7 +14,7 @@ import (
 
 // RunnerSet is a helper wrapper around a set that ensures the utilization aggregate is updated whenever the set is mutated.
 type RunnerSet struct {
-	set                  *reliableset.Set
+	set                  reliableset.TSet[task.Id]
 	utilizationAggregate *utilizationAggregate
 	taskOwnership        directory.DirectorySubspace
 }
@@ -32,7 +32,7 @@ func openRunnerSet(tr fdb.ReadTransactor, db dbutil.DbRoot, runnerId string) (*R
 	if err != nil {
 		return nil, err
 	}
-	return &RunnerSet{set, utilizationAggregate, taskOwnership}, nil
+	return &RunnerSet{reliableset.MakeTSet(set, taskIdSerializer{}), utilizationAggregate, taskOwnership}, nil
 }
 
 func createOrOpenRunnerSet(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
@@ -48,7 +48,7 @@ func createOrOpenRunnerSet(tr fdb.Transactor, db dbutil.DbRoot, runnerId string)
 	if err != nil {
 		return nil, err
 	}
-	return &RunnerSet{set, utilizationAggregate, taskOwnership}, nil
+	return &RunnerSet{reliableset.MakeTSet(set, taskIdSerializer{}), utilizationAggregate, taskOwnership}, nil
 }
 
 func (r *RunnerSet) taskOwnershipKey(id task.Id) fdb.Key {
@@ -87,7 +87,7 @@ func (r *RunnerSet) Add(tx fdb.Transaction, taskKey task.TaskKey) error {
 	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.CpuMillis))
 	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.MemoryBytes))
 	r.setTaskOwnership(tx, taskKey.Id(), true)
-	return r.set.Add(tx, []byte(taskKey.Id()))
+	return r.set.Add(tx, taskKey.Id())
 }
 
 func (r *RunnerSet) Remove(tx fdb.Transaction, taskKey task.TaskKey) error {
@@ -106,7 +106,7 @@ func (r *RunnerSet) Remove(tx fdb.Transaction, taskKey task.TaskKey) error {
 	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.CpuMillis))
 	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.MemoryBytes))
 	r.setTaskOwnership(tx, taskKey.Id(), false)
-	return r.set.Remove(tx, []byte(taskKey.Id()))
+	return r.set.Remove(tx, taskKey.Id())
 }
 
 func (r *RunnerSet) GetUtilization(tx fdb.ReadTransaction, dimension UtilizationDimension) (int64, error) {
@@ -117,13 +117,13 @@ func (r *RunnerSet) RunCompactor() (cancel func()) {
 	return r.set.RunCompactor()
 }
 
-func (r *RunnerSet) Items(ctx context.Context, db fdb.Database) (mapset.Set[string], fdb.KeyConvertible, error) {
+func (r *RunnerSet) Items(ctx context.Context, db fdb.Database) (mapset.Set[task.Id], fdb.KeyConvertible, error) {
 	return r.set.Items(ctx, db)
 }
 
 func (r *RunnerSet) Stream(ctx context.Context) (
-	initialValues mapset.Set[string],
-	events <-chan []reliableset.LogEntry,
+	initialValues mapset.Set[task.Id],
+	events <-chan []reliableset.TLogEntry[task.Id],
 	errCh <-chan error,
 	err error,
 ) {

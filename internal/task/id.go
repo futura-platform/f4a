@@ -14,3 +14,12 @@ func NewId() Id {
 const (
 	MAX_ID_LENGTH = 64
 )
+
+func (id Id) MarshalBinary() ([]byte, error) {
+	return []byte(id), nil
+}
+
+func (id *Id) UnmarshalBinary(data []byte) error {
+	*id = Id(string(data))
+	return nil
+}

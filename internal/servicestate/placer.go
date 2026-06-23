@@ -6,6 +6,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
+	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -17,7 +18,7 @@ type TaskPlacer struct {
 	// a queue of tasks that are ready to be executed.
 	pendingSet,
 	// a queue of tasks that are suspended (have state, but are not executing).
-	suspendedSet *reliableset.Set
+	suspendedSet reliableset.TSet[task.Id]
 
 	// utilization requested by tasks that should influence runner capacity.
 	activeDemandUtilization *utilizationAggregate
@@ -70,14 +71,14 @@ func (p TaskPlacer) GetSuspendedUtilization(tx fdb.ReadTransaction, dimension Ut
 	return p.suspendedUtilization.get(tx, dimension)
 }
 
-func (p TaskPlacer) StreamPendingTasks(ctx context.Context) (initialValues mapset.Set[string], events <-chan []reliableset.LogEntry, errCh <-chan error, err error) {
+func (p TaskPlacer) StreamPendingTasks(ctx context.Context) (initialValues mapset.Set[task.Id], events <-chan []reliableset.TLogEntry[task.Id], errCh <-chan error, err error) {
 	return p.pendingSet.Stream(ctx)
 }
 
-func (p TaskPlacer) PendingTasks(ctx context.Context) (taskIds mapset.Set[string], tail fdb.KeyConvertible, err error) {
+func (p TaskPlacer) PendingTasks(ctx context.Context) (taskIds mapset.Set[task.Id], tail fdb.KeyConvertible, err error) {
 	return p.pendingSet.Items(ctx, p.db.Database)
 }
 
-func (p TaskPlacer) SuspendedTasks(ctx context.Context) (taskIds mapset.Set[string], tail fdb.KeyConvertible, err error) {
+func (p TaskPlacer) SuspendedTasks(ctx context.Context) (taskIds mapset.Set[task.Id], tail fdb.KeyConvertible, err error) {
 	return p.suspendedSet.Items(ctx, p.db.Database)
 }

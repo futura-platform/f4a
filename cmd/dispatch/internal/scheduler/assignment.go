@@ -42,8 +42,8 @@ func (s *Scheduler) batchTxParallelism() int {
 // If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
 func (s *Scheduler) assignPending(
 	ctx context.Context,
-	pendingIds []string,
-) (retryAssignLater mapset.Set[string], err error) {
+	pendingIds []task.Id,
+) (retryAssignLater mapset.Set[task.Id], err error) {
 	ctx, span := tracer.Start(ctx, "assignPending")
 	span.SetAttributes(
 		attribute.Int("pending_ids_count", len(pendingIds)),
@@ -121,7 +121,7 @@ func (s *Scheduler) assignPending(
 	}
 
 	// fill out the assignment plan
-	retryAssignLater = mapset.NewSet[string]()
+	retryAssignLater = mapset.NewSet[task.Id]()
 	remainingResourcesPerRunnerSlice := remainingResourcesPerRunner.ToSlice()
 	for _, t := range taskResourceRequests.ToSlice() {
 		// select the first runner with enough resources
@@ -134,7 +134,7 @@ func (s *Scheduler) assignPending(
 			}
 		}
 		if selectedRunner == nil {
-			retryAssignLater.Add(string(t.taskId))
+			retryAssignLater.Add(t.taskId)
 			continue
 		}
 		assignmentPlan[selectedRunner.runnerId].Add(t)
@@ -150,7 +150,7 @@ func (s *Scheduler) assignPending(
 	return retryAssignLater.Union(executionRetryLater), nil
 }
 
-func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (retryAssignLater mapset.Set[string], err error) {
+func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (retryAssignLater mapset.Set[task.Id], err error) {
 	ctx, span := tracer.Start(ctx, "executeAssignmentPlan")
 	defer span.End()
 
@@ -158,7 +158,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 		attribute.Int("assignment_plan_size", len(assignmentPlan)),
 	)
 
-	retryAssignLater = mapset.NewSet[string]()
+	retryAssignLater = mapset.NewSet[task.Id]()
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(s.batchTxParallelism())
 	for runnerId, tasks := range assignmentPlan {
@@ -190,7 +190,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 					if !active {
 						span.AddEvent("runner is no longer active")
 						for _, t := range batchForWorker {
-							retryAssignLater.Add(string(t.taskId))
+							retryAssignLater.Add(t.taskId)
 						}
 						return nil, nil
 					}
@@ -201,7 +201,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 							// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
 							span.AddEvent("runner set is no longer active")
 							for _, t := range batchForWorker {
-								retryAssignLater.Add(string(t.taskId))
+								retryAssignLater.Add(t.taskId)
 							}
 							return nil, nil
 						}

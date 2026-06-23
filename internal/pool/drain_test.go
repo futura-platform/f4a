@@ -107,8 +107,8 @@ func enqueueTasksWithAssignmentInBatches(
 }
 
 func readSetItems(t testing.TB, db dbutil.DbRoot, set interface {
-	Items(context.Context, fdb.Database) (mapset.Set[string], fdb.KeyConvertible, error)
-}) mapset.Set[string] {
+	Items(context.Context, fdb.Database) (mapset.Set[task.Id], fdb.KeyConvertible, error)
+}) mapset.Set[task.Id] {
 	t.Helper()
 
 	items, _, err := set.Items(t.Context(), db.Database)
@@ -116,7 +116,7 @@ func readSetItems(t testing.TB, db dbutil.DbRoot, set interface {
 	return items
 }
 
-func readPendingTasks(t testing.TB, placer *servicestate.TaskPlacer) mapset.Set[string] {
+func readPendingTasks(t testing.TB, placer *servicestate.TaskPlacer) mapset.Set[task.Id] {
 	t.Helper()
 
 	items, _, err := placer.PendingTasks(t.Context())
@@ -250,7 +250,7 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 			status, assignedRunnerID := readTaskAssignment(t, db, taskDir, id)
 			require.Equal(t, task.LifecycleStatusPending, status, "task %s should be pending", id)
 			require.Nil(t, assignedRunnerID, "task %s should have no runner", id)
-			require.True(t, pendingItems.Contains(string(id)), "task %s should be in pending set", id)
+			require.True(t, pendingItems.Contains(id), "task %s should be in pending set", id)
 		}
 	})
 }
@@ -296,8 +296,8 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		untouchedCount := 0
 		for _, id := range validTaskIDs {
 			status, assignedRunnerID := readTaskAssignment(t, db, taskDir, id)
-			inTaskSet := taskSetItems.Contains(string(id))
-			inPending := pendingItems.Contains(string(id))
+			inTaskSet := taskSetItems.Contains(id)
+			inPending := pendingItems.Contains(id)
 
 			isDrainedState := status == task.LifecycleStatusPending &&
 				assignedRunnerID == nil &&
@@ -332,8 +332,8 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		invalidStatus, invalidRunnerID := readTaskAssignment(t, db, taskDir, invalidTaskID)
 		require.Equal(t, task.LifecycleStatusRunning, invalidStatus)
 		require.Nil(t, invalidRunnerID)
-		require.True(t, taskSetItems.Contains(string(invalidTaskID)))
-		require.False(t, pendingItems.Contains(string(invalidTaskID)))
+		require.True(t, taskSetItems.Contains(invalidTaskID))
+		require.False(t, pendingItems.Contains(invalidTaskID))
 	})
 }
 
@@ -501,9 +501,9 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 					snapshot, ok := assignments[id]
 					require.True(t, ok)
 
-					inTaskSet := taskSetItems.Contains(string(id))
-					inReassignedSet := reassignedItems.Contains(string(id))
-					inPendingSet := pendingItems.Contains(string(id))
+					inTaskSet := taskSetItems.Contains(id)
+					inReassignedSet := reassignedItems.Contains(id)
+					inPendingSet := pendingItems.Contains(id)
 
 					if !snapshot.Exists {
 						require.Falsef(

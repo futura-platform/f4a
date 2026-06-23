@@ -127,10 +127,10 @@ func RunWorkLoop(
 			}
 			// record all the changes that happened in this batch
 			// (a key can either be in the added set or the removed set, but NOT both)
-			addedSet := mapset.NewSetWithSize[string](len(b))
-			removedSet := mapset.NewSetWithSize[string](len(b))
+			addedSet := mapset.NewSetWithSize[task.Id](len(b))
+			removedSet := mapset.NewSetWithSize[task.Id](len(b))
 			for _, item := range b {
-				v := string(item.Value)
+				v := item.Value
 				switch item.Op {
 				case reliableset.LogOperationAdd:
 					addedSet.Add(v)
@@ -168,7 +168,7 @@ func processAddedBatch(
 	taskManager *taskManager,
 	db dbutil.DbRoot,
 	router execute.Router,
-	items mapset.Set[string],
+	items mapset.Set[task.Id],
 ) error {
 	ctx, span := tracer.Start(ctx, "processAddedBatch")
 	defer span.End()
@@ -202,9 +202,8 @@ func processAddedBatch(
 	return nil
 }
 
-func processRemovedBatch(taskManager *runMap, items mapset.Set[string]) error {
-	for _, item := range items.ToSlice() {
-		id := task.Id(item)
+func processRemovedBatch(taskManager *runMap, items mapset.Set[task.Id]) error {
+	for _, id := range items.ToSlice() {
 		err := taskManager.cancel(id)
 		if err != nil {
 			if errors.Is(err, ErrRunNotFound) {

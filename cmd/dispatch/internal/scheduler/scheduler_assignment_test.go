@@ -28,9 +28,9 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 
 		s.runnerPodLister = podListerForRunners()
 		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{})
-		retryAssignLater, err := s.assignPending(t.Context(), []string{string(taskID)})
+		retryAssignLater, err := s.assignPending(t.Context(), []task.Id{taskID})
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
+		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -66,10 +66,10 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
-			[]string{string(taskID)},
+			[]task.Id{taskID},
 		)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
+		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -98,10 +98,10 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 		s.runnerPodLister = podListerForRunners(missingSetRunner)
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
-			[]string{string(taskID)},
+			[]task.Id{taskID},
 		)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{string(taskID)}, retryAssignLater.ToSlice())
+		require.ElementsMatch(t, []task.Id{taskID}, retryAssignLater.ToSlice())
 
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
@@ -118,7 +118,7 @@ func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
-			[]string{"missing-task-id", string(taskID)},
+			[]task.Id{task.Id("missing-task-id"), taskID},
 		)
 		require.NoError(t, err)
 		require.Zero(t, retryAssignLater.Cardinality())
@@ -148,7 +148,7 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 
 		_, err = s.assignPending(
 			t.Context(),
-			[]string{string(taskID)},
+			[]task.Id{taskID},
 		)
 		require.Error(t, err)
 		require.ErrorIs(t, err, task.ErrNonRunningTaskHasRunnerID)
@@ -293,12 +293,12 @@ func requirePendingContainsTask(t *testing.T, taskPlacer *servicestate.TaskPlace
 	t.Helper()
 	items, _, err := taskPlacer.PendingTasks(t.Context())
 	require.NoError(t, err)
-	require.True(t, items.ContainsOne(string(id)), "expected task %q in set, items=%v", id, items.ToSlice())
+	require.True(t, items.ContainsOne(id), "expected task %q in set, items=%v", id, items.ToSlice())
 }
 
 func requirePendingNotContainsTask(t *testing.T, taskPlacer *servicestate.TaskPlacer, id task.Id) {
 	t.Helper()
 	items, _, err := taskPlacer.PendingTasks(t.Context())
 	require.NoError(t, err)
-	require.False(t, items.ContainsOne(string(id)))
+	require.False(t, items.ContainsOne(id))
 }

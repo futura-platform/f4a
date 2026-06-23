@@ -24,11 +24,9 @@ func TestTaskPlacer(t *testing.T) {
 
 		suspendedSet, err := createOrOpenSuspendedSet(db, db)
 		require.NoError(t, err)
-		require.NotNil(t, suspendedSet)
 
 		pendingSet, err := createOrOpenReadySet(db, db)
 		require.NoError(t, err)
-		require.NotNil(t, pendingSet)
 
 		const testingTaskCpuMillis = 100
 		const testingTaskMemoryBytes = 1024
@@ -88,7 +86,7 @@ func TestTaskPlacer(t *testing.T) {
 
 				items, _, err := suspendedSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.Contains(t, items.ToSlice(), string(tkey.Id()))
+				require.Contains(t, items.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, 0, 0, testingTaskCpuMillis, testingTaskMemoryBytes)
@@ -108,7 +106,7 @@ func TestTaskPlacer(t *testing.T) {
 
 				items, _, err := pendingSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.Contains(t, items.ToSlice(), string(tkey.Id()))
+				require.Contains(t, items.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)
@@ -133,7 +131,7 @@ func TestTaskPlacer(t *testing.T) {
 
 				items, _, err := runnerSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.NotContains(t, items.ToSlice(), string(tkey.Id()))
+				require.NotContains(t, items.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, 0, 0, 0, 0)
@@ -166,11 +164,11 @@ func TestTaskPlacer(t *testing.T) {
 
 				suspendedItems, _, err := suspendedSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.Contains(t, suspendedItems.ToSlice(), string(tkey.Id()))
+				require.Contains(t, suspendedItems.ToSlice(), tkey.Id())
 
 				pendingItems, _, err := pendingSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.NotContains(t, pendingItems.ToSlice(), string(tkey.Id()))
+				require.NotContains(t, pendingItems.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, 0, 0, testingTaskCpuMillis, testingTaskMemoryBytes)
@@ -190,11 +188,11 @@ func TestTaskPlacer(t *testing.T) {
 
 				pendingItems, _, err := pendingSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.Contains(t, pendingItems.ToSlice(), string(tkey.Id()))
+				require.Contains(t, pendingItems.ToSlice(), tkey.Id())
 
 				suspendedItems, _, err := suspendedSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.NotContains(t, suspendedItems.ToSlice(), string(tkey.Id()))
+				require.NotContains(t, suspendedItems.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)
@@ -219,11 +217,11 @@ func TestTaskPlacer(t *testing.T) {
 
 				items, _, err := runnerSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.Contains(t, items.ToSlice(), string(tkey.Id()))
+				require.Contains(t, items.ToSlice(), tkey.Id())
 
 				pendingItems, _, err := pendingSet.Items(t.Context(), db.Database)
 				require.NoError(t, err)
-				require.NotContains(t, pendingItems.ToSlice(), string(tkey.Id()))
+				require.NotContains(t, pendingItems.ToSlice(), tkey.Id())
 
 				_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 					requireTaskPlacerUtilization(t, tx, placer, testingTaskCpuMillis, testingTaskMemoryBytes, 0, 0)

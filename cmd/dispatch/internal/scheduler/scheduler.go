@@ -265,9 +265,9 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			for _, entry := range batch {
 				switch entry.Op {
 				case reliableset.LogOperationAdd:
-					backlog.Add(string(entry.Value))
+					backlog.Add(entry.Value)
 				case reliableset.LogOperationRemove:
-					backlog.Remove(string(entry.Value))
+					backlog.Remove(entry.Value)
 				}
 			}
 			backlog, err = s.assignPending(ctx, backlog.ToSlice())

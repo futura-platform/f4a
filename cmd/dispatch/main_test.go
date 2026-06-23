@@ -163,9 +163,9 @@ func TestRunWithLeaderElection(t *testing.T) {
 			case err := <-errCh:
 				t.Fatalf("stream error: %v", err)
 			case change := <-changes:
-				assert.Equal(t, []reliableset.LogEntry{{
+				assert.Equal(t, []reliableset.TLogEntry[task.Id]{{
 					Op:    reliableset.LogOperationAdd,
-					Value: []byte(testTaskId),
+					Value: task.Id(testTaskId),
 				}}, change)
 			case <-time.After(10 * time.Second):
 				t.Fatalf("timed out waiting for change")

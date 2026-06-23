@@ -26,7 +26,6 @@ func DrainTaskRunner(
 	taskDir task.TasksDirectory,
 ) error {
 	// immediately mark runner as inactive when draining the pod.
-	var hangingTasks mapset.Set[string]
 	_, err := dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		activeRunners.SetActive(tx, runnerId, false)
 		return nil, nil
@@ -35,7 +34,7 @@ func DrainTaskRunner(
 		return fmt.Errorf("failed to mark runner as inactive: %w", err)
 	}
 
-	hangingTasks, _, err = taskSet.Items(ctx, dbr.Database)
+	hangingTasks, _, err := taskSet.Items(ctx, dbr.Database)
 	if err != nil {
 		return fmt.Errorf("failed to get task set items: %w", err)
 	}
@@ -43,7 +42,7 @@ func DrainTaskRunner(
 	// do a best effort to drain the task set, using batching to avoid overloading the tx size limit.
 	const drainBatchSize = 128
 	for hangingTasks.Cardinality() > 0 {
-		currentBatch := mapset.NewSet[string]()
+		currentBatch := mapset.NewSet[task.Id]()
 		for range drainBatchSize {
 			taskID, ok := hangingTasks.Pop()
 			if !ok {

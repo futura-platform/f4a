@@ -30,14 +30,14 @@ func (p *TaskPlacer) PlaceTaskIn(
 	location PlacementLocation,
 	t task.TaskKey,
 ) error {
-	var inSet *reliableset.Set
+	var inSet *reliableset.TSet[task.Id]
 	var newLifecycleStatus task.LifecycleStatus
 	switch location {
 	case PlacementLocationPending:
-		inSet = p.pendingSet
+		inSet = &p.pendingSet
 		newLifecycleStatus = task.LifecycleStatusPending
 	case PlacementLocationSuspended:
-		inSet = p.suspendedSet
+		inSet = &p.suspendedSet
 		newLifecycleStatus = task.LifecycleStatusSuspended
 	case PlacementLocationNowhere:
 		newLifecycleStatus = task.LifecycleStatusNone
@@ -62,7 +62,7 @@ func (p *TaskPlacer) PlaceTaskIn(
 		return err
 	}
 	if inSet != nil {
-		err = inSet.Add(tx, []byte(t.Id()))
+		err = inSet.Add(tx, t.Id())
 		if err != nil {
 			return err
 		}
@@ -204,11 +204,11 @@ func (p *TaskPlacer) removeFromCurrentQueue(t fdb.Transaction, tkey task.TaskKey
 		// now that the task is removed from the runner's queue, we must also clear the task's runner_id state
 		tkey.RunnerId().Set(t, nil)
 	case task.LifecycleStatusPending:
-		if err := p.pendingSet.Remove(t, []byte(tkey.Id())); err != nil {
+		if err := p.pendingSet.Remove(t, tkey.Id()); err != nil {
 			return lifecycleStatus, fmt.Errorf("failed to remove task from ready set: %w", err)
 		}
 	case task.LifecycleStatusSuspended:
-		if err := p.suspendedSet.Remove(t, []byte(tkey.Id())); err != nil {
+		if err := p.suspendedSet.Remove(t, tkey.Id()); err != nil {
 			return lifecycleStatus, fmt.Errorf("failed to remove task from suspended set: %w", err)
 		}
 	default:
