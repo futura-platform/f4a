@@ -14,6 +14,7 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
@@ -52,6 +53,15 @@ func (s *Scheduler) assignPending(
 	pods, err := s.runnerPodLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runner pods: %w", err)
+	}
+
+	assignmentFailureGauge, err := meter.Int64Gauge(
+		"pending_assignment_failure",
+		metric.WithUnit("{task}"),
+		metric.WithDescription("Assignment failures."),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create assignment failure gauge: %w", err)
 	}
 
 	type runnerWithResources struct {
@@ -141,11 +151,13 @@ func (s *Scheduler) assignPending(
 		selectedRunner.resources.cpuMillis -= int64(t.resourceRequest.CpuMillis)
 		selectedRunner.resources.memoryBytes -= int64(t.resourceRequest.MemoryBytes)
 	}
+	assignmentFailureGauge.Record(ctx, int64(retryAssignLater.Cardinality()), metric.WithAttributes(attribute.String("reason", "no_resources")))
 
 	executionRetryLater, err := s.executeAssignmentPlan(ctx, assignmentPlan)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute assignment plan: %w", err)
 	}
+	assignmentFailureGauge.Record(ctx, int64(executionRetryLater.Cardinality()), metric.WithAttributes(attribute.String("reason", "runner_went_inactive")))
 
 	return retryAssignLater.Union(executionRetryLater), nil
 }
