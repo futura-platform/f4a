@@ -227,6 +227,15 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	defer reg.Unregister()
 
+	assignmentFailureGauge, err := meter.Int64Gauge(
+		"pending_unschedulable_tasks",
+		metric.WithUnit("{task}"),
+		metric.WithDescription("Pending tasks the latest scheduler pass could not assign."),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create assignment failure gauge: %w", err)
+	}
+
 	initialValues, eventsCh, streamErrCh, err := s.taskPlacer.StreamPendingTasks(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
@@ -244,7 +253,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	defer cancelReaper()
 
-	backlog, err := s.assignPending(ctx, initialValues.ToSlice())
+	lastAssignmentFailures, err := s.assignPending(ctx, initialValues)
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
@@ -262,6 +271,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			}
 
 			span.AddEvent("event_batch_received")
+			backlog := lastAssignmentFailures.All()
 			for _, entry := range batch {
 				switch entry.Op {
 				case reliableset.LogOperationAdd:
@@ -270,10 +280,11 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 					backlog.Remove(entry.Value)
 				}
 			}
-			backlog, err = s.assignPending(ctx, backlog.ToSlice())
+			lastAssignmentFailures, err = s.assignPending(ctx, backlog)
 			if err != nil {
 				return fmt.Errorf("failed to assign pending tasks: %w", err)
 			}
+			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
 		case err, ok := <-streamErrCh:
 			if !ok {
 				return nil
@@ -282,10 +293,11 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				return fmt.Errorf("pending set stream failed: %w", err)
 			}
 		case <-ticker.C:
-			backlog, err = s.assignPending(ctx, backlog.ToSlice())
+			lastAssignmentFailures, err = s.assignPending(ctx, lastAssignmentFailures.All())
 			if err != nil {
 				return fmt.Errorf("failed to assign pending backlog: %w", err)
 			}
+			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
 		}
 	}
 }

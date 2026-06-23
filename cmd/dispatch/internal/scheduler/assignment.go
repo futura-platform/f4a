@@ -39,29 +39,55 @@ func (s *Scheduler) batchTxParallelism() int {
 	return s.cfg.BatchTxParallelism
 }
 
+type assignmentFailures struct {
+	noResources    mapset.Set[task.Id]
+	runnerInactive mapset.Set[task.Id]
+}
+
+func newAssignmentFailures() assignmentFailures {
+	return assignmentFailures{
+		noResources:    mapset.NewSet[task.Id](),
+		runnerInactive: mapset.NewSet[task.Id](),
+	}
+}
+
+func (f assignmentFailures) Union(other assignmentFailures) assignmentFailures {
+	return assignmentFailures{
+		noResources:    f.noResources.Union(other.noResources),
+		runnerInactive: f.runnerInactive.Union(other.runnerInactive),
+	}
+}
+
+func (f assignmentFailures) All() mapset.Set[task.Id] {
+	return f.noResources.Union(f.runnerInactive)
+}
+
+func (f assignmentFailures) Record(ctx context.Context, gauge metric.Int64Gauge) {
+	gauge.Record(ctx,
+		int64(f.noResources.Cardinality()),
+		metric.WithAttributes(attribute.String("reason", "no_resources")),
+	)
+	gauge.Record(ctx,
+		int64(f.runnerInactive.Cardinality()),
+		metric.WithAttributes(attribute.String("reason", "runner_inactive")),
+	)
+}
+
 // assignPending assigns all given tasks in the pending set to active runner pods.
 // If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
 func (s *Scheduler) assignPending(
 	ctx context.Context,
-	pendingIds []task.Id,
-) (retryAssignLater mapset.Set[task.Id], err error) {
+	pendingIds mapset.Set[task.Id],
+) (assignmentFailures, error) {
 	ctx, span := tracer.Start(ctx, "assignPending")
+	defer span.End()
 	span.SetAttributes(
-		attribute.Int("pending_ids_count", len(pendingIds)),
+		attribute.Int("pending_ids_count", pendingIds.Cardinality()),
 	)
 
 	pods, err := s.runnerPodLister.List(labels.Everything())
 	if err != nil {
-		return nil, fmt.Errorf("failed to list runner pods: %w", err)
-	}
-
-	assignmentFailureGauge, err := meter.Int64Gauge(
-		"pending_assignment_failure",
-		metric.WithUnit("{task}"),
-		metric.WithDescription("The number of pending tasks that failed to be assigned to a runner during the last assignment call."),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create assignment failure gauge: %w", err)
+		return assignmentFailures{}, fmt.Errorf("failed to list runner pods: %w", err)
 	}
 
 	type runnerWithResources struct {
@@ -90,7 +116,7 @@ func (s *Scheduler) assignPending(
 		})
 	}
 	if err := runnerGroup.Wait(); err != nil {
-		return nil, err
+		return assignmentFailures{}, err
 	}
 
 	assignmentPlan := make(map[string]mapset.Set[taskWithResourceRequest], remainingResourcesPerRunner.Cardinality())
@@ -102,7 +128,7 @@ func (s *Scheduler) assignPending(
 	taskResourceRequests := mapset.NewSet[taskWithResourceRequest]()
 	taskGroup, taskCtx := errgroup.WithContext(ctx)
 	taskGroup.SetLimit(s.batchTxParallelism())
-	for _, taskId := range pendingIds {
+	for taskId := range pendingIds.Iter() {
 		taskGroup.Go(func() error {
 			_, err := s.db.ReadTransactContext(taskCtx, func(t fdb.ReadTransaction) (any, error) {
 				taskKey, err := s.taskDir.Open(t, task.Id(taskId))
@@ -127,11 +153,11 @@ func (s *Scheduler) assignPending(
 		})
 	}
 	if err := taskGroup.Wait(); err != nil {
-		return nil, fmt.Errorf("failed to load task resource requests: %w", err)
+		return assignmentFailures{}, fmt.Errorf("failed to load task resource requests: %w", err)
 	}
 
 	// fill out the assignment plan
-	retryAssignLater = mapset.NewSet[task.Id]()
+	failures := newAssignmentFailures()
 	remainingResourcesPerRunnerSlice := remainingResourcesPerRunner.ToSlice()
 	for _, t := range taskResourceRequests.ToSlice() {
 		// select the first runner with enough resources
@@ -144,25 +170,23 @@ func (s *Scheduler) assignPending(
 			}
 		}
 		if selectedRunner == nil {
-			retryAssignLater.Add(t.taskId)
+			failures.noResources.Add(t.taskId)
 			continue
 		}
 		assignmentPlan[selectedRunner.runnerId].Add(t)
 		selectedRunner.resources.cpuMillis -= int64(t.resourceRequest.CpuMillis)
 		selectedRunner.resources.memoryBytes -= int64(t.resourceRequest.MemoryBytes)
 	}
-	assignmentFailureGauge.Record(ctx, int64(retryAssignLater.Cardinality()), metric.WithAttributes(attribute.String("reason", "no_resources")))
 
-	executionRetryLater, err := s.executeAssignmentPlan(ctx, assignmentPlan)
+	executionFailures, err := s.executeAssignmentPlan(ctx, assignmentPlan)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute assignment plan: %w", err)
+		return assignmentFailures{}, fmt.Errorf("failed to execute assignment plan: %w", err)
 	}
-	assignmentFailureGauge.Record(ctx, int64(executionRetryLater.Cardinality()), metric.WithAttributes(attribute.String("reason", "runner_went_inactive")))
 
-	return retryAssignLater.Union(executionRetryLater), nil
+	return failures.Union(executionFailures), nil
 }
 
-func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (retryAssignLater mapset.Set[task.Id], err error) {
+func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (assignmentFailures, error) {
 	ctx, span := tracer.Start(ctx, "executeAssignmentPlan")
 	defer span.End()
 
@@ -170,7 +194,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 		attribute.Int("assignment_plan_size", len(assignmentPlan)),
 	)
 
-	retryAssignLater = mapset.NewSet[task.Id]()
+	failures := newAssignmentFailures()
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(s.batchTxParallelism())
 	for runnerId, tasks := range assignmentPlan {
@@ -202,7 +226,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 					if !active {
 						span.AddEvent("runner is no longer active")
 						for _, t := range batchForWorker {
-							retryAssignLater.Add(t.taskId)
+							failures.runnerInactive.Add(t.taskId)
 						}
 						return nil, nil
 					}
@@ -213,7 +237,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 							// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
 							span.AddEvent("runner set is no longer active")
 							for _, t := range batchForWorker {
-								retryAssignLater.Add(t.taskId)
+								failures.runnerInactive.Add(t.taskId)
 							}
 							return nil, nil
 						}
@@ -237,11 +261,11 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 			})
 		}
 	}
-	if err = group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		span.RecordError(err)
 	}
 
-	return retryAssignLater, err
+	return failures, nil
 }
 
 func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activeRunners pool.ActiveRunners, pod *corev1.Pod) (_ *remainingResources, isActive bool, err error) {
