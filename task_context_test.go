@@ -10,6 +10,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -47,7 +48,7 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+		taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
 
 		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {

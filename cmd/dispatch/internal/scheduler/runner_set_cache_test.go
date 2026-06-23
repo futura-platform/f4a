@@ -3,7 +3,6 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -114,6 +113,6 @@ func TestRunnerSetCacheDeleteInvalidatesOnDeletedFinalStateUnknown(t *testing.T)
 func ensureRunnerTaskSetExists(t *testing.T, db dbutil.DbRoot, runnerID string) {
 	t.Helper()
 
-	_, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+	_, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 	require.NoError(t, err)
 }

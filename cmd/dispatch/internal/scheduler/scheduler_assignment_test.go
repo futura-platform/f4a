@@ -8,7 +8,6 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -23,9 +22,9 @@ import (
 
 func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, pendingSet, activeRunnerSets := newSchedulerFixture(t, db, "worker-0")
+		s, tasksDir, taskPlacer, activeRunnerSets := newSchedulerFixture(t, db, "worker-0")
 		taskID := task.Id("pending-task-retry")
-		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		s.runnerPodLister = podListerForRunners()
 		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{})
@@ -36,7 +35,7 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
 		require.Nil(t, runnerID)
-		requireSetContainsTask(t, db, pendingSet, taskID)
+		requirePendingContainsTask(t, taskPlacer, taskID)
 
 		s.runnerPodLister = podListerForRunners("worker-0")
 		s.activeRunnerSets = activeRunnerSets
@@ -47,7 +46,7 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		status, runnerID = readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusRunning, status)
 		require.Equal(t, "worker-0", *runnerID)
-		requireSetNotContainsTask(t, db, pendingSet, taskID)
+		requirePendingNotContainsTask(t, taskPlacer, taskID)
 	})
 }
 
@@ -55,9 +54,9 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		const inactiveRunner = "worker-inactive"
 
-		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, inactiveRunner)
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, inactiveRunner)
 		taskID := task.Id("pending-task-inactive-runner")
-		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			s.activeRunners.SetActive(tx, inactiveRunner, false)
@@ -75,7 +74,7 @@ func TestAssignPendingSkipsInactiveRunnerAndRetries(t *testing.T) {
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
 		require.Nil(t, runnerID)
-		requireSetContainsTask(t, db, pendingSet, taskID)
+		requirePendingContainsTask(t, taskPlacer, taskID)
 	})
 }
 
@@ -86,9 +85,9 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 			missingSetRunner = "worker-missing-set"
 		)
 
-		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, healthyRunner)
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, healthyRunner)
 		taskID := task.Id("pending-task-missing-runner-set")
-		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			s.activeRunners.SetActive(tx, missingSetRunner, true)
@@ -107,15 +106,15 @@ func TestAssignPendingSkipsRunnerWithMissingSetAndRetries(t *testing.T) {
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusPending, status)
 		require.Nil(t, runnerID)
-		requireSetContainsTask(t, db, pendingSet, taskID)
+		requirePendingContainsTask(t, taskPlacer, taskID)
 	})
 }
 
 func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, "worker-1")
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, "worker-1")
 		taskID := task.Id("pending-task-live")
-		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		retryAssignLater, err := s.assignPending(
 			t.Context(),
@@ -127,15 +126,15 @@ func TestAssignPendingSkipsMissingTasks(t *testing.T) {
 		status, runnerID := readTaskState(t, db, tasksDir, taskID)
 		require.Equal(t, task.LifecycleStatusRunning, status)
 		require.Equal(t, "worker-1", *runnerID)
-		requireSetNotContainsTask(t, db, pendingSet, taskID)
+		requirePendingNotContainsTask(t, taskPlacer, taskID)
 	})
 }
 
 func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, pendingSet, _ := newSchedulerFixture(t, db, "worker-2")
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, "worker-2")
 		taskID := task.Id("pending-task-invalid-runner")
-		seedPendingTask(t, db, tasksDir, pendingSet, taskID)
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		taskKey, err := tasksDir.Open(db, taskID)
 		require.NoError(t, err)
@@ -159,17 +158,17 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 	*Scheduler,
 	task.TasksDirectory,
-	*reliableset.Set,
+	*servicestate.TaskPlacer,
 	*runnerSetCache,
 ) {
 	t.Helper()
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 	require.NoError(t, err)
 
-	pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+	taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 	require.NoError(t, err)
 
-	workerSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, workerID)
+	workerSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, workerID)
 	require.NoError(t, err)
 
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
@@ -187,14 +186,14 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 		},
 		db:            db,
 		taskDir:       tasksDir,
-		pendingSet:    pendingSet,
+		taskPlacer:    taskPlacer,
 		activeRunners: activeRunners,
 		logger:        slog.Default(),
 	}
 	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{workerID: workerSet})
 	s.activeRunnerSets = activeRunnerSets
 	s.runnerPodLister = podListerForRunners(workerID)
-	return s, tasksDir, pendingSet, activeRunnerSets
+	return s, tasksDir, taskPlacer, activeRunnerSets
 }
 
 type staticPodNamespaceLister struct {
@@ -208,6 +207,12 @@ func podListerForRunners(runnerIDs ...string) staticPodNamespaceLister {
 			ObjectMeta: metav1.ObjectMeta{Name: runnerID},
 			Status: corev1.PodStatus{
 				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
 			},
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
@@ -249,20 +254,18 @@ func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*servicestate.Runn
 	return cache
 }
 
-func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, pendingSet *reliableset.Set, id task.Id) {
+func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, taskPlacer *servicestate.TaskPlacer, id task.Id) {
 	t.Helper()
 
 	taskKey, err := tasksDir.Create(db, id)
 	require.NoError(t, err)
 
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-		taskKey.RunnerId().Set(tx, nil)
 		taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
 			CpuMillis:   100,
 			MemoryBytes: 128 * 1024 * 1024,
 		})
-		if err := pendingSet.Add(tx, []byte(id)); err != nil {
+		if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -286,16 +289,16 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory,
 	return status, runnerID
 }
 
-func requireSetContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
+func requirePendingContainsTask(t *testing.T, taskPlacer *servicestate.TaskPlacer, id task.Id) {
 	t.Helper()
-	items, _, err := set.Items(t.Context(), db.Database)
+	items, _, err := taskPlacer.PendingTasks(t.Context())
 	require.NoError(t, err)
 	require.True(t, items.ContainsOne(string(id)), "expected task %q in set, items=%v", id, items.ToSlice())
 }
 
-func requireSetNotContainsTask(t *testing.T, db dbutil.DbRoot, set *reliableset.Set, id task.Id) {
+func requirePendingNotContainsTask(t *testing.T, taskPlacer *servicestate.TaskPlacer, id task.Id) {
 	t.Helper()
-	items, _, err := set.Items(t.Context(), db.Database)
+	items, _, err := taskPlacer.PendingTasks(t.Context())
 	require.NoError(t, err)
 	require.False(t, items.ContainsOne(string(id)))
 }

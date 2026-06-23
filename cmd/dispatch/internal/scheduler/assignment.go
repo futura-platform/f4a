@@ -318,5 +318,9 @@ func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, 
 		return fmt.Errorf("failed to open task %s: %w", id, err)
 	}
 
-	return s.taskPlacer.PlaceTaskOnRunner(tx, runnerId, runnerSet, taskKey)
+	err = s.taskPlacer.PlaceTaskOnRunner(tx, runnerId, runnerSet, taskKey)
+	if errors.Is(err, servicestate.ErrTaskNotInPendingState) {
+		return ErrTaskNotInAssignableState
+	}
+	return err
 }

@@ -25,9 +25,6 @@ type Set struct {
 
 	setDirectories
 
-	// enqueueCounter disambiguates versionstamp keys within a transaction.
-	logCounter uint64
-
 	compactor *setCompactor
 
 	clearLock sync.Mutex

@@ -2,7 +2,6 @@ package reliablequeue
 
 import (
 	"errors"
-	"sync/atomic"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -20,8 +19,6 @@ type FIFO struct {
 	epochKey fdb.Key
 	// this is the subspace of the queue, it is used to store the items in the queue
 	subspace directory.DirectorySubspace
-	// enqueueCounter disambiguates versionstamp keys within a transaction.
-	enqueueCounter uint64
 }
 
 func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
@@ -53,10 +50,9 @@ func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
 
 // Enqueue enqueues an item into the queue, within a given transaction.
 func (q *FIFO) Enqueue(tx fdb.Transaction, item []byte) error {
-	k, err := q.subspace.PackWithVersionstamp(tuple.Tuple{
-		tuple.IncompleteVersionstamp(0),
-		atomic.AddUint64(&q.enqueueCounter, 1),
-	})
+	k, err := q.subspace.PackWithVersionstamp(
+		dbutil.IncompleteGloballyOrderedVersionstamp(),
+	)
 	if err != nil {
 		return err
 	}

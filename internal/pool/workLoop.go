@@ -30,6 +30,7 @@ type taskManager struct {
 	*runMap
 	db            dbutil.DbRoot
 	runnerId      string
+	placer        *servicestate.TaskPlacer
 	taskSet       *servicestate.RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
@@ -67,8 +68,12 @@ func RunWorkLoop(
 	if err != nil {
 		return fmt.Errorf("failed to open revision store: %w", err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
+	if err != nil {
+		return fmt.Errorf("failed to create or open task placer: %w", err)
+	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	var runErrOnce sync.Once
 	runErrCh := make(chan error, 1)
 	taskManager := &taskManager{
@@ -79,6 +84,7 @@ func RunWorkLoop(
 		}),
 		db:            db,
 		runnerId:      runnerId,
+		placer:        placer,
 		taskSet:       taskSet,
 		taskDirectory: taskDirectory,
 		revisionStore: revisionStore,

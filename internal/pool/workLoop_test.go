@@ -14,7 +14,9 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/run"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -29,6 +31,13 @@ const (
 	waitTimeout = 2 * time.Second
 	waitShort   = 200 * time.Millisecond
 )
+
+func testResourceRequest() *taskv1.TaskResourceRequest {
+	return &taskv1.TaskResourceRequest{
+		CpuMillis:   500,
+		MemoryBytes: 1024,
+	}
+}
 
 func seedTask(
 	t *testing.T,
@@ -62,15 +71,15 @@ func seedTask(
 	return err
 }
 
-func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *RunnerSet {
+func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *servicestate.RunnerSet {
 	t.Helper()
 
-	set, err := CreateOrOpenTaskSetForRunner(db, db, runnerId)
+	set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 	require.NoError(t, err)
 	return set
 }
 
-func addTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) {
+func addTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, ids []task.Id) {
 	t.Helper()
 
 	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
@@ -81,7 +90,15 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) {
 			taskKey, err := tasksDirectory.Open(tx, id)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
-					if err := set.set.Add(tx, []byte(id)); err != nil {
+					taskKey, err = tasksDirectory.Create(tx, id)
+					if err != nil {
+						return nil, err
+					}
+					taskKey.ResourceRequest().Set(tx, testResourceRequest())
+					if err := set.Add(tx, taskKey); err != nil {
+						return nil, err
+					}
+					if err := taskKey.Clear(tx); err != nil {
 						return nil, err
 					}
 					continue
@@ -97,7 +114,7 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) {
 	require.NoError(t, err)
 }
 
-func removeTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) {
+func removeTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, ids []task.Id) {
 	t.Helper()
 
 	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
@@ -108,9 +125,6 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *RunnerSet, ids []task.Id) 
 			taskKey, err := tasksDirectory.Open(tx, id)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
-					if err := set.set.Remove(tx, []byte(id)); err != nil {
-						return nil, err
-					}
 					continue
 				}
 				return nil, err

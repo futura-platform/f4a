@@ -54,7 +54,7 @@ func (l lifecycleStatusSerializer) Unmarshal(bytes []byte) (LifecycleStatus, err
 		return 0, fmt.Errorf("invalid lifecycle status: %v", bytes)
 	}
 	s := bytes[0]
-	if s > byte(LifecycleStatusRunning) {
+	if s > byte(LifecycleStatusNone) {
 		return 0, fmt.Errorf("invalid lifecycle status: %d", s)
 	}
 	return LifecycleStatus(s), nil

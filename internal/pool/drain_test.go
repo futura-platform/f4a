@@ -12,17 +12,12 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
 )
-
-func stringPointer(v string) *string {
-	return &v
-}
 
 func setRunnerActive(t testing.TB, db dbutil.DbRoot, activeRunners ActiveRunners, runnerID string, active bool) {
 	t.Helper()
@@ -52,7 +47,7 @@ func isRunnerActive(t testing.TB, db dbutil.DbRoot, activeRunners ActiveRunners,
 func enqueueTaskWithAssignment(
 	t testing.TB,
 	db dbutil.DbRoot,
-	taskSet *RunnerSet,
+	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
 	id task.Id,
 	status task.LifecycleStatus,
@@ -79,7 +74,7 @@ func enqueueTaskWithAssignment(
 func enqueueTasksWithAssignmentInBatches(
 	t testing.TB,
 	db dbutil.DbRoot,
-	taskSet *RunnerSet,
+	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
 	ids []task.Id,
 	status task.LifecycleStatus,
@@ -117,6 +112,14 @@ func readSetItems(t testing.TB, db dbutil.DbRoot, set interface {
 	t.Helper()
 
 	items, _, err := set.Items(t.Context(), db.Database)
+	require.NoError(t, err)
+	return items
+}
+
+func readPendingTasks(t testing.TB, placer *servicestate.TaskPlacer) mapset.Set[string] {
+	t.Helper()
+
+	items, _, err := placer.PendingTasks(t.Context())
 	require.NoError(t, err)
 	return items
 }
@@ -214,10 +217,10 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+		placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 		require.NoError(t, err)
 
-		pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+		taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
 
 		taskDir, err := task.CreateOrOpenTasksDirectory(db)
@@ -231,15 +234,15 @@ func TestDrainTaskRunner_DrainsAllTasksAcrossMultipleBatches(t *testing.T) {
 			id := task.Id(fmt.Sprintf("drain-task-%03d", i))
 			taskIDs = append(taskIDs, id)
 		}
-		enqueueTasksWithAssignmentInBatches(t, db, taskSet, taskDir, taskIDs, task.LifecycleStatusRunning, stringPointer(runnerID))
+		enqueueTasksWithAssignmentInBatches(t, db, taskSet, taskDir, taskIDs, task.LifecycleStatusRunning, &runnerID)
 
-		err = DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+		err = DrainTaskRunner(t.Context(), db, placer, runnerID, activeRunners, taskSet, taskDir)
 		require.NoError(t, err)
 
 		require.False(t, isRunnerActive(t, db, activeRunners, runnerID))
 
 		remainingTaskSetItems := readSetItems(t, db, taskSet)
-		pendingItems := readSetItems(t, db, pendingSet)
+		pendingItems := readPendingTasks(t, placer)
 		require.Equal(t, 0, remainingTaskSetItems.Cardinality())
 		require.Equal(t, len(taskIDs), pendingItems.Cardinality())
 
@@ -258,10 +261,10 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		activeRunners, err := CreateOrOpenActiveRunners(db)
 		require.NoError(t, err)
 
-		taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+		placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 		require.NoError(t, err)
 
-		pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+		taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 		require.NoError(t, err)
 
 		taskDir, err := task.CreateOrOpenTasksDirectory(db)
@@ -274,20 +277,20 @@ func TestDrainTaskRunner_BatchFailureDoesNotLeaveMixedTaskState(t *testing.T) {
 		for i := range validTaskCount {
 			id := task.Id(fmt.Sprintf("valid-drain-task-%03d", i))
 			validTaskIDs = append(validTaskIDs, id)
-			enqueueTaskWithAssignment(t, db, taskSet, taskDir, id, task.LifecycleStatusRunning, stringPointer(runnerID))
+			enqueueTaskWithAssignment(t, db, taskSet, taskDir, id, task.LifecycleStatusRunning, &runnerID)
 		}
 
 		invalidTaskID := task.Id("invalid-running-task")
 		enqueueTaskWithAssignment(t, db, taskSet, taskDir, invalidTaskID, task.LifecycleStatusRunning, nil)
 
-		err = DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+		err = DrainTaskRunner(t.Context(), db, placer, runnerID, activeRunners, taskSet, taskDir)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "task assignment invariant violation")
 
 		require.False(t, isRunnerActive(t, db, activeRunners, runnerID))
 
 		taskSetItems := readSetItems(t, db, taskSet)
-		pendingItems := readSetItems(t, db, pendingSet)
+		pendingItems := readPendingTasks(t, placer)
 
 		drainedCount := 0
 		untouchedCount := 0
@@ -355,14 +358,13 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 				runnerID := fmt.Sprintf("runner-a-%d", round)
 				reassignedRunnerID := fmt.Sprintf("runner-b-%d", round)
 
-				taskSet, err := CreateOrOpenTaskSetForRunner(db, db, runnerID)
+				placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 				require.NoError(t, err)
 
-				reassignedTaskSet, err := CreateOrOpenTaskSetForRunner(db, db, reassignedRunnerID)
+				taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 				require.NoError(t, err)
 
-				pendingSetPath := []string{"drain_test_pending", fmt.Sprintf("round-%d", round)}
-				pendingSet, err := reliableset.CreateOrOpen(db, db, pendingSetPath)
+				reassignedTaskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, reassignedRunnerID)
 				require.NoError(t, err)
 
 				setRunnerActive(t, db, activeRunners, runnerID, true)
@@ -380,7 +382,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 					taskDir,
 					taskIDs,
 					task.LifecycleStatusRunning,
-					stringPointer(runnerID),
+					&runnerID,
 				)
 
 				mutatorCtx, cancelMutator := context.WithCancel(t.Context())
@@ -434,18 +436,13 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 									return false, err
 								}
 								tkey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-								tkey.RunnerId().Set(tx, stringPointer(reassignedRunnerID))
+								tkey.RunnerId().Set(tx, &reassignedRunnerID)
 							case 1:
-								if err := taskSet.Remove(tx, tkey); err != nil {
+								if err := placer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, tkey); err != nil {
 									return false, err
 								}
-								if err := pendingSet.Add(tx, []byte(id)); err != nil {
-									return false, err
-								}
-								tkey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-								tkey.RunnerId().Set(tx, nil)
 							default:
-								if err := taskSet.Remove(tx, tkey); err != nil {
+								if err := placer.PlaceTaskIn(tx, servicestate.PlacementLocationNowhere, tkey); err != nil {
 									return false, err
 								}
 								if err := tkey.Clear(tx); err != nil {
@@ -477,7 +474,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 
 				drainErrCh := make(chan error, 1)
 				go func() {
-					drainErrCh <- DrainTaskRunner(t.Context(), db, runnerID, activeRunners, taskSet, pendingSet, taskDir)
+					drainErrCh <- DrainTaskRunner(t.Context(), db, placer, runnerID, activeRunners, taskSet, taskDir)
 				}()
 				// Maintain concurrent overlap for a bounded window, then let drain complete.
 				time.Sleep(250 * time.Millisecond)
@@ -497,7 +494,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 
 				taskSetItems := readSetItems(t, db, taskSet)
 				reassignedItems := readSetItems(t, db, reassignedTaskSet)
-				pendingItems := readSetItems(t, db, pendingSet)
+				pendingItems := readPendingTasks(t, placer)
 				assignments := readTaskAssignments(t, db, taskDir, taskIDs)
 
 				for _, id := range taskIDs {

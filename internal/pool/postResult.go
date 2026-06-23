@@ -13,6 +13,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/run"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/futura/flog"
 	"go.opentelemetry.io/otel"
@@ -138,7 +139,7 @@ func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.
 		}
 
 		_, err = m.revisionStore.ApplyNext(tx, runnable.Id(), task.RevisionOperationDelete, func() error {
-			if err := m.taskSet.Remove(tx, taskKey); err != nil {
+			if err := m.placer.PlaceTaskIn(tx, servicestate.PlacementLocationNowhere, taskKey); err != nil {
 				return fmt.Errorf("failed to remove task from task queue: %w", err)
 			}
 			if err := taskKey.Clear(tx); err != nil {

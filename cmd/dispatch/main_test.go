@@ -116,9 +116,9 @@ func TestRunWithLeaderElection(t *testing.T) {
 				Core: fake.NewClientset(sts, pod),
 			}
 
-			pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+			taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 			require.NoError(t, err)
-			mockedRunnerTaskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, testRunnerId)
+			mockedRunnerTaskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, testRunnerId)
 			require.NoError(t, err)
 			tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
@@ -145,13 +145,11 @@ func TestRunWithLeaderElection(t *testing.T) {
 
 			// place a task in the pending set
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskKey.RunnerId().Set(tx, nil)
-				taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
 				taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
 					CpuMillis:   50,
 					MemoryBytes: 64 * 1024 * 1024,
 				})
-				if err := pendingSet.Add(tx, []byte(testTaskId)); err != nil {
+				if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 					return nil, err
 				}
 				return nil, nil
