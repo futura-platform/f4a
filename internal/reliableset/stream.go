@@ -10,7 +10,7 @@ import (
 // Stream establishes the necessary things for the consumer to construct the
 // list of queued items and have it update in realtime.
 //
-// Unlike StreamEvents, the emitted batches only include the absolute net state
+// Unlike streamEvents, the emitted batches only include the absolute net state
 // changes per incoming raw batch.
 func (s *Set) Stream(ctx context.Context) (
 	initialValues mapset.Set[string],
@@ -18,7 +18,7 @@ func (s *Set) Stream(ctx context.Context) (
 	errCh <-chan error,
 	err error,
 ) {
-	initialValues, rawEventsCh, rawErrCh, err := s.StreamEvents(ctx)
+	initialValues, rawEventsCh, rawErrCh, err := s.streamEvents(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -161,7 +161,7 @@ func (s *Set) Items(ctx context.Context, db fdb.Database) (
 	tail fdb.KeyConvertible,
 	err error,
 ) {
-	items, tail, activeLease, err := s.LeasedItems(ctx, db)
+	items, tail, activeLease, err := s.leasedItems(ctx, db)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -169,7 +169,7 @@ func (s *Set) Items(ctx context.Context, db fdb.Database) (
 	return items, tail, activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
 }
 
-func (s *Set) LeasedItems(ctx context.Context, db fdb.Database) (
+func (s *Set) leasedItems(ctx context.Context, db fdb.Database) (
 	items mapset.Set[string],
 	tail fdb.KeyConvertible,
 	compactionLease *reliablelock.ActiveLease,

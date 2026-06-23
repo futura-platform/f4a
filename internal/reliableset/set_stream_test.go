@@ -136,7 +136,7 @@ func TestSetStreamEventsRawDuplicateAdds(t *testing.T) {
 		set := newSet(t, db, "stream_events_raw_duplicate_adds")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.StreamEvents(ctx)
+		_, events, errCh, err := set.streamEvents(ctx)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 

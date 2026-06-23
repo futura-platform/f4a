@@ -15,13 +15,13 @@ type epochChunk struct {
 	tailKey fdb.KeyConvertible
 }
 
-// StreamEvents establishes the necessary things for the consumer to construct
+// streamEvents establishes the necessary things for the consumer to construct
 // the list of queued items, and have it update in realtime.
 // It is gauranteed to eventually send every change that happens to the queue,
 // in order (unless there is an error).
 // The events channel sends batches of changes.
 // These changes are directly forwarded from the log, so they are NOT deduplicated/absolute.
-func (s *Set) StreamEvents(ctx context.Context) (
+func (s *Set) streamEvents(ctx context.Context) (
 	initialValues mapset.Set[string],
 	events <-chan []LogEntry,
 	errCh <-chan error,
@@ -46,7 +46,7 @@ func (s *Set) StreamEvents(ctx context.Context) (
 		return nil, nil, nil, err
 	}
 
-	initialValues, initialTail, activeLease, err := s.LeasedItems(ctx, s.db.Database)
+	initialValues, initialTail, activeLease, err := s.leasedItems(ctx, s.db.Database)
 	if err != nil {
 		return nil, nil, nil, err
 	}
