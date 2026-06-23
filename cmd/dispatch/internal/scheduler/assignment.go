@@ -74,7 +74,7 @@ func (f assignmentFailures) Record(ctx context.Context, gauge metric.Int64Gauge)
 }
 
 // assignPending assigns all given tasks in the pending set to active runner pods.
-// If resources are unavailable, the task is not assigned and added to the retryAssignLater return set.
+// If any failure occurs, the task is not assigned and added to the assignmentFailures return value.
 func (s *Scheduler) assignPending(
 	ctx context.Context,
 	pendingIds mapset.Set[task.Id],
