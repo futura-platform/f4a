@@ -58,7 +58,7 @@ func (s *Scheduler) assignPending(
 	assignmentFailureGauge, err := meter.Int64Gauge(
 		"pending_assignment_failure",
 		metric.WithUnit("{task}"),
-		metric.WithDescription("Assignment failures."),
+		metric.WithDescription("The number of pending tasks that failed to be assigned to a runner during the last assignment call."),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create assignment failure gauge: %w", err)
