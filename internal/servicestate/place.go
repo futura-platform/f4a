@@ -83,7 +83,10 @@ func (p *TaskPlacer) PlaceTaskOnRunner(
 		if err != nil {
 			return fmt.Errorf("failed to get task runner id: %w", err)
 		}
-		if currentRunnerId != nil && *currentRunnerId != runnerId {
+		if currentRunnerId != nil {
+			if *currentRunnerId != runnerId {
+				return fmt.Errorf("%w: already assigned to runner %s", ErrTaskNotInPendingState, *currentRunnerId)
+			}
 			return ErrDuplicatePlacement
 		}
 		lifecycleStatus, err := as.LifecycleStatusFuture.Get()
