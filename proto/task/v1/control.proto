@@ -13,7 +13,10 @@ message TaskResourceRequest {
   uint32 cpu_millis = 1;
 
   // Memory in bytes.
-  uint64 memory_bytes = 2;
+  uint64 memory_bytes = 2 [
+    // Keep this within int64 range because scheduler utilization aggregates use signed atomic math.
+    (buf.validate.field).uint64.lte = 9223372036854775807
+  ];
 }
 
 message CreateTaskRequest {

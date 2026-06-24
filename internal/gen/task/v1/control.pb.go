@@ -1252,11 +1252,12 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"\x15task/v1/control.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\"&\n" +
 	"\x0eTaskParameters\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\fR\x05input\"W\n" +
+	"\x05input\x18\x01 \x01(\fR\x05input\"h\n" +
 	"\x13TaskResourceRequest\x12\x1d\n" +
 	"\n" +
-	"cpu_millis\x18\x01 \x01(\rR\tcpuMillis\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x91\x02\n" +
+	"cpu_millis\x18\x01 \x01(\rR\tcpuMillis\x122\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04B\x0f\xbaH\f2\n" +
+	"\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\vmemoryBytes\"\x91\x02\n" +
 	"\x11CreateTaskRequest\x12 \n" +
 	"\atask_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18@R\x06taskId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +

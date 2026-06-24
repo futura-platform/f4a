@@ -3,11 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"math"
+	"net/http/httptest"
 	"testing"
 
+	"connectrpc.com/connect"
+	"connectrpc.com/validate"
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
+	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -191,6 +196,37 @@ func TestControllerCreateTask(t *testing.T) {
 				require.True(t, exists)
 				require.Equal(t, expected, state)
 			})
+		})
+
+		t.Run("rejects memory request above int64 max", func(t *testing.T) {
+			_, controlHandler := taskv1connect.NewControlServiceHandler(
+				c,
+				connect.WithInterceptors(validate.NewInterceptor()),
+			)
+			server := httptest.NewServer(controlHandler)
+			t.Cleanup(server.Close)
+			client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+			taskID := "create-memory-overflow"
+			callbackURL := "https://example.com/a"
+			_, err := client.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+				Revision: 1,
+				Request: &taskv1.CreateTaskRequest{
+					TaskId:      taskID,
+					ExecutorId:  "executor-a",
+					CallbackUrl: &callbackURL,
+					Parameters:  &taskv1.TaskParameters{Input: []byte("payload-a")},
+					ResourceRequest: &taskv1.TaskResourceRequest{
+						CpuMillis:   500,
+						MemoryBytes: uint64(math.MaxInt64) + 1,
+					},
+				},
+			})
+			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			require.Contains(t, err.Error(), "memory_bytes")
+
+			_, exists := readTaskState(t, db, taskID)
+			require.False(t, exists)
 		})
 	})
 }
