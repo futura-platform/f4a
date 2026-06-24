@@ -3,7 +3,6 @@ package reliableset
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -27,8 +26,6 @@ type Set struct {
 
 	compactor *setCompactor
 
-	clearLock sync.Mutex
-	clearOnce sync.Once
 	clearFunc func(fdb.Transaction) (bool, error)
 }
 type setDirectories struct {
@@ -217,25 +214,10 @@ func (s *Set) leasedItems(ctx context.Context, db fdb.Database) (
 // Clear stops background runtime and removes this set directory recursively.
 // It is idempotent.
 func (s *Set) Clear(tx fdb.Transaction) error {
-	s.clearLock.Lock()
-	defer s.clearLock.Unlock()
-
-	var clearErr error
-	s.clearOnce.Do(func() {
-		s.releaseRuntime()
-		removed, err := s.clearFunc(tx)
-		if err != nil {
-			clearErr = fmt.Errorf("failed to remove set directory: %w", err)
-			return
-		}
-		if !removed {
-			// Already removed; treat as idempotent success.
-			return
-		}
-	})
-	if clearErr != nil {
-		// reset the clearOnce to allow future retries
-		s.clearOnce = sync.Once{}
+	s.releaseRuntime()
+	_, err := s.clearFunc(tx)
+	if err != nil {
+		return fmt.Errorf("failed to remove set directory: %w", err)
 	}
-	return clearErr
+	return nil
 }
