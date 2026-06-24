@@ -124,9 +124,6 @@ func sendStreamBatch(ctx context.Context, ch chan<- []LogEntry, batch []LogEntry
 }
 
 func sendStreamErr(errCh chan<- error, err error) {
-	if err == nil {
-		return
-	}
 	select {
 	case errCh <- err:
 	default:
