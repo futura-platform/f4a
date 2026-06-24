@@ -3,11 +3,17 @@ package api
 import (
 	"context"
 	"errors"
+	"math"
+	"net/http/httptest"
 	"testing"
 
+	"connectrpc.com/connect"
+	"connectrpc.com/validate"
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
+	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -24,6 +30,13 @@ func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
 	c, ok := handler.(*controller)
 	require.True(t, ok)
 	return c
+}
+
+func testResourceRequest() *taskv1.TaskResourceRequest {
+	return &taskv1.TaskResourceRequest{
+		CpuMillis:   500,
+		MemoryBytes: 1024,
+	}
 }
 
 type taskState struct {
@@ -44,10 +57,11 @@ func mustCreateTask(
 	_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 		Revision: revision,
 		Request: &taskv1.CreateTaskRequest{
-			TaskId:      taskID,
-			ExecutorId:  executorID,
-			CallbackUrl: &callbackURL,
-			Parameters:  &taskv1.TaskParameters{Input: input},
+			TaskId:          taskID,
+			ExecutorId:      executorID,
+			CallbackUrl:     &callbackURL,
+			Parameters:      &taskv1.TaskParameters{Input: input},
+			ResourceRequest: testResourceRequest(),
 		},
 	})
 	require.NoError(t, err)
@@ -183,6 +197,37 @@ func TestControllerCreateTask(t *testing.T) {
 				require.Equal(t, expected, state)
 			})
 		})
+
+		t.Run("rejects memory request above int64 max", func(t *testing.T) {
+			_, controlHandler := taskv1connect.NewControlServiceHandler(
+				c,
+				connect.WithInterceptors(validate.NewInterceptor()),
+			)
+			server := httptest.NewServer(controlHandler)
+			t.Cleanup(server.Close)
+			client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+			taskID := "create-memory-overflow"
+			callbackURL := "https://example.com/a"
+			_, err := client.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+				Revision: 1,
+				Request: &taskv1.CreateTaskRequest{
+					TaskId:      taskID,
+					ExecutorId:  "executor-a",
+					CallbackUrl: &callbackURL,
+					Parameters:  &taskv1.TaskParameters{Input: []byte("payload-a")},
+					ResourceRequest: &taskv1.TaskResourceRequest{
+						CpuMillis:   500,
+						MemoryBytes: uint64(math.MaxInt64) + 1,
+					},
+				},
+			})
+			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			require.Contains(t, err.Error(), "memory_bytes")
+
+			_, exists := readTaskState(t, db, taskID)
+			require.False(t, exists)
+		})
 	})
 }
 
@@ -317,7 +362,7 @@ func TestControllerSuspendTask_RunningTaskMissingQueueIsInvariantViolation(t *te
 				TaskId: taskID,
 			},
 		})
-		require.ErrorIs(t, err, ErrRunningTaskQueueInvariant)
+		require.ErrorIs(t, err, servicestate.ErrRunnerSetDoesNotExist)
 	})
 }
 
@@ -330,10 +375,11 @@ func TestControllerRevisionRules(t *testing.T) {
 			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 				Revision: 2,
 				Request: &taskv1.CreateTaskRequest{
-					TaskId:      "bad-create-revision",
-					ExecutorId:  "executor-a",
-					CallbackUrl: &callbackURL,
-					Parameters:  &taskv1.TaskParameters{Input: []byte("payload")},
+					TaskId:          "bad-create-revision",
+					ExecutorId:      "executor-a",
+					CallbackUrl:     &callbackURL,
+					Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+					ResourceRequest: testResourceRequest(),
 				},
 			})
 			require.Error(t, err)
@@ -385,10 +431,11 @@ func TestControllerRejectsMissingParameters(t *testing.T) {
 			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
 				Revision: 1,
 				Request: &taskv1.CreateTaskRequest{
-					TaskId:      "missing-create-params",
-					ExecutorId:  "executor-a",
-					CallbackUrl: &callbackURL,
-					Parameters:  nil,
+					TaskId:          "missing-create-params",
+					ExecutorId:      "executor-a",
+					CallbackUrl:     &callbackURL,
+					Parameters:      nil,
+					ResourceRequest: testResourceRequest(),
 				},
 			})
 			require.ErrorIs(t, err, ErrMissingParameters)
@@ -409,6 +456,25 @@ func TestControllerRejectsMissingParameters(t *testing.T) {
 	})
 }
 
+func TestControllerRejectsMissingResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+
+		callbackURL := "https://example.com/a"
+		_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+			Revision: 1,
+			Request: &taskv1.CreateTaskRequest{
+				TaskId:          "missing-resource-request",
+				ExecutorId:      "executor-a",
+				CallbackUrl:     &callbackURL,
+				Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+				ResourceRequest: nil,
+			},
+		})
+		require.ErrorIs(t, err, ErrMissingResourceRequest)
+	})
+}
+
 func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
@@ -421,10 +487,11 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
 						Revision: 1,
 						Request: &taskv1.CreateTaskRequest{
-							TaskId:      "batch-task-a",
-							ExecutorId:  "executor-a",
-							CallbackUrl: &callbackUrlA,
-							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							TaskId:          "batch-task-a",
+							ExecutorId:      "executor-a",
+							CallbackUrl:     &callbackUrlA,
+							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
+							ResourceRequest: testResourceRequest(),
 						},
 					},
 				},
@@ -434,10 +501,11 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
 						Revision: 2,
 						Request: &taskv1.CreateTaskRequest{
-							TaskId:      "batch-task-b",
-							ExecutorId:  "executor-b",
-							CallbackUrl: &callbackUrlB,
-							Parameters:  &taskv1.TaskParameters{Input: []byte("v1")},
+							TaskId:          "batch-task-b",
+							ExecutorId:      "executor-b",
+							CallbackUrl:     &callbackUrlB,
+							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
+							ResourceRequest: testResourceRequest(),
 						},
 					},
 				},

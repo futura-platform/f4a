@@ -45,14 +45,18 @@ type StartOption func(*StartOptions)
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
 func Start(ctx context.Context, executors map[string]execute.Executor, options ...StartOption) error {
+	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
+	if err != nil {
+		return fmt.Errorf("failed to create or open default db root: %w", err)
+	}
 	port, err := util.RequiredPort(constants.WorkerPort)
 	if err != nil {
 		return err
 	}
-	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors, options...)
+	return startOnAddress(ctx, dbr, fmt.Sprintf(":%d", port), executors, options...)
 }
 
-func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
+func startOnAddress(ctx context.Context, dbr dbutil.DbRoot, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
 	shutdownOTEL, err := serverutil.BootstrapOTEL(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap OTEL: %w", err)
@@ -64,10 +68,6 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		o(options)
 	}
 
-	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
-	if err != nil {
-		return err
-	}
 	ctx = dbutil.WithDB(ctx, dbr)
 
 	s, _ := serverutil.NewBaseK8sService(dbr, func() (status int) {
@@ -82,7 +82,7 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 	if err != nil {
 		return err
 	}
-	taskSet, err := pool.CreateOrOpenTaskSetForRunner(dbr, dbr, runnerId)
+	taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(dbr, dbr, runnerId)
 	if err != nil {
 		return err
 	}
@@ -130,9 +130,9 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		return err
 	})
 	group.Go(func() error {
-		pendingSet, err := servicestate.CreateOrOpenReadySet(dbr, dbr)
+		taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(dbr)
 		if err != nil {
-			return fmt.Errorf("failed to open pending set: %w", err)
+			return fmt.Errorf("failed to open task placer: %w", err)
 		}
 		taskDir, err := task.CreateOrOpenTasksDirectory(dbr)
 		if err != nil {
@@ -142,7 +142,7 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, func(shutdownCtx context.Context) error {
 			if !taskRunnerDrained {
 				cancelWorkLoop()
-				err := pool.DrainTaskRunner(shutdownCtx, dbr, runnerId, activeRunners, taskSet, pendingSet, taskDir)
+				err := pool.DrainTaskRunner(shutdownCtx, dbr, taskPlacer, runnerId, activeRunners, taskSet, taskDir)
 				if err != nil {
 					return fmt.Errorf("failed to drain task runner: %w", err)
 				}

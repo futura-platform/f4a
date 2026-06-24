@@ -3,8 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/puzpuzpuz/xsync/v4"
@@ -21,7 +20,7 @@ func TestRunnerSetCacheCachesSetUntilDeleteEvent(t *testing.T) {
 
 		setCache := &runnerSetCache{
 			db:         db,
-			activeSets: xsync.NewMap[string, *reliableset.Set](),
+			activeSets: xsync.NewMap[string, *servicestate.RunnerSet](),
 		}
 
 		first, err := setCache.open(runnerID)
@@ -55,7 +54,7 @@ func TestRunnerSetCacheDeleteOnlyInvalidatesMatchingPod(t *testing.T) {
 
 		setCache := &runnerSetCache{
 			db:         db,
-			activeSets: xsync.NewMap[string, *reliableset.Set](),
+			activeSets: xsync.NewMap[string, *servicestate.RunnerSet](),
 		}
 
 		runnerASet, err := setCache.open(runnerA)
@@ -86,7 +85,7 @@ func TestRunnerSetCacheDeleteInvalidatesOnDeletedFinalStateUnknown(t *testing.T)
 
 		setCache := &runnerSetCache{
 			db:         db,
-			activeSets: xsync.NewMap[string, *reliableset.Set](),
+			activeSets: xsync.NewMap[string, *servicestate.RunnerSet](),
 		}
 
 		runnerASet, err := setCache.open(runnerA)
@@ -114,6 +113,6 @@ func TestRunnerSetCacheDeleteInvalidatesOnDeletedFinalStateUnknown(t *testing.T)
 func ensureRunnerTaskSetExists(t *testing.T, db dbutil.DbRoot, runnerID string) {
 	t.Helper()
 
-	_, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+	_, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 	require.NoError(t, err)
 }

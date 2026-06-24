@@ -14,8 +14,9 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/internal/reliableset"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/run"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -30,6 +31,13 @@ const (
 	waitTimeout = 2 * time.Second
 	waitShort   = 200 * time.Millisecond
 )
+
+func testResourceRequest() *taskv1.TaskResourceRequest {
+	return &taskv1.TaskResourceRequest{
+		CpuMillis:   500,
+		MemoryBytes: 1024,
+	}
+}
 
 func seedTask(
 	t *testing.T,
@@ -57,27 +65,47 @@ func seedTask(
 		taskDirectory.Input().Set(tx, []byte(id))
 		taskDirectory.RunnerId().Set(tx, &runnerId)
 		taskDirectory.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
+		taskDirectory.ResourceRequest().Set(tx, testResourceRequest())
 		return nil, nil
 	})
 	return err
 }
 
-func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *reliableset.Set {
+func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *servicestate.RunnerSet {
 	t.Helper()
 
-	path := append([]string{}, db.Root.GetPath()...)
-	path = append(path, "task_queue", runnerId)
-	set, err := reliableset.CreateOrOpen(db, db, path)
+	set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 	require.NoError(t, err)
 	return set
 }
 
-func addTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.Id) {
+func addTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, ids []task.Id) {
 	t.Helper()
 
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+	require.NoError(t, err)
+
+	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, id := range ids {
-			if err := set.Add(tx, []byte(id)); err != nil {
+			taskKey, err := tasksDirectory.Open(tx, id)
+			if err != nil {
+				if errors.Is(err, directory.ErrDirNotExists) {
+					taskKey, err = tasksDirectory.Create(tx, id)
+					if err != nil {
+						return nil, err
+					}
+					taskKey.ResourceRequest().Set(tx, testResourceRequest())
+					if err := set.Add(tx, taskKey); err != nil {
+						return nil, err
+					}
+					if err := taskKey.Clear(tx); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				return nil, err
+			}
+			if err := set.Add(tx, taskKey); err != nil {
 				return nil, err
 			}
 		}
@@ -86,12 +114,22 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.I
 	require.NoError(t, err)
 }
 
-func removeTasks(t testing.TB, db dbutil.DbRoot, set *reliableset.Set, ids []task.Id) {
+func removeTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, ids []task.Id) {
 	t.Helper()
 
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+	tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+	require.NoError(t, err)
+
+	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, id := range ids {
-			if err := set.Remove(tx, []byte(id)); err != nil {
+			taskKey, err := tasksDirectory.Open(tx, id)
+			if err != nil {
+				if errors.Is(err, directory.ErrDirNotExists) {
+					continue
+				}
+				return nil, err
+			}
+			if err := set.Remove(tx, taskKey); err != nil {
 				return nil, err
 			}
 		}
@@ -505,7 +543,7 @@ func TestWorkLoop(t *testing.T) {
 								}
 								return nil, err
 							}
-							if err := manager.taskSet.Remove(tx, []byte(runnable.Id())); err != nil {
+							if err := manager.taskSet.Remove(tx, taskKey); err != nil {
 								return nil, err
 							}
 							if err := taskKey.Clear(tx); err != nil {

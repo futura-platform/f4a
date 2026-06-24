@@ -11,6 +11,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/run"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -29,7 +30,8 @@ type taskManager struct {
 	*runMap
 	db            dbutil.DbRoot
 	runnerId      string
-	taskSet       *reliableset.Set
+	placer        *servicestate.TaskPlacer
+	taskSet       *servicestate.RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
 	c             *http.Client
@@ -51,7 +53,7 @@ func RunWorkLoop(
 	ctx context.Context,
 	runnerId string,
 	db dbutil.DbRoot,
-	taskSet *reliableset.Set,
+	taskSet *servicestate.RunnerSet,
 	router execute.Router,
 ) error {
 	ctx, span := tracer.Start(ctx, "RunWorkLoop")
@@ -66,8 +68,12 @@ func RunWorkLoop(
 	if err != nil {
 		return fmt.Errorf("failed to open revision store: %w", err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
+	if err != nil {
+		return fmt.Errorf("failed to create or open task placer: %w", err)
+	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	var runErrOnce sync.Once
 	runErrCh := make(chan error, 1)
 	taskManager := &taskManager{
@@ -78,6 +84,7 @@ func RunWorkLoop(
 		}),
 		db:            db,
 		runnerId:      runnerId,
+		placer:        placer,
 		taskSet:       taskSet,
 		taskDirectory: taskDirectory,
 		revisionStore: revisionStore,
@@ -102,6 +109,8 @@ func RunWorkLoop(
 
 	for eventsCh != nil || streamErrCh != nil {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case err := <-runErrCh:
 			return err
 		case err, ok := <-streamErrCh:
@@ -120,10 +129,10 @@ func RunWorkLoop(
 			}
 			// record all the changes that happened in this batch
 			// (a key can either be in the added set or the removed set, but NOT both)
-			addedSet := mapset.NewSetWithSize[string](len(b))
-			removedSet := mapset.NewSetWithSize[string](len(b))
+			addedSet := mapset.NewSetWithSize[task.Id](len(b))
+			removedSet := mapset.NewSetWithSize[task.Id](len(b))
 			for _, item := range b {
-				v := string(item.Value)
+				v := item.Value
 				switch item.Op {
 				case reliableset.LogOperationAdd:
 					addedSet.Add(v)
@@ -161,7 +170,7 @@ func processAddedBatch(
 	taskManager *taskManager,
 	db dbutil.DbRoot,
 	router execute.Router,
-	items mapset.Set[string],
+	items mapset.Set[task.Id],
 ) error {
 	ctx, span := tracer.Start(ctx, "processAddedBatch")
 	defer span.End()
@@ -195,9 +204,8 @@ func processAddedBatch(
 	return nil
 }
 
-func processRemovedBatch(taskManager *runMap, items mapset.Set[string]) error {
-	for _, item := range items.ToSlice() {
-		id := task.Id(item)
+func processRemovedBatch(taskManager *runMap, items mapset.Set[task.Id]) error {
+	for _, id := range items.ToSlice() {
 		err := taskManager.cancel(id)
 		if err != nil {
 			if errors.Is(err, ErrRunNotFound) {

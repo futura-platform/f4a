@@ -29,7 +29,6 @@ dispatch:
   replicas: 1
   startupProbe: {}
   metricsInterval: "5s"
-  scoreEmaAlpha: "0.5"
   service:
     port: 8082
   envFrom: []

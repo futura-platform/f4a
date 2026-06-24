@@ -1,10 +1,10 @@
-package pool_test
+package servicestate_test
 
 import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/pool"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +14,7 @@ func TestList(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		t.Run("starts empty", func(t *testing.T) {
 			_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-				runnerIds, err := pool.ListTaskSets(tx, db)
+				runnerIds, err := servicestate.ListTaskSets(tx, db)
 				assert.NoError(t, err)
 				assert.Empty(t, runnerIds)
 				return nil, nil
@@ -25,11 +25,11 @@ func TestList(t *testing.T) {
 		runnerId := "test-runner"
 		t.Run("after a task set has been created", func(t *testing.T) {
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
+				taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 				assert.NoError(t, err)
 				assert.NotNil(t, taskSet)
 
-				runnerIds, err := pool.ListTaskSets(tx, db)
+				runnerIds, err := servicestate.ListTaskSets(tx, db)
 				assert.NoError(t, err)
 				assert.Equal(t, []string{runnerId}, runnerIds)
 				return nil, nil
@@ -39,13 +39,13 @@ func TestList(t *testing.T) {
 
 		t.Run("after a task set has been deleted", func(t *testing.T) {
 			_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, runnerId)
+				taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 				assert.NoError(t, err)
 				assert.NotNil(t, taskSet)
 
-				taskSet.Clear()
+				taskSet.Clear(tx)
 
-				runnerIds, err := pool.ListTaskSets(tx, db)
+				runnerIds, err := servicestate.ListTaskSets(tx, db)
 				assert.NoError(t, err)
 				assert.Empty(t, runnerIds)
 				return nil, nil

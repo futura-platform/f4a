@@ -168,8 +168,12 @@ func TestSetClearRemovesDirectories(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, exists)
 
-		require.NoError(t, set.Clear())
-		require.NoError(t, set.Clear())
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			require.NoError(t, set.Clear(tx))
+			require.NoError(t, set.Clear(tx))
+			return nil, nil
+		})
+		require.NoError(t, err)
 
 		exists, err = db.Root.Exists(db, path)
 		require.NoError(t, err)
@@ -178,7 +182,11 @@ func TestSetClearRemovesDirectories(t *testing.T) {
 		reopened, err := CreateOrOpen(db, db, path)
 		require.NoError(t, err)
 		require.Empty(t, readSetValues(t, db, reopened).ToSlice())
-		require.NoError(t, reopened.Clear())
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			require.NoError(t, reopened.Clear(tx))
+			return nil, nil
+		})
+		require.NoError(t, err)
 	})
 }
 
@@ -290,7 +298,7 @@ func TestCursorRegistrationAndAdvance(t *testing.T) {
 		set := newSet(t, db, "cursor_registration")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		_, events, errCh, err := set.StreamEvents(ctx)
+		_, events, errCh, err := set.streamEvents(ctx)
 		require.NoError(t, err)
 		defer drainStream(t, cancel, errCh)
 

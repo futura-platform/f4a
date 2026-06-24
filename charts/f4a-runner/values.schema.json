@@ -181,12 +181,7 @@
 				"metricsInterval": {
 					"type": "string",
 					"minLength": 1,
-					"description": "Interval between metrics refreshes, e.g. 5s."
-				},
-				"scoreEmaAlpha": {
-					"type": "string",
-					"minLength": 1,
-					"description": "EMA alpha for worker scoring, between 0 and 1."
+					"description": "Interval between pending assignment retries, e.g. 5s."
 				},
 				"assignmentBatchParallelism": {
 					"type": "integer",
@@ -238,8 +233,7 @@
 				"serviceAccountName",
 				"image",
 				"service",
-				"metricsInterval",
-				"scoreEmaAlpha"
+				"metricsInterval"
 			]
 		},
 		"worker": {

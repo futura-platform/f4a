@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 
+	"connectrpc.com/connect"
+	"connectrpc.com/validate"
 	"github.com/futura-platform/f4a/cmd/gateway/internal/api"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/task"
@@ -66,7 +68,10 @@ func run() error {
 	}
 	slog.Info("gateway listening", "port", port)
 	s.Addr = fmt.Sprintf(":%d", port)
-	controlPath, controlHandler := taskv1connect.NewControlServiceHandler(controller)
+	controlPath, controlHandler := taskv1connect.NewControlServiceHandler(
+		controller,
+		connect.WithInterceptors(validate.NewInterceptor()),
+	)
 	mux.Handle(controlPath, otelhttp.NewHandler(controlHandler, taskv1connect.ControlServiceName))
 
 	err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, nil)

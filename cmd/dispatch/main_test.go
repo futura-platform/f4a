@@ -7,6 +7,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/scheduler"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -21,8 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
-	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 )
 
 func TestLoadConfigUsesDefaultBatchParallelism(t *testing.T) {
@@ -60,7 +59,6 @@ func setRequiredDispatchEnv(t *testing.T) {
 	t.Setenv(constants.StatefulSetName, "test-statefulset")
 	t.Setenv(constants.LeaderElectionName, "test-leader-election")
 	t.Setenv(constants.MetricsInterval, "5s")
-	t.Setenv(constants.ScoreEmaAlpha, "0.5")
 }
 
 func TestRunWithLeaderElection(t *testing.T) {
@@ -69,7 +67,6 @@ func TestRunWithLeaderElection(t *testing.T) {
 			Namespace:          "test-namespace",
 			StatefulSetName:    "test-statefulset",
 			MetricsInterval:    5 * time.Second,
-			ScoreAlpha:         0.5,
 			BatchTxParallelism: 1,
 		}
 		testRunnerId := "test-runner-id"
@@ -115,38 +112,13 @@ func TestRunWithLeaderElection(t *testing.T) {
 					},
 				},
 			}
-			podMetrics := &metricsv1beta1.PodMetrics{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      testRunnerId,
-					Namespace: testCfg.Namespace,
-					Labels:    map[string]string{"app": testCfg.StatefulSetName},
-				},
-				Containers: []metricsv1beta1.ContainerMetrics{
-					{
-						Name: "runner",
-						Usage: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("50m"),
-							corev1.ResourceMemory: resource.MustParse("64Mi"),
-						},
-					},
-				},
-			}
-			metricsClient := metricsfake.NewSimpleClientset()
-			err := metricsClient.Tracker().Create(
-				metricsv1beta1.SchemeGroupVersion.WithResource("pods"),
-				podMetrics,
-				testCfg.Namespace,
-			)
-			require.NoError(t, err)
 			clients := &k8s.Clients{
 				Core: fake.NewClientset(sts, pod),
-				// ignore this deprecation, k8s.io/metrics v0.36.0 should fix this when it's released
-				Metrics: metricsClient,
 			}
 
-			pendingSet, err := servicestate.CreateOrOpenReadySet(db, db)
+			taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 			require.NoError(t, err)
-			mockedRunnerTaskSet, err := pool.CreateOrOpenTaskSetForRunner(db, db, testRunnerId)
+			mockedRunnerTaskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, testRunnerId)
 			require.NoError(t, err)
 			tasksDir, err := task.CreateOrOpenTasksDirectory(db)
 			require.NoError(t, err)
@@ -173,9 +145,11 @@ func TestRunWithLeaderElection(t *testing.T) {
 
 			// place a task in the pending set
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskKey.RunnerId().Set(tx, nil)
-				taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-				if err := pendingSet.Add(tx, []byte(testTaskId)); err != nil {
+				taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
+					CpuMillis:   50,
+					MemoryBytes: 64 * 1024 * 1024,
+				})
+				if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 					return nil, err
 				}
 				return nil, nil
@@ -189,9 +163,9 @@ func TestRunWithLeaderElection(t *testing.T) {
 			case err := <-errCh:
 				t.Fatalf("stream error: %v", err)
 			case change := <-changes:
-				assert.Equal(t, []reliableset.LogEntry{{
+				assert.Equal(t, []reliableset.TLogEntry[task.Id]{{
 					Op:    reliableset.LogOperationAdd,
-					Value: []byte(testTaskId),
+					Value: task.Id(testTaskId),
 				}}, change)
 			case <-time.After(10 * time.Second):
 				t.Fatalf("timed out waiting for change")

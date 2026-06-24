@@ -2,7 +2,7 @@
 FROM celrenheit/foundationdb:7.3.46 AS fdb
 
 # Build stage
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 
 # Copy FDB client library and headers for CGO
 COPY --from=fdb /usr/lib/libfdb_c.so /usr/lib/libfdb_c.so

@@ -1,11 +1,10 @@
-package pool
+package servicestate
 
 import (
 	"errors"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -17,12 +16,12 @@ func taskSetPath(runnerId string) []string {
 	return append(taskSetRootPath(), runnerId)
 }
 
-func OpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, error) {
-	return reliableset.Open(tr, db, taskSetPath(runnerId))
+func OpenTaskSetForRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
+	return openRunnerSet(tr, db, runnerId)
 }
 
-func CreateOrOpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*reliableset.Set, error) {
-	return reliableset.CreateOrOpen(tr, db, taskSetPath(runnerId))
+func CreateOrOpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
+	return createOrOpenRunnerSet(tr, db, runnerId)
 }
 
 // ListTaskSets returns all associated runner ids for task sets in the database.

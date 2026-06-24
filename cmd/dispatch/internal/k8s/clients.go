@@ -8,12 +8,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 type Clients struct {
-	Core    kubernetes.Interface
-	Metrics metricsclient.Interface
+	Core kubernetes.Interface
 }
 
 func LoadConfig() (*rest.Config, error) {
@@ -33,9 +31,5 @@ func NewClients(cfg *rest.Config) (*Clients, error) {
 	if err != nil {
 		return nil, err
 	}
-	metrics, err := metricsclient.NewForConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &Clients{Core: core, Metrics: metrics}, nil
+	return &Clients{Core: core}, nil
 }

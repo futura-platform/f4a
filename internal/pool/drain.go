@@ -8,7 +8,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/futura-platform/f4a/internal/reliableset"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
@@ -19,14 +19,13 @@ import (
 func DrainTaskRunner(
 	ctx context.Context,
 	dbr dbutil.DbRoot,
+	placer *servicestate.TaskPlacer,
 	runnerId string,
 	activeRunners ActiveRunners,
-	taskSet *reliableset.Set,
-	pendingSet *reliableset.Set,
+	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
 ) error {
 	// immediately mark runner as inactive when draining the pod.
-	var hangingTasks mapset.Set[string]
 	_, err := dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		activeRunners.SetActive(tx, runnerId, false)
 		return nil, nil
@@ -35,15 +34,15 @@ func DrainTaskRunner(
 		return fmt.Errorf("failed to mark runner as inactive: %w", err)
 	}
 
-	hangingTasks, _, err = taskSet.Items(ctx, dbr.Database)
+	hangingTasks, _, err := taskSet.Items(ctx, dbr.Database)
 	if err != nil {
 		return fmt.Errorf("failed to get task set items: %w", err)
 	}
 
 	// do a best effort to drain the task set, using batching to avoid overloading the tx size limit.
-	const drainBatchSize = 256
+	const drainBatchSize = 128
 	for hangingTasks.Cardinality() > 0 {
-		currentBatch := mapset.NewSet[string]()
+		currentBatch := mapset.NewSet[task.Id]()
 		for range drainBatchSize {
 			taskID, ok := hangingTasks.Pop()
 			if !ok {
@@ -66,7 +65,7 @@ func DrainTaskRunner(
 				if err != nil {
 					return nil, fmt.Errorf("failed to read task assignment state: %w", err)
 				}
-				if err := assignmentState.ValidateRunnerLifecycleInvariant(); err != nil {
+				if err := assignmentState.ValidateRunnerIdInvariant(); err != nil {
 					return nil, fmt.Errorf("task assignment invariant violation: %w", err)
 				}
 				isRunningOnThisRunner, err := assignmentState.IsRunningOn(runnerId)
@@ -78,16 +77,10 @@ func DrainTaskRunner(
 					continue
 				}
 
-				err = taskSet.Remove(tx, []byte(taskID))
+				err = placer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, tkey)
 				if err != nil {
-					return nil, fmt.Errorf("failed to remove task from task set: %w", err)
+					return nil, fmt.Errorf("failed to place task in pending set: %w", err)
 				}
-				err = pendingSet.Add(tx, []byte(taskID))
-				if err != nil {
-					return nil, fmt.Errorf("failed to add task to pending set: %w", err)
-				}
-				tkey.LifecycleStatus().Set(tx, task.LifecycleStatusPending)
-				tkey.RunnerId().Set(tx, nil)
 			}
 			return nil, nil
 		})
@@ -97,5 +90,11 @@ func DrainTaskRunner(
 		hangingTasks.RemoveAll(currentBatch.ToSlice()...)
 	}
 
-	return taskSet.Clear()
+	_, err = dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+		return nil, taskSet.Clear(tx)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to clear task set: %w", err)
+	}
+	return nil
 }

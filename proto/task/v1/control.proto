@@ -8,6 +8,17 @@ message TaskParameters {
   bytes input = 1;
 }
 
+message TaskResourceRequest {
+  // 1000 = 1 CPU core, 500 = half a core, 100 = 0.1 core.
+  uint32 cpu_millis = 1;
+
+  // Memory in bytes.
+  uint64 memory_bytes = 2 [
+    // Keep this within int64 range because scheduler utilization aggregates use signed atomic math.
+    (buf.validate.field).uint64.lte = 9223372036854775807
+  ];
+}
+
 message CreateTaskRequest {
   // This value should be randomly generated.
   // This is to reduce hotspots on the database.
@@ -18,6 +29,7 @@ message CreateTaskRequest {
   string executor_id = 2;
   optional string callback_url = 3;
   TaskParameters parameters = 4;
+  TaskResourceRequest resource_request = 5;
   // todo: add the ability to connect this task to a trace
 }
 message CreateTaskResponse {}

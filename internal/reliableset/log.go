@@ -3,10 +3,8 @@ package reliableset
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
@@ -61,12 +59,10 @@ func (e *LogEntry) UnmarshalBinary(data []byte) error {
 }
 
 // writeLog writes a log entry to the set. It is gauranteed to be contention free
-// (except for rare versionstamp collisions).
 func (s *Set) writeLog(tx fdb.Transaction, entry LogEntry) error {
-	logKey, err := s.logSubspace.PackWithVersionstamp(tuple.Tuple{
-		tuple.IncompleteVersionstamp(0),
-		atomic.AddUint64(&s.logCounter, 1),
-	})
+	logKey, err := s.logSubspace.PackWithVersionstamp(
+		dbutil.IncompleteGloballyOrderedVersionstamp(),
+	)
 	if err != nil {
 		return err
 	}
