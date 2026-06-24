@@ -170,6 +170,9 @@ func (s *Scheduler) assignPending(
 			}
 		}
 		if selectedRunner == nil {
+			// A task that is larger than any runner stays here forever; f4a only
+			// tracks demand and intentionally leaves instance-shape validation to consumers.
+			// TODO: handle this better somehow
 			failures.noResources.Add(t.taskId)
 			continue
 		}
