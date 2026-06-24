@@ -151,8 +151,9 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 }
 
 var (
-	ErrMissingInnerRequest = errors.New("missing revisioned request payload")
-	ErrMissingParameters   = errors.New("missing task parameters")
+	ErrMissingInnerRequest    = errors.New("missing revisioned request payload")
+	ErrMissingParameters      = errors.New("missing task parameters")
+	ErrMissingResourceRequest = errors.New("missing resource request")
 )
 
 func (c *controller) createTaskRevisioned(
@@ -183,7 +184,7 @@ func (c *controller) createTaskRevisioned(
 			}
 			resourceRequest := inner.GetResourceRequest()
 			if resourceRequest == nil {
-				return fmt.Errorf("missing resource request")
+				return ErrMissingResourceRequest
 			}
 			tkey.ResourceRequest().Set(t, resourceRequest)
 			tkey.ExecutorId().Set(t, execute.ExecutorId(inner.GetExecutorId()))
@@ -437,7 +438,8 @@ func classifyBatchResult(decision task.RevisionDecision, err error) (taskv1.Batc
 		errors.Is(err, task.ErrRevisionGap) ||
 		errors.Is(err, directory.ErrDirNotExists) ||
 		errors.Is(err, ErrMissingInnerRequest) ||
-		errors.Is(err, ErrMissingParameters) {
+		errors.Is(err, ErrMissingParameters) ||
+		errors.Is(err, ErrMissingResourceRequest) {
 		return taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_FAILED_PRECONDITION, err.Error()
 	}
 	return taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_ERROR, err.Error()

@@ -456,6 +456,25 @@ func TestControllerRejectsMissingParameters(t *testing.T) {
 	})
 }
 
+func TestControllerRejectsMissingResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+
+		callbackURL := "https://example.com/a"
+		_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
+			Revision: 1,
+			Request: &taskv1.CreateTaskRequest{
+				TaskId:          "missing-resource-request",
+				ExecutorId:      "executor-a",
+				CallbackUrl:     &callbackURL,
+				Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+				ResourceRequest: nil,
+			},
+		})
+		require.ErrorIs(t, err, ErrMissingResourceRequest)
+	})
+}
+
 func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
