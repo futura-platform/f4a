@@ -156,18 +156,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			stateAttribute          = "state"
 			placementClassAttribute = "placement_class"
 		)
-		pendingTaskIds, _, err := s.taskPlacer.PendingTasks(ctx)
-		if err != nil {
-			return err
-		}
-		o.ObserveInt64(taskCountGauge, int64(pendingTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
-
-		suspendedTaskIds, _, err := s.taskPlacer.SuspendedTasks(ctx)
-		if err != nil {
-			return err
-		}
-		o.ObserveInt64(taskCountGauge, int64(suspendedTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
-
+		// record the utilization metrics FIRST, since they are critical for scaling decisions
 		var activeDemandCpuMillis, activeDemandMemoryBytes, suspendedCpuMillis, suspendedMemoryBytes int64
 		_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
 			activeDemandCpuMillis, err = s.taskPlacer.GetActiveDemandUtilization(t, servicestate.UtilizationDimensionCPU)
@@ -195,6 +184,18 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		o.ObserveInt64(requestedMemoryBytesGauge, activeDemandMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
 		o.ObserveFloat64(requestedCpuGauge, float64(suspendedCpuMillis)/1000, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
 		o.ObserveInt64(requestedMemoryBytesGauge, suspendedMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
+
+		pendingTaskIds, _, err := s.taskPlacer.PendingTasks(ctx)
+		if err != nil {
+			return err
+		}
+		o.ObserveInt64(taskCountGauge, int64(pendingTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+
+		suspendedTaskIds, _, err := s.taskPlacer.SuspendedTasks(ctx)
+		if err != nil {
+			return err
+		}
+		o.ObserveInt64(taskCountGauge, int64(suspendedTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
 		var runningCount int64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
@@ -262,13 +263,14 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()
 
-	for {
+	for eventsCh != nil || streamErrCh != nil {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case batch, ok := <-eventsCh:
 			if !ok {
-				return nil
+				eventsCh = nil
+				continue
 			}
 
 			span.AddEvent("event_batch_received")
@@ -288,7 +290,8 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
 		case err, ok := <-streamErrCh:
 			if !ok {
-				return nil
+				streamErrCh = nil
+				continue
 			}
 			if err != nil {
 				return fmt.Errorf("pending set stream failed: %w", err)
@@ -301,4 +304,5 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
 		}
 	}
+	return nil
 }
