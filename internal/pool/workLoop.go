@@ -109,6 +109,8 @@ func RunWorkLoop(
 
 	for eventsCh != nil || streamErrCh != nil {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case err := <-runErrCh:
 			return err
 		case err, ok := <-streamErrCh:
