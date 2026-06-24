@@ -45,14 +45,18 @@ type StartOption func(*StartOptions)
 // This is designed to run in Kubernetes as a StatefulSet pod.
 // See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
 func Start(ctx context.Context, executors map[string]execute.Executor, options ...StartOption) error {
+	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
+	if err != nil {
+		return fmt.Errorf("failed to create or open default db root: %w", err)
+	}
 	port, err := util.RequiredPort(constants.WorkerPort)
 	if err != nil {
 		return err
 	}
-	return startOnAddress(ctx, fmt.Sprintf(":%d", port), executors, options...)
+	return startOnAddress(ctx, dbr, fmt.Sprintf(":%d", port), executors, options...)
 }
 
-func startOnAddress(ctx context.Context, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
+func startOnAddress(ctx context.Context, dbr dbutil.DbRoot, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
 	shutdownOTEL, err := serverutil.BootstrapOTEL(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap OTEL: %w", err)
@@ -64,10 +68,6 @@ func startOnAddress(ctx context.Context, address string, executors map[string]ex
 		o(options)
 	}
 
-	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
-	if err != nil {
-		return err
-	}
 	ctx = dbutil.WithDB(ctx, dbr)
 
 	s, _ := serverutil.NewBaseK8sService(dbr, func() (status int) {

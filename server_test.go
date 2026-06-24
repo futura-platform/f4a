@@ -21,11 +21,11 @@ const (
 )
 
 func TestStart_HealthzReadyz(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(_ dbutil.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		t.Setenv("FDB_CLUSTER_FILE", requireClusterFile(t))
 
 		address := freeAddress(t)
-		cancel, errCh := startServer(t, address)
+		cancel, errCh := startServer(t, db, address)
 		t.Cleanup(cancel)
 
 		client := httpClient()
@@ -42,11 +42,11 @@ func TestStart_HealthzReadyz(t *testing.T) {
 }
 
 func TestStart_ShutdownOnContextCancel(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(_ dbutil.DbRoot) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		t.Setenv("FDB_CLUSTER_FILE", requireClusterFile(t))
 
 		address := freeAddress(t)
-		cancel, errCh := startServer(t, address)
+		cancel, errCh := startServer(t, db, address)
 		t.Cleanup(cancel)
 
 		client := httpClient()
@@ -97,12 +97,12 @@ func httpClient() *http.Client {
 	}
 }
 
-func startServer(t *testing.T, address string) (context.CancelFunc, <-chan error) {
+func startServer(t *testing.T, db dbutil.DbRoot, address string) (context.CancelFunc, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- startOnAddress(ctx, address, nil)
+		errCh <- startOnAddress(ctx, db, address, nil)
 	}()
 	return cancel, errCh
 }
