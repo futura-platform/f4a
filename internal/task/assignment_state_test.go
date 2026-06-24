@@ -47,7 +47,7 @@ func newLifecycleStatusFuture(status LifecycleStatus, err error) *dbutil.Future[
 
 func newRunnerIDFuture(runnerID *string, err error) *dbutil.Future[*string] {
 	serializer := runnerIdSerializer{}
-	return dbutil.NewFuture[*string](
+	return dbutil.NewFuture(
 		fakeFutureByteSlice{
 			value: serializer.Marshal(runnerID),
 			err:   err,
@@ -82,6 +82,11 @@ func TestAssignmentStateValidateRunnerIdInvariant(t *testing.T) {
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusSuspended, nil),
 			RunnerIDFuture:        newRunnerIDFuture(&runnerID, nil),
 		}.ValidateRunnerIdInvariant(), ErrNonRunningTaskHasRunnerID)
+
+		assert.ErrorIs(t, AssignmentState{
+			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusNone, nil),
+			RunnerIDFuture:        newRunnerIDFuture(&runnerID, nil),
+		}.ValidateRunnerIdInvariant(), ErrNonRunningTaskHasRunnerID)
 	})
 
 	t.Run("valid combinations pass", func(t *testing.T) {
@@ -97,6 +102,11 @@ func TestAssignmentStateValidateRunnerIdInvariant(t *testing.T) {
 
 		assert.NoError(t, AssignmentState{
 			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusSuspended, nil),
+			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
+		}.ValidateRunnerIdInvariant())
+
+		assert.NoError(t, AssignmentState{
+			LifecycleStatusFuture: newLifecycleStatusFuture(LifecycleStatusNone, nil),
 			RunnerIDFuture:        newRunnerIDFuture(nil, nil),
 		}.ValidateRunnerIdInvariant())
 	})
