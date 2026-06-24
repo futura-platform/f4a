@@ -29,7 +29,7 @@ type Set struct {
 
 	clearLock sync.Mutex
 	clearOnce sync.Once
-	clearFunc func() (bool, error)
+	clearFunc func(fdb.Transaction) (bool, error)
 }
 type setDirectories struct {
 	snapshotSubspace       directory.DirectorySubspace
@@ -72,7 +72,7 @@ func constructWith[T fdb.ReadTransactor](
 	tr T,
 	path []string,
 	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
-	clearFunc func() (bool, error),
+	clearFunc func(fdb.Transaction) (bool, error),
 ) (*Set, error) {
 	dirs, err := newSetDirectories(tr, path, directoryConstructor)
 	if err != nil {
@@ -99,8 +99,8 @@ func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
 			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
 				return db.Root.Create(tr, path, nil)
 			},
-			func() (bool, error) {
-				return db.Root.Remove(db, path)
+			func(t fdb.Transaction) (bool, error) {
+				return db.Root.Remove(t, path)
 			},
 		)
 		return nil, err
@@ -119,8 +119,8 @@ func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, error) 
 			func(tr fdb.ReadTransaction, path []string) (directory.DirectorySubspace, error) {
 				return db.Root.Open(tr, path, nil)
 			},
-			func() (bool, error) {
-				return db.Root.Remove(db, path)
+			func(t fdb.Transaction) (bool, error) {
+				return db.Root.Remove(t, path)
 			},
 		)
 		return nil, err
@@ -139,8 +139,8 @@ func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, err
 			func(tr fdb.Transaction, path []string) (directory.DirectorySubspace, error) {
 				return db.Root.CreateOrOpen(tr, path, nil)
 			},
-			func() (bool, error) {
-				return db.Root.Remove(db, path)
+			func(t fdb.Transaction) (bool, error) {
+				return db.Root.Remove(t, path)
 			},
 		)
 		return nil, err
@@ -216,14 +216,14 @@ func (s *Set) leasedItems(ctx context.Context, db fdb.Database) (
 
 // Clear stops background runtime and removes this set directory recursively.
 // It is idempotent.
-func (s *Set) Clear() error {
+func (s *Set) Clear(tx fdb.Transaction) error {
 	s.clearLock.Lock()
 	defer s.clearLock.Unlock()
 
 	var clearErr error
 	s.clearOnce.Do(func() {
 		s.releaseRuntime()
-		removed, err := s.clearFunc()
+		removed, err := s.clearFunc(tx)
 		if err != nil {
 			clearErr = fmt.Errorf("failed to remove set directory: %w", err)
 			return

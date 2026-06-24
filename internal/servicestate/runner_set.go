@@ -130,6 +130,12 @@ func (r *RunnerSet) Stream(ctx context.Context) (
 	return r.set.Stream(ctx)
 }
 
-func (r *RunnerSet) Clear() error {
-	return r.set.Clear()
+func (r *RunnerSet) Clear(tx fdb.Transaction) error {
+	err := r.set.Clear(tx)
+	if err != nil {
+		return err
+	}
+	r.utilizationAggregate.set(tx, UtilizationDimensionCPU, 0)
+	r.utilizationAggregate.set(tx, UtilizationDimensionMemory, 0)
+	return nil
 }

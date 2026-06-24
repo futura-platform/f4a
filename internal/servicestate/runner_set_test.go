@@ -112,5 +112,36 @@ func TestRunnerSet(t *testing.T) {
 
 			requireRunnerSetUtilization(t, db, runnerSet, 0, 0)
 		})
+
+		t.Run("clearing the runner set should clear the task set and utilization aggregate", func(t *testing.T) {
+			// first add another task
+			taskKey2, err := taskDir.Create(db, task.Id("test-task-2"))
+			require.NoError(t, err)
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				taskKey2.ResourceRequest().Set(tx, testResourceRequest())
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				err := runnerSet.Add(tx, taskKey2)
+				require.NoError(t, err)
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				err := runnerSet.Clear(tx)
+				require.NoError(t, err)
+				return nil, nil
+			})
+			require.NoError(t, err)
+
+			requireRunnerSetUtilization(t, db, runnerSet, 0, 0)
+
+			items, _, err := runnerSet.Items(t.Context(), db.Database)
+			require.NoError(t, err)
+			require.Zero(t, items.Cardinality())
+		})
 	})
 }

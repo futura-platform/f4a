@@ -90,5 +90,11 @@ func DrainTaskRunner(
 		hangingTasks.RemoveAll(currentBatch.ToSlice()...)
 	}
 
-	return taskSet.Clear()
+	_, err = dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+		return nil, taskSet.Clear(tx)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to clear task set: %w", err)
+	}
+	return nil
 }

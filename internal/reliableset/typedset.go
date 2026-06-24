@@ -27,8 +27,8 @@ type TLogEntry[T comparable] struct {
 func (s TSet[T]) Add(tx fdb.Transaction, value T) error {
 	return s.set.Add(tx, s.parser.Marshal(value))
 }
-func (s TSet[T]) Clear() error {
-	return s.set.Clear()
+func (s TSet[T]) Clear(tx fdb.Transaction) error {
+	return s.set.Clear(tx)
 }
 func (s TSet[T]) Items(ctx context.Context, db fdb.Database) (items mapset.Set[T], tail fdb.KeyConvertible, err error) {
 	rawItems, tail, err := s.set.Items(ctx, db)

@@ -43,7 +43,7 @@ func TestList(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, taskSet)
 
-				taskSet.Clear()
+				taskSet.Clear(tx)
 
 				runnerIds, err := servicestate.ListTaskSets(tx, db)
 				assert.NoError(t, err)
