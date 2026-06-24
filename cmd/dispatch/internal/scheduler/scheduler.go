@@ -158,7 +158,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		)
 		// record the utilization metrics FIRST, since they are critical for scaling decisions
 		var activeDemandCpuMillis, activeDemandMemoryBytes, suspendedCpuMillis, suspendedMemoryBytes int64
-		_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
+		_, err := s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (_ any, err error) {
 			activeDemandCpuMillis, err = s.taskPlacer.GetActiveDemandUtilization(t, servicestate.UtilizationDimensionCPU)
 			if err != nil {
 				return nil, err
