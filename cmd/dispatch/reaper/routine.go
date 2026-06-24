@@ -44,7 +44,7 @@ func SpawnReaperRoutine(
 
 	placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or open pending set: %w", err)
+		return nil, fmt.Errorf("failed to create or open task placer: %w", err)
 	}
 	taskDirectory, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
