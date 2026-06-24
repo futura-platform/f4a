@@ -13,6 +13,8 @@ type utilizationAggregate struct {
 	directory directory.DirectorySubspace
 }
 
+// openUtilizationAggregate opens an existing utilization aggregate subspace at the specified path,
+// returning the aggregate and any error encountered.
 func openUtilizationAggregate(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*utilizationAggregate, error) {
 	subspace, err := db.Root.Open(tr, path, nil)
 	if err != nil {
@@ -21,6 +23,7 @@ func openUtilizationAggregate(tr fdb.ReadTransactor, db dbutil.DbRoot, path []st
 	return &utilizationAggregate{subspace}, nil
 }
 
+// createOrOpenUtilizationAggregate creates a utilization aggregate subspace at the given path if it does not exist, otherwise opens the existing subspace. It returns the aggregate and any error encountered.
 func createOrOpenUtilizationAggregate(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*utilizationAggregate, error) {
 	subspace, err := db.Root.CreateOrOpen(tr, path, nil)
 	if err != nil {

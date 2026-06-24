@@ -19,6 +19,10 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// NewController creates and initializes the control service handler.
+// It establishes the necessary task storage, revision tracking, and task placement infrastructure,
+// starts background compaction, and returns a cancel function to stop compaction.
+// If any component fails to initialize, it returns nil for the handler and cancel function along with an error.
 func NewController(
 	db dbutil.DbRoot,
 ) (taskv1connect.ControlServiceHandler, context.CancelFunc, error) {
@@ -424,6 +428,7 @@ func (c *controller) applyRevisionedOperation(
 	return decision, nil
 }
 
+// classifyBatchResult classifies a batch task operation result into a status and message.
 func classifyBatchResult(decision task.RevisionDecision, err error) (taskv1.BatchTaskOperationStatus, string) {
 	if err == nil {
 		if decision == task.RevisionDecisionDuplicate {

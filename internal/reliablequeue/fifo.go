@@ -21,6 +21,7 @@ type FIFO struct {
 	subspace directory.DirectorySubspace
 }
 
+// CreateOrOpenFIFO creates or opens a FIFO queue at the given path and returns the queue instance.
 func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
 	var fifo *FIFO
 	_, err := t.Transact(func(tx fdb.Transaction) (any, error) {

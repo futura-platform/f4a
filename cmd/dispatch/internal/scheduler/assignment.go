@@ -44,6 +44,7 @@ type assignmentFailures struct {
 	runnerInactive mapset.Set[task.Id]
 }
 
+// newAssignmentFailures creates a new assignmentFailures with empty failure sets.
 func newAssignmentFailures() assignmentFailures {
 	return assignmentFailures{
 		noResources:    mapset.NewSet[task.Id](),
@@ -272,6 +273,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 	return failures, nil
 }
 
+// remainingResourcesFromRunner computes the remaining CPU and memory capacity for a runner by subtracting its current utilization from its available resources. It returns the remaining resources, whether the runner is active (false if the runner is inactive or the runner set directory does not exist), and any error encountered.
 func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activeRunners pool.ActiveRunners, pod *corev1.Pod) (_ *remainingResources, isActive bool, err error) {
 	var availableCpuMillis int64
 	var availableMemoryBytes int64
@@ -325,6 +327,7 @@ func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activ
 	}, isActive, nil
 }
 
+// requestOrLimitMilli returns the milli value of the named container resource from Requests if present and non-zero, falling back to Limits if present and non-zero. The boolean indicates whether a non-zero value was found.
 func requestOrLimitMilli(container corev1.Container, name corev1.ResourceName) (int64, bool) {
 	if q, ok := container.Resources.Requests[name]; ok && !q.IsZero() {
 		return q.MilliValue(), true
@@ -335,6 +338,7 @@ func requestOrLimitMilli(container corev1.Container, name corev1.ResourceName) (
 	return 0, false
 }
 
+// requestOrLimitBytes returns the memory byte value from the container's resource Requests field if present and non-zero, otherwise from the Limits field if present and non-zero. It returns 0 and false if neither field contains a non-zero value for the given resource.
 func requestOrLimitBytes(container corev1.Container, name corev1.ResourceName) (int64, bool) {
 	if q, ok := container.Resources.Requests[name]; ok && !q.IsZero() {
 		return q.Value(), true

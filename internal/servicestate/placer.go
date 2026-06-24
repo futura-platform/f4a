@@ -26,6 +26,8 @@ type TaskPlacer struct {
 	suspendedUtilization *utilizationAggregate
 }
 
+// CreateOrOpenTaskPlacer creates or opens a TaskPlacer initialized with persistent state.
+// The returned runCompactor function starts compaction for the task sets and returns a cancel function.
 func CreateOrOpenTaskPlacer(db dbutil.DbRoot) (
 	placer *TaskPlacer,
 	runCompactor func() (cancel func()),

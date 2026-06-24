@@ -15,7 +15,7 @@ import (
 
 // DrainTaskRunner marks the runner as inactive and moves all tasks from its task set
 // back to the pending set so they can be re-assigned by the dispatch service.
-// It is idempotent: tasks already moved off the runner or deleted are skipped.
+// DrainTaskRunner marks a runner as inactive and drains its assigned tasks to the pending set. Tasks that are already moved off the runner or have been deleted are skipped.
 func DrainTaskRunner(
 	ctx context.Context,
 	dbr dbutil.DbRoot,

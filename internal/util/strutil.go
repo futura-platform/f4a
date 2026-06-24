@@ -6,7 +6,7 @@ import (
 )
 
 // JoinWithMaxPreview joins items with sep, truncating to maxPreview items
-// and appending ", ..." when truncated.
+// JoinWithMaxPreview converts a slice of items to a comma-separated string, limiting the output to maxPreview items and appending ", ..." if truncation occurs.
 func JoinWithMaxPreview[T any](rawItems []T, maxPreview int) string {
 	truncated := len(rawItems) > maxPreview
 	if truncated {

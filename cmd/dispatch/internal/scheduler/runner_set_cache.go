@@ -40,6 +40,7 @@ func (r *runnerSetCache) open(runnerId string) (*servicestate.RunnerSet, error) 
 	return set.(*servicestate.RunnerSet), nil
 }
 
+// newRunnerSetCache constructs a new runner set cache and registers it as an event handler with the provided informer.
 func newRunnerSetCache(db dbutil.DbRoot, runnerInformer cache.SharedIndexInformer) *runnerSetCache {
 	cache := &runnerSetCache{
 		db:         db,

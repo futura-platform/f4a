@@ -14,6 +14,7 @@ type Clients struct {
 	Core kubernetes.Interface
 }
 
+// LoadConfig loads the Kubernetes client configuration.
 func LoadConfig() (*rest.Config, error) {
 	if env := os.Getenv(constants.Kubeconfig); env != "" {
 		return clientcmd.BuildConfigFromFlags("", env)
@@ -26,6 +27,7 @@ func LoadConfig() (*rest.Config, error) {
 	return cfg, nil
 }
 
+// NewClients creates a Kubernetes client wrapper from the provided configuration.
 func NewClients(cfg *rest.Config) (*Clients, error) {
 	core, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

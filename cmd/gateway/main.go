@@ -38,6 +38,7 @@ func main() {
 	}
 }
 
+// Run initializes the gateway service and starts the HTTP server.
 func run() error {
 	dbRoot, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {

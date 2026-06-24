@@ -26,7 +26,7 @@ var (
 // SpawnReaperRoutine spins off a goroutine that runs a loop that scans for orphaned task sets and re queues all the tasks in them to be scheduled.
 // Orphaned task sets are task sets that are not associated with any active runners.
 // This can happen when a runner fails to drain itself before being force killed.
-// activeRunnerSets is expected to be updated in real time as a liveActiveRunnerSets return value.
+// SpawnReaperRoutine starts a background goroutine that periodically scans for orphaned task sets and re-queues their tasks for scheduling. It returns a cancel function to stop the goroutine and an error if initialization fails.
 func SpawnReaperRoutine(
 	ctx context.Context,
 	db dbutil.DbRoot,
@@ -75,6 +75,7 @@ func SpawnReaperRoutine(
 	return cancel, nil
 }
 
+// reapAll lists all task sets and re-queues their tasks if the associated runner pod no longer exists in Kubernetes, returning an aggregated error if any reaping operation failed.
 func reapAll(
 	ctx context.Context,
 	db dbutil.DbRoot,
@@ -114,6 +115,7 @@ func reapAll(
 	return nil
 }
 
+// reapForRunner drains and re-queues tasks for the given orphaned runner's task set.
 func reapForRunner(
 	ctx context.Context,
 	db dbutil.DbRoot,

@@ -8,6 +8,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
+// MakeTSet creates a TSet[T] that wraps the provided Set and uses the parser to marshal and unmarshal typed values to and from bytes.
 func MakeTSet[T comparable](set *Set, parser dbutil.Serializer[T]) TSet[T] {
 	return TSet[T]{
 		parser: parser,

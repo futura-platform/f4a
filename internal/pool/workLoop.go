@@ -48,7 +48,12 @@ var (
 // It runs a runnable in a separate goroutine for each new task,
 // and stops them when they are no longer assigned to the pool.
 // It MUST ONLY run as a singleton scoped to a single runner.
-// TODO: add options to this function (first need the ability attach a logger)
+// RunWorkLoop runs the main task execution loop for a runner,
+// executing tasks as they are assigned and canceling them when unassigned.
+//
+// It monitors the provided task assignment stream, processing initial assignments
+// and reacting to subsequent changes. The loop returns when the context is
+// cancelled, a task fails to execute, or the assignment stream fails.
 func RunWorkLoop(
 	ctx context.Context,
 	runnerId string,
@@ -165,6 +170,7 @@ func RunWorkLoop(
 
 const logPreviewLength = 10
 
+// processAddedBatch loads and starts runnable implementations for a batch of newly assigned tasks. Duplicate run errors are treated as idempotent.
 func processAddedBatch(
 	ctx context.Context,
 	taskManager *taskManager,
@@ -204,6 +210,7 @@ func processAddedBatch(
 	return nil
 }
 
+// processRemovedBatch cancels the local task runs for the given task IDs, treating missing runs as idempotent.
 func processRemovedBatch(taskManager *runMap, items mapset.Set[task.Id]) error {
 	for _, id := range items.ToSlice() {
 		err := taskManager.cancel(id)

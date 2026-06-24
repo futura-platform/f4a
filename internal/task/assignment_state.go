@@ -23,7 +23,7 @@ var (
 )
 
 // ReadAssignmentState reads the task assignment state atomically from one read
-// transaction snapshot.
+// ReadAssignmentState reads the lifecycle status and runner ID associated with a task from a read transaction.
 func ReadAssignmentState(tx fdb.ReadTransaction, taskKey TaskKey) (AssignmentState, error) {
 	statusFuture := taskKey.LifecycleStatus().Get(tx)
 	runnerIDFuture := taskKey.RunnerId().Get(tx)

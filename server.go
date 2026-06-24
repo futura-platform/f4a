@@ -43,7 +43,7 @@ type StartOption func(*StartOptions)
 // The caller is expected to handle graceful shutdown of this worker.
 //
 // This is designed to run in Kubernetes as a StatefulSet pod.
-// See: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
+// Start initializes and runs a worker that executes tasks using the provided executors. It blocks until the worker encounters an error or receives a shutdown signal.
 func Start(ctx context.Context, executors map[string]execute.Executor, options ...StartOption) error {
 	dbr, err := dbutil.CreateOrOpenDefaultDbRoot()
 	if err != nil {
@@ -56,6 +56,7 @@ func Start(ctx context.Context, executors map[string]execute.Executor, options .
 	return startOnAddress(ctx, dbr, fmt.Sprintf(":%d", port), executors, options...)
 }
 
+// startOnAddress starts the worker with the given database root, address, and executors, registering it as an active runner. It manages the task processing loop and HTTP health probe server concurrently, coordinates graceful shutdown with optional drain callbacks from the provided start options, and blocks until the worker's lifecycle ends. It returns an error representing the outcome of the worker's execution.
 func startOnAddress(ctx context.Context, dbr dbutil.DbRoot, address string, executors map[string]execute.Executor, opts ...StartOption) (err error) {
 	shutdownOTEL, err := serverutil.BootstrapOTEL(ctx)
 	if err != nil {

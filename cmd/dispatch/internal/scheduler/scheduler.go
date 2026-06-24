@@ -68,6 +68,7 @@ const (
 	reaperPollInterval = 10 * time.Second
 )
 
+// Run initializes the scheduler and starts the main scheduling loop.
 func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients) error {
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {

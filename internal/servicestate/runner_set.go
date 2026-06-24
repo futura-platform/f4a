@@ -19,6 +19,7 @@ type RunnerSet struct {
 	taskOwnership        directory.DirectorySubspace
 }
 
+// openRunnerSet opens the existing storage components for a runner.
 func openRunnerSet(tr fdb.ReadTransactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
 	set, err := reliableset.Open(tr, db, taskSetPath(runnerId))
 	if err != nil {
@@ -35,6 +36,10 @@ func openRunnerSet(tr fdb.ReadTransactor, db dbutil.DbRoot, runnerId string) (*R
 	return &RunnerSet{reliableset.MakeTSet(set, taskIdSerializer{}), utilizationAggregate, taskOwnership}, nil
 }
 
+// createOrOpenRunnerSet creates or opens a RunnerSet for the given runner ID.
+// It initializes the reliable task set, utilization aggregate, and task ownership
+// directory subspace. On success, it returns a populated RunnerSet; if any
+// component initialization fails, it returns an error.
 func createOrOpenRunnerSet(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
 	set, err := reliableset.CreateOrOpen(tr, db, taskSetPath(runnerId))
 	if err != nil {

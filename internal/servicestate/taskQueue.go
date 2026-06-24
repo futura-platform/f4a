@@ -12,14 +12,18 @@ func taskSetRootPath() []string {
 	return []string{"task_queue"}
 }
 
+// taskSetPath builds the full task-set directory path for a specific runner.
 func taskSetPath(runnerId string) []string {
 	return append(taskSetRootPath(), runnerId)
 }
 
+// OpenTaskSetForRunner opens an existing runner task set for the given runner.
+// It returns the task set and any error encountered.
 func OpenTaskSetForRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
 	return openRunnerSet(tr, db, runnerId)
 }
 
+// CreateOrOpenTaskSetForRunner creates a task set for the runner if it does not exist, otherwise opens the existing one. It returns the task set and any error encountered.
 func CreateOrOpenTaskSetForRunner(tr fdb.Transactor, db dbutil.DbRoot, runnerId string) (*RunnerSet, error) {
 	return createOrOpenRunnerSet(tr, db, runnerId)
 }

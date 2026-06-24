@@ -159,6 +159,7 @@ func runWithLeaderElection(
 	}
 }
 
+// LoadConfig loads and validates the dispatcher operator configuration from environment variables, returning the scheduler configuration and the leader election lease name.
 func loadConfig() (scheduler.Config, string, error) {
 	namespace := resolveNamespace()
 	if namespace == "" {

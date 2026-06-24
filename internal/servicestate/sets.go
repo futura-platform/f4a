@@ -17,6 +17,7 @@ func (s taskIdSerializer) Unmarshal(data []byte) (task.Id, error) {
 	return task.Id(data), nil
 }
 
+// createOrOpenReadySet creates or opens a reliable set for storing ready task IDs.
 func createOrOpenReadySet(tr fdb.Transactor, db dbutil.DbRoot) (reliableset.TSet[task.Id], error) {
 	set, err := reliableset.CreateOrOpen(tr, db, []string{"ready"})
 	if err != nil {
@@ -25,6 +26,7 @@ func createOrOpenReadySet(tr fdb.Transactor, db dbutil.DbRoot) (reliableset.TSet
 	return reliableset.MakeTSet(set, taskIdSerializer{}), nil
 }
 
+// createOrOpenSuspendedSet creates or opens a reliable set for suspended task IDs.
 func createOrOpenSuspendedSet(tr fdb.Transactor, db dbutil.DbRoot) (reliableset.TSet[task.Id], error) {
 	set, err := reliableset.CreateOrOpen(tr, db, []string{"suspended"})
 	if err != nil {
