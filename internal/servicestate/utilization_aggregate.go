@@ -55,8 +55,7 @@ func (u utilizationAggregate) get(tx fdb.ReadTransaction, dimension UtilizationD
 	if err != nil {
 		return 0, err
 	}
-	if len(bytes) < 8 {
-		return 0, nil
-	}
-	return int64(binary.LittleEndian.Uint64(bytes)), nil
+	paddedBytes := make([]byte, 8)
+	copy(paddedBytes, bytes)
+	return int64(binary.LittleEndian.Uint64(paddedBytes)), nil
 }
