@@ -13,6 +13,7 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -382,12 +383,7 @@ func (c *controller) applyRevisionedOperation(
 	operationCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", operation.String())))
 
 	ctx, span := tracer.Start(ctx, "applyRevisionedOperation")
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-		}
-		span.End()
-	}()
+	defer func() { otelutil.End(span, err) }()
 	span.SetAttributes(attribute.String("task_id", string(id)))
 	span.SetAttributes(attribute.Int64("revision", int64(revision)))
 	span.SetAttributes(attribute.String("operation", operation.String()))

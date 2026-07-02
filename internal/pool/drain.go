@@ -11,6 +11,7 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -26,14 +27,14 @@ func DrainTaskRunner(
 	activeRunners ActiveRunners,
 	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
-) error {
+) (err error) {
 	ctx, span := tracer.Start(ctx, "drainTaskRunner",
 		trace.WithAttributes(attribute.String("runner_id", runnerId)),
 	)
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 
 	// immediately mark runner as inactive when draining the pod.
-	_, err := dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+	_, err = dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		activeRunners.SetActive(tx, runnerId, false)
 		return nil, nil
 	})

@@ -12,6 +12,7 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"go.opentelemetry.io/otel"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +36,7 @@ func SpawnReaperRoutine(
 	pollInterval time.Duration,
 ) (_ context.CancelFunc, err error) {
 	ctx, span := tracer.Start(ctx, "spawn")
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 
 	activeRunners, err := pool.CreateOrOpenActiveRunners(db)
 	if err != nil {
@@ -64,10 +65,9 @@ func SpawnReaperRoutine(
 				ctx, span := tracer.Start(ctx, "reapAll")
 				err := reapAll(ctx, db, placer, cachedPods, livePods, activeRunners, taskDirectory)
 				if err != nil {
-					span.RecordError(err)
 					slog.Error("reaper: failed to reap", "error", err)
 				}
-				span.End()
+				otelutil.End(span, err)
 			}
 		}
 	}()

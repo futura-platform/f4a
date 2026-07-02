@@ -13,6 +13,7 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -78,9 +79,9 @@ func (f assignmentFailures) Record(ctx context.Context, gauge metric.Int64Gauge)
 func (s *Scheduler) assignPending(
 	ctx context.Context,
 	pendingIds mapset.Set[task.Id],
-) (assignmentFailures, error) {
+) (failures assignmentFailures, err error) {
 	ctx, span := tracer.Start(ctx, "assignPending")
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 	span.SetAttributes(
 		attribute.Int("pending_ids_count", pendingIds.Cardinality()),
 	)
@@ -157,7 +158,7 @@ func (s *Scheduler) assignPending(
 	}
 
 	// fill out the assignment plan
-	failures := newAssignmentFailures()
+	failures = newAssignmentFailures()
 	remainingResourcesPerRunnerSlice := remainingResourcesPerRunner.ToSlice()
 	for _, t := range taskResourceRequests.ToSlice() {
 		// select the first runner with enough resources
@@ -189,15 +190,15 @@ func (s *Scheduler) assignPending(
 	return failures.Union(executionFailures), nil
 }
 
-func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (assignmentFailures, error) {
+func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan map[string]mapset.Set[taskWithResourceRequest]) (failures assignmentFailures, err error) {
 	ctx, span := tracer.Start(ctx, "executeAssignmentPlan")
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 
 	span.SetAttributes(
 		attribute.Int("assignment_plan_size", len(assignmentPlan)),
 	)
 
-	failures := newAssignmentFailures()
+	failures = newAssignmentFailures()
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(s.batchTxParallelism())
 	for runnerId, tasks := range assignmentPlan {
@@ -210,7 +211,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 			batchIndex := batchStart / batchSize
 			batchForWorker := batch
 			batchIndexForWorker := batchIndex
-			group.Go(func() error {
+			group.Go(func() (err error) {
 				ctx, span := tracer.Start(ctx,
 					"executeAssignmentPlan.assignTasks",
 					trace.WithAttributes(
@@ -219,13 +220,13 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 						attribute.Int("batch_size", len(batchForWorker)),
 					),
 				)
-				defer span.End()
+				defer func() { otelutil.End(span, err) }()
 
 				// Collected inside the transaction closure and reset on each
 				// attempt so FDB retries don't produce duplicates. Marker spans
 				// are emitted only after the transaction commits.
 				assignedInBatch := make([]task.Id, 0, len(batchForWorker))
-				_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+				_, err = s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 					assignedInBatch = assignedInBatch[:0]
 					active, err := s.activeRunners.IsActive(tx, runnerId).Get()
 					if err != nil {
@@ -264,7 +265,6 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 					return nil, nil
 				})
 				if err != nil {
-					span.RecordError(err)
 					return err
 				}
 				// Emit a marker span per assigned task so the full task
@@ -287,7 +287,6 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 		}
 	}
 	if err := group.Wait(); err != nil {
-		span.RecordError(err)
 		return failures, err
 	}
 

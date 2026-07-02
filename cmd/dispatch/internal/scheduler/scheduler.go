@@ -20,11 +20,11 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"github.com/futura-platform/f4a/pkg/constants"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -120,12 +120,7 @@ var (
 // It also periodically retries tasks that were left in the pending backlog.
 func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ctx, span := tracer.Start(ctx, "commandRunners")
-	defer func() {
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-		}
-		span.End()
-	}()
+	defer func() { otelutil.End(span, err) }()
 
 	taskCountGauge, err := meter.Int64ObservableGauge(
 		"task_count",
