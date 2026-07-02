@@ -19,6 +19,7 @@ import (
 	"github.com/futura-platform/futura/fopt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -129,6 +130,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				_, err := call()
 				if err != nil {
 					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 				}
 				return nil
 			}))

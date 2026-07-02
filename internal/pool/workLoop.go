@@ -15,6 +15,7 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/f4a/internal/util"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/flog"
 	"go.opentelemetry.io/otel"
@@ -55,9 +56,9 @@ func RunWorkLoop(
 	db dbutil.DbRoot,
 	taskSet *servicestate.RunnerSet,
 	router execute.Router,
-) error {
+) (err error) {
 	ctx, span := tracer.Start(ctx, "RunWorkLoop")
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 	span.SetAttributes(attribute.String("runner_id", runnerId))
 
 	taskDirectory, err := task.CreateOrOpenTasksDirectory(db)
@@ -171,9 +172,9 @@ func processAddedBatch(
 	db dbutil.DbRoot,
 	router execute.Router,
 	items mapset.Set[task.Id],
-) error {
+) (err error) {
 	ctx, span := tracer.Start(ctx, "processAddedBatch")
-	defer span.End()
+	defer func() { otelutil.End(span, err) }()
 	span.SetAttributes(attribute.Int("item_count", items.Cardinality()))
 
 	l := flog.FromContext(ctx)

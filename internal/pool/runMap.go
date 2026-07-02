@@ -3,11 +3,16 @@ package pool
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/task"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	"github.com/futura-platform/futura/flog"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // runMap is a type to keep track of all the running tasks in a pool.
@@ -42,15 +47,50 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 	defer m.mu.Unlock()
 
 	newState := newRunState(ctx, func(runCtx context.Context) {
-		runCtx, span := tracer.Start(runCtx, "run")
+		// Start each run as its own root trace so individual task runs are
+		// viewable in isolation, instead of accumulating under the scheduler's
+		// long-lived work-loop trace. A span link preserves the connection back
+		// to the span that launched this run.
+		runCtx, span := tracer.Start(runCtx, "run",
+			trace.WithNewRoot(),
+			trace.WithLinks(trace.LinkFromContext(runCtx,
+				attribute.String("f4a.link", "launcher"),
+			)),
+		)
 		defer span.End()
 		span.SetAttributes(attribute.String("task_id", string(r.Id())))
 		span.SetAttributes(attribute.String("executor_id", string(r.ExecutorId())))
+
+		// Swap this run's span context into the task record and link back to
+		// the previous attempt, chaining the task's runs across machines.
+		// Best-effort: telemetry must not fail the run.
+		if prev, err := swapLastRunSpan(runCtx, r.Db(), r.TaskKey(), span.SpanContext()); err != nil {
+			flog.FromContext(runCtx).LogAttrs(runCtx, slog.LevelWarn,
+				"failed to chain run span to previous attempt",
+				slog.String("task_id", string(r.Id())),
+				slog.String("error", err.Error()),
+			)
+		} else if prev.IsValid() {
+			span.AddLink(trace.Link{
+				SpanContext: prev,
+				Attributes: []attribute.KeyValue{
+					attribute.String("f4a.link", "previous_run"),
+				},
+			})
+		}
 
 		err := r.Run(runCtx, m.runnerId, callback)
 		if err != nil && runCtx.Err() == nil {
 			span.RecordError(err)
 			m.onRunError(r.Id(), err)
+		}
+		if runCtx.Err() != nil {
+			// Distinguish runs that were cancelled (suspend/reschedule/delete)
+			// from runs that completed on their own.
+			span.SetAttributes(attribute.Bool("canceled", true))
+			if cause := context.Cause(runCtx); cause != nil {
+				span.SetAttributes(attribute.String("cancel_cause", cause.Error()))
+			}
 		}
 	})
 
@@ -68,6 +108,25 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 	}
 	lastRunState(s).next = newState
 	return nil
+}
+
+// swapLastRunSpan atomically replaces the task's stored last-run span context
+// with next, returning the previous value. It returns a zero SpanContext when
+// no prior run was recorded.
+func swapLastRunSpan(ctx context.Context, db fdb.Database, taskKey task.TaskKey, next trace.SpanContext) (trace.SpanContext, error) {
+	prev, err := dbutil.TransactContext(ctx, db.Transact, func(tx fdb.Transaction) (any, error) {
+		key := taskKey.LastRunSpan()
+		prev, err := key.Get(tx).Get()
+		if err != nil {
+			return nil, err
+		}
+		key.Set(tx, next)
+		return prev, nil
+	})
+	if err != nil {
+		return trace.SpanContext{}, err
+	}
+	return prev.(trace.SpanContext), nil
 }
 
 func (m *runMap) cancel(id task.Id) error {
