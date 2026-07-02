@@ -221,7 +221,12 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 				)
 				defer span.End()
 
+				// Collected inside the transaction closure and reset on each
+				// attempt so FDB retries don't produce duplicates. Marker spans
+				// are emitted only after the transaction commits.
+				assignedInBatch := make([]task.Id, 0, len(batchForWorker))
 				_, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+					assignedInBatch = assignedInBatch[:0]
 					active, err := s.activeRunners.IsActive(tx, runnerId).Get()
 					if err != nil {
 						return nil, err
@@ -254,13 +259,30 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 							}
 							return nil, err
 						}
+						assignedInBatch = append(assignedInBatch, t.taskId)
 					}
 					return nil, nil
 				})
 				if err != nil {
 					span.RecordError(err)
+					return err
 				}
-				return err
+				// Emit a marker span per assigned task so the full task
+				// lifecycle can be queried by task_id across traces.
+				// Per-item spans alongside a batch span are an OTel-sanctioned
+				// pattern, mirroring messaging semconv "create" spans (one per
+				// message in a batch publish):
+				// https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/#batch-publishing-with-create-spans
+				for _, taskId := range assignedInBatch {
+					_, taskSpan := tracer.Start(ctx, "assignTask",
+						trace.WithAttributes(
+							attribute.String("task_id", string(taskId)),
+							attribute.String("runner_id", runnerId),
+						),
+					)
+					taskSpan.End()
+				}
+				return nil
 			})
 		}
 	}

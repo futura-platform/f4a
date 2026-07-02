@@ -11,6 +11,8 @@ import (
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DrainTaskRunner marks the runner as inactive and moves all tasks from its task set
@@ -25,6 +27,11 @@ func DrainTaskRunner(
 	taskSet *servicestate.RunnerSet,
 	taskDir task.TasksDirectory,
 ) error {
+	ctx, span := tracer.Start(ctx, "drainTaskRunner",
+		trace.WithAttributes(attribute.String("runner_id", runnerId)),
+	)
+	defer span.End()
+
 	// immediately mark runner as inactive when draining the pod.
 	_, err := dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		activeRunners.SetActive(tx, runnerId, false)
@@ -50,7 +57,12 @@ func DrainTaskRunner(
 			}
 			currentBatch.Add(taskID)
 		}
+		// Collected inside the transaction closure and reset on each attempt
+		// so FDB retries don't produce duplicates. Marker spans are emitted
+		// only after the transaction commits.
+		var requeued []task.Id
 		_, err = dbr.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+			requeued = requeued[:0]
 			for taskID := range currentBatch.Iter() {
 				tkey, err := taskDir.Open(tx, task.Id(taskID))
 				if err != nil {
@@ -81,11 +93,27 @@ func DrainTaskRunner(
 				if err != nil {
 					return nil, fmt.Errorf("failed to place task in pending set: %w", err)
 				}
+				requeued = append(requeued, taskID)
 			}
 			return nil, nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to clear task set: %w", err)
+		}
+		// Emit a marker span per requeued task so the full task lifecycle can
+		// be queried by task_id across traces.
+		// Per-item spans alongside a batch span are an OTel-sanctioned
+		// pattern, mirroring messaging semconv "create" spans (one per
+		// message in a batch publish):
+		// https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/#batch-publishing-with-create-spans
+		for _, taskID := range requeued {
+			_, taskSpan := tracer.Start(ctx, "requeueTask",
+				trace.WithAttributes(
+					attribute.String("task_id", string(taskID)),
+					attribute.String("runner_id", runnerId),
+				),
+			)
+			taskSpan.End()
 		}
 		hangingTasks.RemoveAll(currentBatch.ToSlice()...)
 	}

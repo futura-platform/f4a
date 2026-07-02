@@ -33,6 +33,10 @@ func (r Runnable) TaskKey() task.TaskKey {
 	return r.taskKey
 }
 
+func (r Runnable) Db() fdb.Database {
+	return r.db
+}
+
 func NewRunnable(
 	executor execute.Executor,
 	executorId execute.ExecutorId,
