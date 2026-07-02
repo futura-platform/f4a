@@ -99,7 +99,7 @@ func DrainTaskRunner(
 			return nil, nil
 		})
 		if err != nil {
-			return fmt.Errorf("failed to clear task set: %w", err)
+			return fmt.Errorf("failed to requeue tasks: %w", err)
 		}
 		// Emit a marker span per requeued task so the full task lifecycle can
 		// be queried by task_id across traces.
