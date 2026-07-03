@@ -12,7 +12,7 @@ import (
 //
 // Unlike streamEvents, the emitted batches only include the absolute net state
 // changes per incoming raw batch.
-func (s *Set) Stream(ctx context.Context) (
+func (s *set) Stream(ctx context.Context) (
 	initialValues mapset.Set[string],
 	events <-chan []LogEntry,
 	errCh <-chan error,

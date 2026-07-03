@@ -8,7 +8,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-func MakeTSet[T comparable](set *Set, parser dbutil.Serializer[T]) TSet[T] {
+func MakeTSet[T comparable](set *set, parser dbutil.Serializer[T]) TSet[T] {
 	return TSet[T]{
 		parser: parser,
 		set:    set,
@@ -17,7 +17,7 @@ func MakeTSet[T comparable](set *Set, parser dbutil.Serializer[T]) TSet[T] {
 
 type TSet[T comparable] struct {
 	parser dbutil.Serializer[T]
-	set    *Set
+	set    *set
 }
 type TLogEntry[T comparable] struct {
 	Op    LogOperation

@@ -10,7 +10,7 @@ import (
 
 // setCompactor owns only the state needed for background compaction.
 type setCompactor struct {
-	set *Set
+	set *set
 
 	lock *reliablelock.Lock
 
@@ -22,7 +22,7 @@ type setCompactor struct {
 	releaseOnce sync.Once
 }
 
-func newSetCompactor(set *Set, lockDir directory.DirectorySubspace) *setCompactor {
+func newSetCompactor(set *set, lockDir directory.DirectorySubspace) *setCompactor {
 	return &setCompactor{set: set, lock: reliablelock.NewLock(lockDir)}
 }
 

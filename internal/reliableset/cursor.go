@@ -21,7 +21,7 @@ const (
 	cursorKeyHint      = "hint"
 )
 
-func (s *Set) cursorKey(id, kind string) fdb.Key {
+func (s *set) cursorKey(id, kind string) fdb.Key {
 	return s.cursorSubspace.Pack(tuple.Tuple{id, kind})
 }
 
@@ -49,7 +49,7 @@ type cursorIndex struct {
 	keysByID map[string][]fdb.Key
 }
 
-func (s *Set) decodeCursorKey(key fdb.Key) (string, string, bool) {
+func (s *set) decodeCursorKey(key fdb.Key) (string, string, bool) {
 	decoded, err := s.cursorSubspace.Unpack(key)
 	if err != nil || len(decoded) != 2 {
 		return "", "", false
@@ -63,7 +63,7 @@ func (s *Set) decodeCursorKey(key fdb.Key) (string, string, bool) {
 }
 
 // makeCursorIndex gets a snapshot of all current cursor states
-func (s *Set) makeCursorIndex(tx fdb.ReadTransaction) (cursorIndex, error) {
+func (s *set) makeCursorIndex(tx fdb.ReadTransaction) (cursorIndex, error) {
 	begin, end := s.cursorSubspace.FDBRangeKeys()
 	kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
 	if err != nil {

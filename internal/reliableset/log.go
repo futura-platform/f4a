@@ -25,7 +25,7 @@ var (
 )
 
 // Add adds a value to the set. This is gauranteed to be contention free.
-func (s *Set) Add(tx fdb.Transaction, value []byte) error {
+func (s *set) Add(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
 	}
@@ -33,7 +33,7 @@ func (s *Set) Add(tx fdb.Transaction, value []byte) error {
 }
 
 // Remove removes a value from the set. This is gauranteed to be contention free.
-func (s *Set) Remove(tx fdb.Transaction, value []byte) error {
+func (s *set) Remove(tx fdb.Transaction, value []byte) error {
 	if len(value) > entrySizeLimit {
 		return fmt.Errorf("%w: %d > %d", ErrEntryTooLarge, len(value), entrySizeLimit)
 	}
@@ -59,7 +59,7 @@ func (e *LogEntry) UnmarshalBinary(data []byte) error {
 }
 
 // writeLog writes a log entry to the set. It is gauranteed to be contention free
-func (s *Set) writeLog(tx fdb.Transaction, entry LogEntry) error {
+func (s *set) writeLog(tx fdb.Transaction, entry LogEntry) error {
 	logKey, err := s.logSubspace.PackWithVersionstamp(
 		dbutil.IncompleteGloballyOrderedVersionstamp(),
 	)
@@ -82,7 +82,7 @@ type KeyedLogEntry struct {
 
 // readLog reads the log entries from the log subspace starting at (but not including) the given key.
 // It returns the log entries in the order they were written.
-func (s *Set) readLog(ctx context.Context, tr fdb.ReadTransactor, begin fdb.KeyConvertible) ([]KeyedLogEntry, error) {
+func (s *set) readLog(ctx context.Context, tr fdb.ReadTransactor, begin fdb.KeyConvertible) ([]KeyedLogEntry, error) {
 	_, end := s.logSubspace.FDBRangeKeys()
 	start := begin
 	key := begin.FDBKey()

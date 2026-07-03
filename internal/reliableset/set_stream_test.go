@@ -625,7 +625,7 @@ func applyStreamBatch(current mapset.Set[string], batch []LogEntry) (mapset.Set[
 	return current, nil
 }
 
-func applyLogBatch(t testing.TB, db dbutil.DbRoot, set *Set, batch []LogEntry) {
+func applyLogBatch(t testing.TB, db dbutil.DbRoot, set *set, batch []LogEntry) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, entry := range batch {

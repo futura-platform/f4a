@@ -9,7 +9,7 @@ import (
 )
 
 // snapshot returns the current snapshot of the set. (NOT including the log entries)
-func (s *Set) snapshot(ctx context.Context, tr fdb.ReadTransactor) (mapset.Set[string], error) {
+func (s *set) snapshot(ctx context.Context, tr fdb.ReadTransactor) (mapset.Set[string], error) {
 	begin, end := s.snapshotSubspace.FDBRangeKeys()
 	snapshot := mapset.NewSet[string]()
 	for kvOrErr := range dbutil.UnboundedIterate(ctx, tr, fdb.KeyRange{Begin: begin, End: end}, 256) {

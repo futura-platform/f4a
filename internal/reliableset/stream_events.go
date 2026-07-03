@@ -21,7 +21,7 @@ type epochChunk struct {
 // in order (unless there is an error).
 // The events channel sends batches of changes.
 // These changes are directly forwarded from the log, so they are NOT deduplicated/absolute.
-func (s *Set) streamEvents(ctx context.Context) (
+func (s *set) streamEvents(ctx context.Context) (
 	initialValues mapset.Set[string],
 	events <-chan []LogEntry,
 	errCh <-chan error,
