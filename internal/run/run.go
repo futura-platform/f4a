@@ -40,11 +40,9 @@ var (
 // (delivered to the callback, or reported for the dead letter queue).
 // Any other return means the task is still owed: the parent context was
 // canceled (aborting in-flight settlement) or the input watch failed.
+// A nil callbackUrl is valid: the task settles on the user flow's outcome
+// alone, with no discharge flow.
 func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) error {
-	if callbackUrl == nil {
-		return errors.New("callback is required")
-	}
-
 	lock, err := r.taskKey.RunnableLock(r.db)
 	if err != nil {
 		return fmt.Errorf("failed to get lock: %w", err)
@@ -82,7 +80,10 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 	var mu, execSingleflightMu sync.Mutex
 	var cancelPrevious context.CancelCauseFunc
 
+	// the settlement outcome of the first non-superseded execution — which may
+	// be nil (settled). Once taken, watch-cancellation noise must not replace it.
 	var runErr error
+	var outcomeTaken bool
 	var execWg sync.WaitGroup
 
 	span := trace.SpanFromContext(ctx)
@@ -104,7 +105,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 			defer execWg.Done()
 
 			execSingleflightMu.Lock()
-			runErr = executable.Settle(runCtx, input, callbackUrl, fopt.WithStepWrapper(func(
+			err := executable.Settle(runCtx, input, callbackUrl, fopt.WithStepWrapper(func(
 				ctx context.Context,
 				fnLabel string,
 				args any,
@@ -122,6 +123,19 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 				return nil
 			}))
 			execSingleflightMu.Unlock()
+
+			// superseded by a newer input: the replacement execution owns the
+			// run now, so neither report this outcome nor stop the watch
+			if errors.Is(context.Cause(runCtx), errInputChanged) {
+				return
+			}
+
+			mu.Lock()
+			if !outcomeTaken {
+				outcomeTaken = true
+				runErr = err
+			}
+			mu.Unlock()
 			watchCancel()
 		}(marshalledInput, runCtx)
 	}
@@ -142,7 +156,9 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 			execWg.Wait()
 			mu.Lock()
 			defer mu.Unlock()
-			if runErr != nil {
+			if outcomeTaken {
+				// the watch error here is just the cancellation we triggered
+				// after taking the outcome
 				return runErr
 			}
 			return err

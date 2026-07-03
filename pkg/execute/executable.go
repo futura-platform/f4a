@@ -63,6 +63,11 @@ func (g *genericExecutable[A, R]) Settle(
 	if flowErr != nil {
 		flog.FromContext(ctx).Error("failed to execute user flow", "error", flowErr)
 	}
+	if callbackUrl == nil {
+		// without a callback there is no discharge flow to absorb the failure,
+		// so a flow error means the task is not settled
+		return flowErr
+	}
 	if callbackUrl != nil {
 		// no need to filter out non fatal errors types (from scheduler events), they all happen via context cancellation,
 		// which will naturally skip the delivery flow
@@ -81,19 +86,20 @@ func (g *genericExecutable[A, R]) Settle(
 				return struct{}{}, err
 			}
 
+			failure := ""
+			if flowErr != nil {
+				failure = flowErr.Error()
+			}
 			deliveryFailure, err := futura.Step(b, deliverResult, deliveryRequest{
 				completedAt: completedAt,
 				callbackUrl: *callbackUrl,
 				result:      string(resultBytes),
-				failure:     flowErr.Error(),
+				failure:     failure,
 			})
 			if err != nil {
 				return struct{}{}, err
 			} else if deliveryFailure.IsSome() {
-				return struct{}{}, futura.Effect(b, func(ctx context.Context, _ struct{}) error {
-					// todo: queue the task into the dead letter queue
-					return nil
-				}, struct{}{})
+				return struct{}{}, futura.Effect(b, parkDeadLetter, deliveryFailure.MustGet())
 			}
 
 			return struct{}{}, nil

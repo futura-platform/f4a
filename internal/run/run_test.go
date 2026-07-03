@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,8 +18,8 @@ import (
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type rawStringMarshaller struct{}
@@ -37,45 +40,37 @@ func setInput(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value []byte) {
 	assert.NoError(t, err)
 }
 
-func setFinishedAt(t *testing.T, db dbutil.DbRoot, td task.TaskKey, value *time.Time) {
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		td.FinishedAt().Set(tx, value)
-		return nil, nil
-	})
-	assert.NoError(t, err)
-}
-
-func getFinishedAt(t *testing.T, db dbutil.DbRoot, td task.TaskKey) *time.Time {
-	var finishedAt *time.Time
-	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-		var err error
-		finishedAt, err = td.FinishedAt().Get(tx).Get()
-		return nil, err
-	})
-	assert.NoError(t, err)
-	return finishedAt
+// testCallbackUrl returns a syntactically valid callback url for tests that
+// never actually deliver anything (Run requires a non-nil callback url, but
+// mock executors do not dial it).
+func testCallbackUrl(t testing.TB) *url.URL {
+	t.Helper()
+	u, err := url.Parse("http://127.0.0.1:1/test-callback")
+	require.NoError(t, err)
+	return u
 }
 
 func TestRun(t *testing.T) {
-	t.Run("returns output on successful execution", func(t *testing.T) {
+	t.Run("returns nil once the task settles", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 
-			expectedOutput := []byte("success output")
-			inputData := []byte("test input")
 			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
-			setInput(t, db, tkey, inputData)
+			setInput(t, db, tkey, []byte("test input"))
 
+			settleCalls := atomic.Int32{}
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					return expectedOutput, nil
+				Settle: func(
+					_ execute.SettlementContainers,
+					_ context.Context,
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
+					settleCalls.Add(1)
+					return nil
 				},
 			}
 
@@ -85,166 +80,9 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			outputCh := make(chan []byte, 1)
-			callback := func(_ context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				outputCh <- output
-				return nil
-			}
-
-			err = runnable.Run(t.Context(), t.Name(), callback)
+			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			assert.NoError(t, err)
-			select {
-			case output := <-outputCh:
-				assert.Equal(t, expectedOutput, output)
-			default:
-				t.Fatal("callback not called")
-			}
-		})
-	})
-
-	t.Run("retries callback until it succeeds", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
-			assert.NoError(t, err)
-
-			expectedOutput := []byte("success output")
-			inputData := []byte("test input")
-			tkey, err := tasksDirectory.Create(db, task.NewId())
-			assert.NoError(t, err)
-			setInput(t, db, tkey, inputData)
-
-			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					return expectedOutput, nil
-				},
-			}
-
-			runnable := Runnable{
-				db:       db.Database,
-				taskKey:  tkey,
-				executor: executor,
-			}
-
-			attempts := atomic.Int32{}
-			outputCh := make(chan []byte, 1)
-			callback := func(_ context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				attempt := attempts.Add(1)
-				if attempt < 3 {
-					return errors.New("callback failed")
-				}
-				outputCh <- output
-				return nil
-			}
-
-			err = runnable.Run(t.Context(), t.Name(), callback)
-			assert.NoError(t, err)
-			assert.Equal(t, int32(3), attempts.Load())
-			select {
-			case output := <-outputCh:
-				assert.Equal(t, expectedOutput, output)
-			default:
-				t.Fatal("callback not called")
-			}
-		})
-	})
-
-	t.Run("stops retrying when callback delivery deadline already expired", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
-			assert.NoError(t, err)
-
-			expectedOutput := []byte("success output")
-			inputData := []byte("test input")
-			tkey, err := tasksDirectory.Create(db, task.NewId())
-			assert.NoError(t, err)
-			setInput(t, db, tkey, inputData)
-			staleFinishedAt := time.Now().Add(-callbackDeliveryTimeout - time.Second)
-			setFinishedAt(t, db, tkey, &staleFinishedAt)
-
-			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					return expectedOutput, nil
-				},
-			}
-
-			runnable := Runnable{
-				db:       db.Database,
-				taskKey:  tkey,
-				executor: executor,
-			}
-
-			attempts := atomic.Int32{}
-			err = runnable.Run(t.Context(), t.Name(), func(callbackCtx context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				assert.Equal(t, expectedOutput, output)
-				assert.ErrorIs(t, callbackCtx.Err(), context.DeadlineExceeded)
-				attempts.Add(1)
-				return errors.New("callback failed")
-			})
-
-			assert.NoError(t, err)
-			assert.Equal(t, int32(1), attempts.Load())
-			persistedFinishedAt := getFinishedAt(t, db, tkey)
-			if assert.NotNil(t, persistedFinishedAt) {
-				assert.Equal(t, staleFinishedAt.UnixNano(), persistedFinishedAt.UnixNano())
-			}
-		})
-	})
-
-	t.Run("forwards execution error to callback", func(t *testing.T) {
-		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
-			assert.NoError(t, err)
-
-			inputData := []byte("test input")
-			tkey, err := tasksDirectory.Create(db, task.NewId())
-			assert.NoError(t, err)
-			setInput(t, db, tkey, inputData)
-
-			expectedErr := errors.New("execution failed")
-			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					return nil, expectedErr
-				},
-			}
-
-			runnable := Runnable{
-				db:       db.Database,
-				taskKey:  tkey,
-				executor: executor,
-			}
-
-			callbackErr := make(chan error, 1)
-			callback := func(_ context.Context, output []byte, err error) error {
-				callbackErr <- err
-				return nil
-			}
-
-			err = runnable.Run(t.Context(), t.Name(), callback)
-			assert.NoError(t, err)
-			select {
-			case receivedErr := <-callbackErr:
-				assert.ErrorIs(t, receivedErr, expectedErr)
-			default:
-				t.Fatal("callback not called")
-			}
+			assert.Equal(t, int32(1), settleCalls.Load())
 		})
 	})
 
@@ -264,12 +102,13 @@ func TestRun(t *testing.T) {
 			continueExecution := make(chan struct{})
 
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
 					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					count := executionCount.Add(1)
 					inputReceived <- marshalledInput
 					executionStarted <- struct{}{}
@@ -278,14 +117,14 @@ func TestRun(t *testing.T) {
 					if count == 1 {
 						select {
 						case <-ctx.Done():
-							return nil, context.Cause(ctx)
+							return context.Cause(ctx)
 						case <-continueExecution:
-							return []byte("first output"), nil
+							return nil
 						}
 					}
 
-					// Second execution completes immediately
-					return []byte("second output"), nil
+					// Second execution settles immediately
+					return nil
 				},
 			}
 
@@ -295,17 +134,10 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			outputCh := make(chan []byte, 1)
-			callback := func(_ context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				outputCh <- output
-				return nil
-			}
-
 			var runErr error
 			done := make(chan struct{})
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), callback)
+				runErr = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 				close(done)
 			}()
 
@@ -335,13 +167,9 @@ func TestRun(t *testing.T) {
 			}
 
 			assert.NoError(t, runErr)
-			select {
-			case output := <-outputCh:
-				assert.Equal(t, []byte("second output"), output)
-			default:
-				t.Fatal("callback not called")
-			}
 			assert.Equal(t, int32(2), executionCount.Load())
+			assert.Equal(t, initialInput, <-inputReceived)
+			assert.Equal(t, newInput, <-inputReceived)
 		})
 	})
 
@@ -354,13 +182,17 @@ func TestRun(t *testing.T) {
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("initial"))
 
-			type callbackResult struct {
-				output []byte
-				err    error
-			}
+			deliveredCh := make(chan []byte, 2)
+			server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				deliveredCh <- body
+				w.WriteHeader(http.StatusAccepted)
+			})
+			callbackUrl, err := url.Parse(server.URL + "/callback")
+			require.NoError(t, err)
 
 			firstExecutionStarted := make(chan struct{})
-			callbackResultCh := make(chan callbackResult, 1)
 			executionCount := atomic.Int32{}
 			exitDelay := 200 * time.Millisecond
 
@@ -377,20 +209,12 @@ func TestRun(t *testing.T) {
 				rawStringMarshaller{},
 			)
 
-			runnable := Runnable{
-				db:            db.Database,
-				taskKey:       tkey,
-				executor:      executor,
-				userContainer: executiontype.NewInMemoryContainer(),
-			}
+			runnable := NewRunnable(executor, execute.ExecutorId("test-executor"), db, tkey)
 
 			done := make(chan struct{})
 			var runErr error
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), func(_ context.Context, output []byte, err error) error {
-					callbackResultCh <- callbackResult{output: output, err: err}
-					return nil
-				})
+				runErr = runnable.Run(t.Context(), t.Name(), callbackUrl)
 				close(done)
 			}()
 
@@ -412,11 +236,10 @@ func TestRun(t *testing.T) {
 			assert.Equal(t, int32(2), executionCount.Load())
 
 			select {
-			case result := <-callbackResultCh:
-				assert.NoError(t, result.err)
-				assert.Equal(t, []byte("output:updated"), result.output)
+			case body := <-deliveredCh:
+				assert.Equal(t, []byte("output:updated"), body)
 			default:
-				t.Fatal("callback not called")
+				t.Fatal("result was not delivered to the callback")
 			}
 		})
 	})
@@ -436,12 +259,13 @@ func TestRun(t *testing.T) {
 			executionCount := atomic.Int32{}
 
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					count := executionCount.Add(1)
 					executionStarted <- struct{}{}
 
@@ -453,7 +277,7 @@ func TestRun(t *testing.T) {
 					if count == 1 {
 						firstExecutionErr <- err
 					}
-					return nil, err
+					return err
 				},
 			}
 
@@ -466,8 +290,9 @@ func TestRun(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
+			runErrCh := make(chan error, 1)
 			go func() {
-				runnable.Run(ctx, t.Name(), func(context.Context, []byte, error) error { return nil })
+				runErrCh <- runnable.Run(ctx, t.Name(), testCallbackUrl(t))
 			}()
 
 			// Wait for first execution to start
@@ -480,19 +305,30 @@ func TestRun(t *testing.T) {
 			// Update the input to trigger cancellation of first execution
 			setInput(t, db, tkey, []byte("updated"))
 
-			// Wait for second execution to start (confirming first was cancelled)
+			// Wait for second execution to start: this proves the input watch
+			// survived the superseded execution (the regression tripwire for
+			// the run.go fix).
 			select {
 			case <-executionStarted:
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for second execution to start")
 			}
 
-			// Check the first execution's error (should be ErrInputChanged)
+			// Check the first execution's context cause (should be errInputChanged)
 			select {
 			case err := <-firstExecutionErr:
 				assert.ErrorIs(t, err, errInputChanged)
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for first execution error")
+			}
+
+			// The task never settles; aborting Run must surface the cancellation.
+			cancel()
+			select {
+			case err := <-runErrCh:
+				assert.ErrorIs(t, err, context.Canceled)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for Run to return")
 			}
 		})
 	})
@@ -504,20 +340,20 @@ func TestRun(t *testing.T) {
 
 			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
-			inputData := []byte("test input")
-			setInput(t, db, tkey, inputData)
+			setInput(t, db, tkey, []byte("test input"))
 
 			executionStarted := make(chan struct{})
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					close(executionStarted)
 					<-ctx.Done()
-					return nil, ctx.Err()
+					return context.Cause(ctx)
 				},
 			}
 
@@ -531,12 +367,8 @@ func TestRun(t *testing.T) {
 
 			done := make(chan struct{})
 			var runErr error
-			callbackErr := make(chan error, 1)
 			go func() {
-				runErr = runnable.Run(ctx, t.Name(), func(_ context.Context, _ []byte, err error) error {
-					callbackErr <- err
-					return nil
-				})
+				runErr = runnable.Run(ctx, t.Name(), testCallbackUrl(t))
 				close(done)
 			}()
 
@@ -556,15 +388,11 @@ func TestRun(t *testing.T) {
 				t.Fatal("timeout waiting for Run to complete")
 			}
 
-			assert.NoError(t, runErr)
-			select {
-			case err := <-callbackErr:
-				assert.ErrorIs(t, err, context.Canceled)
-			default:
-				t.Fatal("callback not called")
-			}
+			// The task did not settle, so Run must NOT return nil.
+			assert.ErrorIs(t, runErr, context.Canceled)
 		})
 	})
+
 	t.Run("waits for execution to exit before returning", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
@@ -578,16 +406,17 @@ func TestRun(t *testing.T) {
 			release := make(chan struct{})
 			exited := make(chan struct{}, 1)
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+				Settle: func(
+					_ execute.SettlementContainers,
+					_ context.Context,
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					started <- struct{}{}
 					<-release
 					exited <- struct{}{}
-					return nil, nil
+					return nil
 				},
 			}
 
@@ -600,10 +429,7 @@ func TestRun(t *testing.T) {
 			done := make(chan struct{})
 			var runErr error
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, err error) error {
-					assert.NoError(t, err)
-					return nil
-				})
+				runErr = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 				close(done)
 			}()
 
@@ -648,18 +474,21 @@ func TestRun(t *testing.T) {
 			setInput(t, db, tkey, initialInput)
 
 			executionCount := atomic.Int32{}
-			callbackCount := atomic.Int32{}
-			callbackOutput := make(chan []byte, 2)
 
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					executionCount.Add(1)
-					return append([]byte("output:"), marshalledInput...), nil
+				Settle: func(
+					_ execute.SettlementContainers,
+					_ context.Context,
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
+					if executionCount.Add(1) == 1 {
+						// Commit a newer input while settlement completes: the
+						// watch must not replay the already-settled execution.
+						setInput(t, db, tkey, updatedInput)
+					}
+					return nil
 				},
 			}
 
@@ -669,25 +498,9 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				if callbackCount.Add(1) == 1 {
-					setInput(t, db, tkey, updatedInput)
-					// Let the input watch observe the newer value while callback delivery is in progress.
-					time.Sleep(200 * time.Millisecond)
-				}
-				callbackOutput <- output
-				return nil
-			})
+			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			assert.NoError(t, err)
 			assert.Equal(t, int32(1), executionCount.Load())
-			assert.Equal(t, int32(1), callbackCount.Load())
-			select {
-			case output := <-callbackOutput:
-				assert.Equal(t, []byte("output:initial"), output)
-			default:
-				t.Fatal("callback not called")
-			}
 		})
 	})
 
@@ -703,14 +516,15 @@ func TestRun(t *testing.T) {
 
 			var receivedInput []byte
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
+				Settle: func(
+					_ execute.SettlementContainers,
+					_ context.Context,
 					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					receivedInput = marshalledInput
-					return []byte("output"), nil
+					return nil
 				},
 			}
 
@@ -720,7 +534,7 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			assert.NoError(t, err)
 
 			// The Watch function decodes with privateencoding, so receivedInput is already the decoded value
@@ -728,7 +542,7 @@ func TestRun(t *testing.T) {
 		})
 	})
 
-	t.Run("an input change during execution does not trigger a callback", func(t *testing.T) {
+	t.Run("a superseded execution's outcome is not Run's return value", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
@@ -738,23 +552,26 @@ func TestRun(t *testing.T) {
 
 			setInput(t, db, tkey, []byte("input"))
 
+			supersededErr := errors.New("superseded execution outcome")
 			executionStarted := make(chan struct{})
 			executions := atomic.Int32{}
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					currentExecution := executions.Add(1)
-					if currentExecution == 1 {
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
+					if executions.Add(1) == 1 {
 						close(executionStarted)
 						// wait for the context to be cancelled on the first execution
-						// (the input change should trigger this)
+						// (the input change should trigger this),
+						// then fail with an outcome that must be discarded.
 						<-ctx.Done()
+						return supersededErr
 					}
-					return marshalledInput, nil
+					return nil
 				},
 			}
 
@@ -764,16 +581,9 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			afterInputChangeInput := []byte("updated")
-
-			callbackAttempts := atomic.Int32{}
 			runErrCh := make(chan error, 1)
 			go func() {
-				runErrCh <- runnable.Run(t.Context(), t.Name(), func(_ context.Context, output []byte, _ error) error {
-					callbackAttempts.Add(1)
-					assert.Equal(t, afterInputChangeInput, output)
-					return nil
-				})
+				runErrCh <- runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			}()
 
 			// once execution starts, we should trigger an input change
@@ -782,16 +592,18 @@ func TestRun(t *testing.T) {
 				t.Fatal("Run returned before execution started", runErr)
 			case <-executionStarted:
 			}
-			setInput(t, db, tkey, afterInputChangeInput)
+			setInput(t, db, tkey, []byte("updated"))
 
 			select {
 			case runErr := <-runErrCh:
+				// only the replacement execution's outcome may be propagated
+				assert.NotErrorIs(t, runErr, supersededErr)
 				assert.NoError(t, runErr)
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for Run to return")
 			}
 
-			assert.Equal(t, int32(1), callbackAttempts.Load())
+			assert.Equal(t, int32(2), executions.Load())
 		})
 	})
 
@@ -807,27 +619,27 @@ func TestRun(t *testing.T) {
 			executionCount := atomic.Int32{}
 
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
 					count := executionCount.Add(1)
-					_ = marshalledInput // used to track input changes
 
-					// Earlier executions wait to be cancelled
+					// Earlier executions wait to be superseded
 					if count < 5 {
 						select {
 						case <-ctx.Done():
-							return nil, context.Cause(ctx)
+							return context.Cause(ctx)
 						case <-time.After(5 * time.Second):
-							return fmt.Appendf([]byte{}, "output-%d", count), nil
+							return fmt.Errorf("execution %d was never superseded", count)
 						}
 					}
 
-					// Final execution completes immediately
-					return []byte("final-output"), nil
+					// Final execution settles immediately
+					return nil
 				},
 			}
 
@@ -838,16 +650,9 @@ func TestRun(t *testing.T) {
 			}
 
 			done := make(chan struct{})
-			outputCh := make(chan []byte, 1)
-			callback := func(_ context.Context, output []byte, err error) error {
-				assert.NoError(t, err)
-				outputCh <- output
-				return nil
-			}
-
 			var runErr error
 			go func() {
-				runErr = runnable.Run(t.Context(), t.Name(), callback)
+				runErr = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 				close(done)
 			}()
 
@@ -864,12 +669,7 @@ func TestRun(t *testing.T) {
 			}
 
 			assert.NoError(t, runErr)
-			select {
-			case output := <-outputCh:
-				assert.Equal(t, []byte("final-output"), output)
-			default:
-				t.Fatal("callback not called")
-			}
+			assert.GreaterOrEqual(t, executionCount.Load(), int32(5))
 		})
 	})
 
@@ -883,13 +683,14 @@ func TestRun(t *testing.T) {
 			setInput(t, db, tkey, []byte("test input"))
 
 			executor := &testutil.MockExecutor{
-				Execute: func(
-					inContainer executiontype.TransactionalContainer,
-					ctx context.Context,
-					marshalledInput []byte,
-					opts ...ftype.FlowLoopOption,
-				) ([]byte, error) {
-					return nil, ErrRunFatal
+				Settle: func(
+					_ execute.SettlementContainers,
+					_ context.Context,
+					_ []byte,
+					_ *url.URL,
+					_ ...ftype.FlowLoopOption,
+				) error {
+					return ErrRunFatal
 				},
 			}
 
@@ -899,7 +700,7 @@ func TestRun(t *testing.T) {
 				executor: executor,
 			}
 
-			err = runnable.Run(t.Context(), t.Name(), func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			assert.ErrorIs(t, err, ErrRunFatal)
 		})
 	})

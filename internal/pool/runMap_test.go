@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,17 +16,26 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setInput(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey, input []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		tkey.Input().Set(tx, input)
-		return mo.None[string](), nil
+		return nil, nil
 	})
 	assert.NoError(t, err)
+}
+
+// testCallbackUrl returns a syntactically valid callback url; runs backed by
+// the mock executor never dial it (delivery lives inside Settle).
+func testCallbackUrl(t testing.TB) *url.URL {
+	t.Helper()
+	u, err := url.Parse("http://127.0.0.1:1/test-callback")
+	require.NoError(t, err)
+	return u
 }
 
 func neverCallErrorCallback(t testing.TB) func(id task.Id, err error) {
@@ -44,35 +54,33 @@ func TestRunMap(t *testing.T) {
 			tkey, err := tasksDirectory.Create(db, task.NewId())
 			assert.NoError(t, err)
 			setInput(t, db, tkey, []byte("input"))
+			var settleWg sync.WaitGroup
+			settleWg.Add(1)
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-						return []byte("output"), nil
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+						// the run state must not be cleaned up while settlement is in flight
+						m.mu.Lock()
+						assert.Equal(t, 1, len(m.runStates))
+						m.mu.Unlock()
+						settleWg.Done()
+						return nil
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
-			var wg sync.WaitGroup
-			wg.Add(1)
-			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
-				// it should not be cleaned up when until callback exits successfully
-				assert.Equal(t, 1, len(m.runStates))
-				assert.Equal(t, []byte("output"), output)
-				assert.NoError(t, err)
-				wg.Done()
-				return nil
-			})
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
-			wg.Wait()
+			settleWg.Wait()
 
-			// give some time for the cleanup to complete
-			time.Sleep(500 * time.Millisecond)
-			m.mu.Lock()
-			assert.Equal(t, 0, len(m.runStates))
-			m.mu.Unlock()
+			// the run state is cleaned up once the run completes
+			assert.Eventually(t, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return len(m.runStates) == 0
+			}, 2*time.Second, 10*time.Millisecond)
 		})
 	})
 
@@ -82,8 +90,7 @@ func TestRunMap(t *testing.T) {
 
 			var executeWg sync.WaitGroup
 			executeWg.Add(1)
-			var callbackWg sync.WaitGroup
-			callbackWg.Add(1)
+			canceledCh := make(chan error, 1)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			id := task.NewId()
@@ -92,31 +99,32 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 						executeWg.Done()
 						<-ctx.Done()
-						return []byte("output"), ctx.Err()
+						canceledCh <- context.Cause(ctx)
+						return ctx.Err()
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
-				assert.Equal(t, []byte("output"), output)
-				assert.ErrorIs(t, err, context.Canceled)
-				callbackWg.Done()
-				return nil
-			})
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 
 			executeWg.Wait()
 			err = m.cancel(runnable.Id())
 			assert.NoError(t, err)
 
+			select {
+			case cause := <-canceledCh:
+				assert.ErrorIs(t, cause, context.Canceled)
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for settlement to observe cancellation")
+			}
+
 			t.Run("duplicate cancel should return non existent run error after cleanup", func(t *testing.T) {
-				callbackWg.Wait()
 				if !assert.Eventually(t, func() bool {
 					m.mu.Lock()
 					defer m.mu.Unlock()
@@ -139,8 +147,7 @@ func TestRunMap(t *testing.T) {
 			runCount := 10
 			var executeWg sync.WaitGroup
 			executeWg.Add(runCount)
-			var callbackWg sync.WaitGroup
-			callbackWg.Add(runCount)
+			var canceledCount atomic.Int32
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			for range runCount {
@@ -149,22 +156,17 @@ func TestRunMap(t *testing.T) {
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
-						Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 							executeWg.Done()
 							<-ctx.Done()
-							return nil, ctx.Err()
+							canceledCount.Add(1)
+							return ctx.Err()
 						},
 					},
 					execute.ExecutorId("test"),
-					db.Database,
+					db,
 					tkey,
-					executiontype.NewInMemoryContainer(),
-				), func(_ context.Context, output []byte, err error) error {
-					assert.Nil(t, output)
-					assert.ErrorIs(t, err, context.Canceled)
-					callbackWg.Done()
-					return nil
-				})
+				), testCallbackUrl(t))
 				assert.NoError(t, err)
 			}
 			assert.Equal(t, runCount, len(m.runStates))
@@ -172,8 +174,8 @@ func TestRunMap(t *testing.T) {
 
 			cancel()
 			m.wait()
-			callbackWg.Wait()
 
+			assert.Equal(t, int32(runCount), canceledCount.Load())
 			assert.Equal(t, 0, len(m.runStates))
 		})
 	})
@@ -186,8 +188,6 @@ func TestRunMap(t *testing.T) {
 			sleepTime := 1 * time.Second
 			var executeWg sync.WaitGroup
 			executeWg.Add(runCount)
-			var callbackWg sync.WaitGroup
-			callbackWg.Add(runCount)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			for range runCount {
@@ -196,23 +196,17 @@ func TestRunMap(t *testing.T) {
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
-						Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 							executeWg.Done()
 							<-ctx.Done()
 							time.Sleep(sleepTime)
-							return nil, ctx.Err()
+							return ctx.Err()
 						},
 					},
 					execute.ExecutorId("test"),
-					db.Database,
+					db,
 					tkey,
-					executiontype.NewInMemoryContainer(),
-				), func(_ context.Context, output []byte, err error) error {
-					assert.Nil(t, output)
-					assert.ErrorIs(t, err, context.Canceled)
-					callbackWg.Done()
-					return nil
-				})
+				), testCallbackUrl(t))
 				assert.NoError(t, err)
 			}
 			executeWg.Wait()
@@ -223,16 +217,20 @@ func TestRunMap(t *testing.T) {
 			elapsed := time.Since(start)
 			assert.GreaterOrEqual(t, elapsed, sleepTime)
 
-			callbackWg.Wait()
 			assert.Equal(t, 0, len(m.runStates))
 		})
 	})
-	t.Run("execution error passed to callback", func(t *testing.T) {
+	t.Run("settle error is reported via onRunError", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
-			expectedErr := fmt.Errorf("execution failed")
-			var wg sync.WaitGroup
-			wg.Add(1)
+			expectedErr := fmt.Errorf("settlement failed")
+			type runError struct {
+				id  task.Id
+				err error
+			}
+			runErrCh := make(chan runError, 1)
+			m := newRunMap(t.Name(), func(id task.Id, err error) {
+				runErrCh <- runError{id: id, err: err}
+			})
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())
@@ -240,23 +238,25 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-						return nil, expectedErr
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+						return expectedErr
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(t.Context(), runnable, func(_ context.Context, output []byte, err error) error {
-				assert.Nil(t, output)
-				assert.ErrorIs(t, err, expectedErr)
-				wg.Done()
-				return nil
-			})
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
-			wg.Wait()
+
+			select {
+			case reported := <-runErrCh:
+				assert.Equal(t, runnable.Id(), reported.id)
+				assert.ErrorIs(t, reported.err, expectedErr)
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for onRunError to be called")
+			}
+			m.wait()
 		})
 	})
 	t.Run("wait on empty map", func(t *testing.T) {
@@ -279,23 +279,22 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-						return mo.None[string](), nil
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+						<-ctx.Done()
+						return ctx.Err()
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
-			err = m.run(t.Context(), runnable, func(_ context.Context, b []byte, err error) error {
-				return nil
-			})
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
-			err = m.run(t.Context(), runnable, func(_ context.Context, b []byte, err error) error {
-				return nil
-			})
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.ErrorIs(t, err, ErrDuplicateRun)
+
+			assert.NoError(t, m.cancel(runnable.Id()))
+			m.wait()
 		})
 	})
 	t.Run("remove add remove does not start queued successor", func(t *testing.T) {
@@ -311,20 +310,19 @@ func TestRunMap(t *testing.T) {
 			started := make(chan struct{}, 2)
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 						executionCount.Add(1)
 						started <- struct{}{}
 						<-ctx.Done()
-						return nil, ctx.Err()
+						return ctx.Err()
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
 
-			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 			select {
 			case <-started:
@@ -333,7 +331,7 @@ func TestRunMap(t *testing.T) {
 			}
 
 			assert.NoError(t, m.cancel(runnable.Id()))
-			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 			assert.NoError(t, m.cancel(runnable.Id()))
 
@@ -354,20 +352,19 @@ func TestRunMap(t *testing.T) {
 			started := make(chan struct{}, 3)
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 						executionCount.Add(1)
 						started <- struct{}{}
 						<-ctx.Done()
-						return nil, ctx.Err()
+						return ctx.Err()
 					},
 				},
 				execute.ExecutorId("test"),
-				db.Database,
+				db,
 				tkey,
-				executiontype.NewInMemoryContainer(),
 			)
 
-			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 			select {
 			case <-started:
@@ -376,10 +373,10 @@ func TestRunMap(t *testing.T) {
 			}
 
 			assert.NoError(t, m.cancel(runnable.Id()))
-			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 			assert.NoError(t, m.cancel(runnable.Id()))
-			err = m.run(t.Context(), runnable, func(_ context.Context, _ []byte, _ error) error { return nil })
+			err = m.run(t.Context(), runnable, testCallbackUrl(t))
 			assert.NoError(t, err)
 
 			select {

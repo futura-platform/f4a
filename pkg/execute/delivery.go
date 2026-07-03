@@ -29,9 +29,10 @@ type deliveryRequest struct {
 // Result delivery retry policy: bounded attempts against a callback
 // endpoint that is assumed flaky; exhaustion becomes a value for the dead
 // letter queue, never a flow error.
-const (
-	maxDeliveryAttempts = 5
-	deliveryBackoffBase = 1 * time.Second
+// Variables (not consts) only so tests can compress the schedule.
+var (
+	maxDeliveryAttempts uint64 = 5
+	deliveryBackoffBase        = 1 * time.Second
 )
 
 // newDeliveryBackoff builds the exponential backoff for delivering the
@@ -81,6 +82,14 @@ func deliverResult(ctx context.Context, r deliveryRequest) (mo.Option[string], e
 	default:
 		return mo.None[string](), nil
 	}
+}
+
+// parkDeadLetter durably parks a result whose delivery budget is exhausted so
+// the task can still settle (and be deleted). Unlike the callback endpoint,
+// the dead letter queue is our own infrastructure: failures here are flow
+// errors, retried by the normal machinery.
+func parkDeadLetter(ctx context.Context, deliveryFailure string) error {
+	panic("not implemented: dead letter queue")
 }
 
 func attemptDelivery(ctx context.Context, r deliveryRequest) error {
