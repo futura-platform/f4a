@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"net/http/httptest"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -203,8 +202,7 @@ func TestControllerCreateTask(t *testing.T) {
 				c,
 				connect.WithInterceptors(validate.NewInterceptor()),
 			)
-			server := httptest.NewServer(controlHandler)
-			t.Cleanup(server.Close)
+			server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
 			client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
 
 			taskID := "create-memory-overflow"

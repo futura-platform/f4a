@@ -19,27 +19,29 @@ import (
 	"schneider.vip/problem"
 )
 
-type taskResult struct {
+type deliveryRequest struct {
 	completedAt time.Time
 	callbackUrl url.URL
 	result      string
 	failure     string
 }
 
-// Callback delivery retry policy.
+// Result delivery retry policy: bounded attempts against a callback
+// endpoint that is assumed flaky; exhaustion becomes a value for the dead
+// letter queue, never a flow error.
 const (
-	maxCallbackDeliveryAttempts = 5
-	callbackDeliveryBackoffBase = 1 * time.Second
+	maxDeliveryAttempts = 5
+	deliveryBackoffBase = 1 * time.Second
 )
 
-// newCallbackBackoff builds the exponential backoff for delivering the
+// newDeliveryBackoff builds the exponential backoff for delivering the
 // callback of a task that completed at completedAt. The remaining attempt
 // budget is derived solely from wall-clock time elapsed since completion
 // (attempt i is scheduled at completedAt + base*(2^i - 1)), so a re-executed
 // step resumes the schedule statelessly instead of restarting it from zero.
-func newCallbackBackoff(completedAt time.Time) backoff.BackOff {
+func newDeliveryBackoff(completedAt time.Time) backoff.BackOff {
 	b := backoff.NewExponentialBackOff(
-		backoff.WithInitialInterval(callbackDeliveryBackoffBase),
+		backoff.WithInitialInterval(deliveryBackoffBase),
 		backoff.WithRandomizationFactor(0),
 		backoff.WithMultiplier(2),
 		backoff.WithMaxElapsedTime(0),
@@ -47,23 +49,23 @@ func newCallbackBackoff(completedAt time.Time) backoff.BackOff {
 
 	elapsed := time.Since(completedAt)
 	used := uint64(0)
-	for used < maxCallbackDeliveryAttempts-1 && callbackDeliveryBackoffBase*(1<<(used+1)-1) <= elapsed {
+	for used < maxDeliveryAttempts-1 && deliveryBackoffBase*(1<<(used+1)-1) <= elapsed {
 		used++
 		b.NextBackOff() // keep the interval doubling in step with skipped attempts
 	}
-	return backoff.WithMaxRetries(b, maxCallbackDeliveryAttempts-1-used)
+	return backoff.WithMaxRetries(b, maxDeliveryAttempts-1-used)
 }
 
-// deliverCallback delivers the callback to the callback service.
+// deliverResult delivers the terminal result to the callback endpoint.
 // It is designed to be a futura Step that never returns a delivery error.
 // It returns the delivery failure as a return value,
 // so that futura's retry mechanism is not invoked when the callback fails to deliver.
 // That should be handled by the dead letter queue.
 // The only error it can return is the context's error on cancellation.
-func deliverCallback(ctx context.Context, r taskResult) (mo.Option[string], error) {
+func deliverResult(ctx context.Context, r deliveryRequest) (mo.Option[string], error) {
 	deliveryErr := backoff.RetryNotify(
-		func() error { return attemptDeliverCallback(ctx, r) },
-		backoff.WithContext(newCallbackBackoff(r.completedAt), ctx),
+		func() error { return attemptDelivery(ctx, r) },
+		backoff.WithContext(newDeliveryBackoff(r.completedAt), ctx),
 		func(err error, next time.Duration) {
 			flog.FromContext(ctx).LogAttrs(ctx, slog.LevelWarn, "callback delivery attempt failed",
 				slog.String("error", err.Error()),
@@ -81,7 +83,7 @@ func deliverCallback(ctx context.Context, r taskResult) (mo.Option[string], erro
 	}
 }
 
-func attemptDeliverCallback(ctx context.Context, r taskResult) error {
+func attemptDelivery(ctx context.Context, r deliveryRequest) error {
 	l := flog.FromContext(ctx)
 	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
 		slog.String("callback_url", r.callbackUrl.String()),

@@ -7,8 +7,6 @@ import (
 	"net/url"
 
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
-	"github.com/samber/mo"
 )
 
 var ErrExecutorNotFound = errors.New("executor not found")
@@ -17,7 +15,7 @@ type notFoundExecutor struct {
 	requestedExecutorId ExecutorId
 }
 
-func (r notFoundExecutor) ExecuteFrom(executiontype.TransactionalContainer) Executable {
+func (r notFoundExecutor) ExecuteFrom(SettlementContainers) Executable {
 	return notFoundExecutable{requestedExecutorId: r.requestedExecutorId}
 }
 
@@ -25,6 +23,8 @@ type notFoundExecutable struct {
 	requestedExecutorId ExecutorId
 }
 
-func (r notFoundExecutable) Execute(ctx context.Context, marshalledInput []byte, callbackUrl *url.URL, opts ...ftype.FlowLoopOption) (mo.Option[string], error) {
-	return mo.None[string](), fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
+// Settle always fails without settling: an unknown executor is a run error
+// (this worker may simply lack the executor), never a terminal task result.
+func (r notFoundExecutable) Settle(ctx context.Context, marshalledInput []byte, callbackUrl *url.URL, opts ...ftype.FlowLoopOption) error {
+	return fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
 }

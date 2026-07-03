@@ -3,6 +3,7 @@ package f4a
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	"github.com/samber/mo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -67,18 +69,19 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 		router := execute.NewRouter(execute.Route{
 			Id: executorID,
 			Executor: &testutil.MockExecutor{
-				Execute: func(
+				Settle: func(
 					_ executiontype.TransactionalContainer,
 					ctx context.Context,
 					_ []byte,
+					_ *url.URL,
 					_ ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+				) (mo.Option[string], error) {
 					id, ok := TaskIdFromContext(ctx)
 					executionContextCh <- executionContextResult{
 						taskID: id,
 						ok:     ok,
 					}
-					return []byte("output"), nil
+					return mo.None[string](), nil
 				},
 			},
 		})

@@ -7,7 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +23,7 @@ import (
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	"github.com/samber/mo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +67,7 @@ func seedTask(
 		taskDirectory.RunnerId().Set(tx, &runnerId)
 		taskDirectory.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
 		taskDirectory.ResourceRequest().Set(tx, testResourceRequest())
-		return nil, nil
+		return mo.None[string](), nil
 	})
 	return err
 }
@@ -109,7 +110,7 @@ func addTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, ids [
 				return nil, err
 			}
 		}
-		return nil, nil
+		return mo.None[string](), nil
 	})
 	require.NoError(t, err)
 }
@@ -133,7 +134,7 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, id
 				return nil, err
 			}
 		}
-		return nil, nil
+		return mo.None[string](), nil
 	})
 	require.NoError(t, err)
 }
@@ -151,12 +152,12 @@ func waitForTaskDeletion(t testing.TB, db dbutil.DbRoot, id task.Id) {
 			_, err := tasksDirectory.Open(tx, id)
 			if err != nil {
 				if errors.Is(err, directory.ErrDirNotExists) {
-					return nil, nil
+					return mo.None[string](), nil
 				}
 				return nil, err
 			}
 			exists = true
-			return nil, nil
+			return mo.None[string](), nil
 		})
 		require.NoError(t, err)
 		if !exists {
@@ -235,13 +236,13 @@ func TestWorkLoop(t *testing.T) {
 			canceledCh := make(chan task.Id, taskCount*2)
 
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+				Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
 					id := task.Id(marshalledInput)
 					startedCh <- id
 
 					<-ctx.Done()
 					canceledCh <- id
-					return nil, nil
+					return mo.None[string](), nil
 				},
 			}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
@@ -298,10 +299,10 @@ func TestWorkLoop(t *testing.T) {
 			startedCh := make(chan task.Id, 1)
 			executorId := execute.ExecutorId("test-executor")
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+				Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
 					startedCh <- task.Id(marshalledInput)
 					<-ctx.Done()
-					return nil, nil
+					return mo.None[string](), nil
 				},
 			}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
@@ -365,8 +366,8 @@ func TestWorkLoop(t *testing.T) {
 			taskSet := openTaskSet(t, db, runnerId)
 
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-					return nil, expectedErr
+				Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+					return mo.None[string](), expectedErr
 				},
 			}
 			executorId := execute.ExecutorId("test-executor")
@@ -396,7 +397,7 @@ func TestWorkLoop(t *testing.T) {
 
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				gotCallbackCh := make(chan struct{})
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal(t, "POST", r.Method)
 					assert.Equal(t, "/callback", r.URL.Path)
 					body, err := io.ReadAll(r.Body)
@@ -404,16 +405,15 @@ func TestWorkLoop(t *testing.T) {
 					assert.Equal(t, expectedOutput, body)
 					w.WriteHeader(http.StatusAccepted)
 					gotCallbackCh <- struct{}{}
-				}))
-				defer server.Close()
+				})
 
 				runWorkLoopErr := make(chan error, 1)
 				runnerId := "test-runner"
 				taskSet := openTaskSet(t, db, runnerId)
 
 				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
+					Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+						return mo.None[string](), nil
 					},
 				}
 				executorId := execute.ExecutorId("test-executor")
@@ -443,7 +443,7 @@ func TestWorkLoop(t *testing.T) {
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				var callbackCalls atomic.Int32
 				gotCallbackCh := make(chan struct{}, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal(t, "POST", r.Method)
 					assert.Equal(t, "/callback", r.URL.Path)
 					body, err := io.ReadAll(r.Body)
@@ -453,19 +453,18 @@ func TestWorkLoop(t *testing.T) {
 						gotCallbackCh <- struct{}{}
 					}
 					w.WriteHeader(http.StatusAccepted)
-				}))
-				defer server.Close()
+				})
 
-				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
+				originalDeleteTask := deleteTask
 				var deleteAttempts atomic.Int32
-				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+				deleteTask = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
 					if deleteAttempts.Add(1) == 1 {
 						return errors.New("transient delete failure")
 					}
-					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
+					return originalDeleteTask(ctx, manager, runnable)
 				}
 				defer func() {
-					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
+					deleteTask = originalDeleteTask
 				}()
 
 				ctx, cancel := context.WithCancel(t.Context())
@@ -475,8 +474,8 @@ func TestWorkLoop(t *testing.T) {
 				taskSet := openTaskSet(t, db, runnerId)
 
 				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
+					Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+						return mo.None[string](), nil
 					},
 				}
 				executorId := execute.ExecutorId("test-executor")
@@ -518,7 +517,7 @@ func TestWorkLoop(t *testing.T) {
 				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
 				var callbackCalls atomic.Int32
 				gotCallbackCh := make(chan struct{}, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal(t, "POST", r.Method)
 					assert.Equal(t, "/callback", r.URL.Path)
 					body, err := io.ReadAll(r.Body)
@@ -528,18 +527,17 @@ func TestWorkLoop(t *testing.T) {
 						gotCallbackCh <- struct{}{}
 					}
 					w.WriteHeader(http.StatusAccepted)
-				}))
-				defer server.Close()
+				})
 
-				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
+				originalDeleteTask := deleteTask
 				var externalDeleteStarted atomic.Bool
-				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+				deleteTask = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
 					if externalDeleteStarted.CompareAndSwap(false, true) {
 						_, err := manager.db.Transact(func(tx fdb.Transaction) (any, error) {
 							taskKey, err := manager.taskDirectory.Open(tx, runnable.Id())
 							if err != nil {
 								if errors.Is(err, directory.ErrDirNotExists) {
-									return nil, nil
+									return mo.None[string](), nil
 								}
 								return nil, err
 							}
@@ -549,16 +547,16 @@ func TestWorkLoop(t *testing.T) {
 							if err := taskKey.Clear(tx); err != nil {
 								return nil, err
 							}
-							return nil, nil
+							return mo.None[string](), nil
 						})
 						if err != nil {
 							return err
 						}
 					}
-					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
+					return originalDeleteTask(ctx, manager, runnable)
 				}
 				defer func() {
-					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
+					deleteTask = originalDeleteTask
 				}()
 
 				ctx, cancel := context.WithCancel(t.Context())
@@ -568,8 +566,8 @@ func TestWorkLoop(t *testing.T) {
 				taskSet := openTaskSet(t, db, runnerId)
 
 				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
+					Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+						return mo.None[string](), nil
 					},
 				}
 				executorId := execute.ExecutorId("test-executor")
@@ -612,7 +610,7 @@ func TestWorkLoop(t *testing.T) {
 				callbackSuccessful := make(chan struct{})
 				var callCount atomic.Int32
 				firstWorkerLoopCtx, firstWorkerLoopCancel := context.WithCancel(t.Context())
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal(t, "POST", r.Method)
 					assert.Equal(t, "/callback", r.URL.Path)
 					body, err := io.ReadAll(r.Body)
@@ -630,16 +628,15 @@ func TestWorkLoop(t *testing.T) {
 					default:
 						t.Fatalf("unexpected callback call: %d", callCount.Load())
 					}
-				}))
-				defer server.Close()
+				})
 
 				runWorkLoopErr := make(chan error, 1)
 				runnerId := "test-runner"
 				taskSet := openTaskSet(t, db, runnerId)
 
 				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
+					Settle: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+						return mo.None[string](), nil
 					},
 				}
 				executorId := execute.ExecutorId("test-executor")

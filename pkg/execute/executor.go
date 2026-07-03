@@ -6,8 +6,13 @@ import (
 	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
+type SettlementContainers struct {
+	User      executiontype.TransactionalContainer
+	Discharge executiontype.TransactionalContainer
+}
+
 type Executor interface {
-	ExecuteFrom(executiontype.TransactionalContainer) Executable
+	ExecuteFrom(SettlementContainers) Executable
 }
 
 type genericExecutor[A, R any] struct {
@@ -25,12 +30,14 @@ func NewExecutor[A, R any](
 }
 
 // ExecuteFrom implements Executor.
-func (e genericExecutor[A, R]) ExecuteFrom(c executiontype.TransactionalContainer) Executable {
-	f := futura.NewFlowFromContainer[A, R](c)
+func (e genericExecutor[A, R]) ExecuteFrom(s SettlementContainers) Executable {
+	userFlow := futura.NewFlowFromContainer[A, R](s.User)
+	callbackDeliveryFlow := futura.NewFlowFromContainer[R, struct{}](s.Discharge)
 	return &genericExecutable[A, R]{
-		genericExecutor: e,
-		f:               f,
-		marshaller:      e.marshaller,
-		opts:            e.opts,
+		genericExecutor:      e,
+		userFlow:             userFlow,
+		callbackDeliveryFlow: callbackDeliveryFlow,
+		marshaller:           e.marshaller,
+		opts:                 e.opts,
 	}
 }

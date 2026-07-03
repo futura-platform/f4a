@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -74,7 +73,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			output := []byte("expected output")
 			capturedCh := make(chan capturedRequest, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
 				capturedCh <- capturedRequest{
 					method:      r.Method,
@@ -84,8 +83,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 					readErr:     err,
 				}
 				w.WriteHeader(http.StatusAccepted)
-			}))
-			defer server.Close()
+			})
 
 			runnable := loadRunnableTask(t, db, server.URL+"/callback")
 			manager := &taskManager{runMap: newRunMap(t.Name(), nil), c: server.Client()}
@@ -106,7 +104,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			taskErr := errors.New("boom")
 			capturedCh := make(chan capturedRequest, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
 				capturedCh <- capturedRequest{
 					method:      r.Method,
@@ -116,8 +114,7 @@ func TestTaskManagerPostResult(t *testing.T) {
 					readErr:     err,
 				}
 				w.WriteHeader(http.StatusOK)
-			}))
-			defer server.Close()
+			})
 
 			runnable := loadRunnableTask(t, db, server.URL+"/callback")
 			manager := &taskManager{runMap: newRunMap(t.Name(), nil), c: server.Client()}
@@ -141,10 +138,9 @@ func TestTaskManagerPostResult(t *testing.T) {
 
 	t.Run("returns error on non-accepted status", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusTeapot)
-			}))
-			defer server.Close()
+			})
 
 			runnable := loadRunnableTask(t, db, server.URL+"/callback")
 			manager := &taskManager{runMap: newRunMap(t.Name(), nil), c: server.Client()}

@@ -6,7 +6,6 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
-	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
 // Runnable represents a locally executable task, bound to an input.
@@ -20,8 +19,16 @@ type Runnable struct {
 	db      fdb.Database
 	taskKey task.TaskKey
 
-	userContainer, callbackDeliveryContainer executiontype.TransactionalContainer
+	// The durable homes of the two settlement flows. Namespace names are
+	// durable schema: renaming one orphans the replay state of in-flight
+	// tasks.
+	execute.SettlementContainers
 }
+
+const (
+	userFlowNamespace     = "user"
+	deliveryFlowNamespace = "delivery"
+)
 
 func (r Runnable) Id() task.Id {
 	return r.taskKey.Id()
@@ -46,11 +53,13 @@ func NewRunnable(
 	taskKey task.TaskKey,
 ) Runnable {
 	return Runnable{
-		executor:                  executor,
-		executorId:                executorId,
-		db:                        db.Database,
-		taskKey:                   taskKey,
-		userContainer:             fdbexec.OpenTaskContainer(db, taskKey, "user"),
-		callbackDeliveryContainer: fdbexec.OpenTaskContainer(db, taskKey, "callback_delivery"),
+		executor:   executor,
+		executorId: executorId,
+		db:         db.Database,
+		taskKey:    taskKey,
+		SettlementContainers: execute.SettlementContainers{
+			User:      fdbexec.OpenTaskContainer(db, taskKey, userFlowNamespace),
+			Discharge: fdbexec.OpenTaskContainer(db, taskKey, deliveryFlowNamespace),
+		},
 	}
 }

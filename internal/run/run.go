@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"runtime"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -28,27 +27,19 @@ var (
 	ErrRunFatal = errors.New("run encountered fatal error")
 )
 
-const (
-	callbackRetryInitialDelay = 100 * time.Millisecond
-	callbackRetryMaxDelay     = 30 * time.Second
-	callbackAttemptTimeout    = 10 * time.Second
-	callbackDeliveryTimeout   = time.Minute
-)
-
 var (
 	tracer = otel.Tracer("f4a.runner.run")
 )
 
 // Run runs the runnable singleton, identifying itself as the holder of the lock with the given runnerId.
 // This uses reliablelock to ensure that only one instance of the runnable is executed at a time.
-// It will re execute the runnable with the new input if the input changes before
-// the current execution returns. Once execution has returned and callback
-// delivery has started, later input changes do not trigger a replay.
-// It will only return if:
-// 1. The execution finishes successfully and the callback succeeds at least once
-// 2. The execution fails and the callback succeeds at least once (delivering the error)
-// 3. The parent context is canceled, which aborts any in-flight execution and callback delivery
-// 4. The watch fails
+// It will re execute the runnable with the new input if the input changes
+// before settlement finishes.
+// It returns nil only once the task is settled: the user flow reached a
+// terminal result for the latest input and that result was discharged
+// (delivered to the callback, or reported for the dead letter queue).
+// Any other return means the task is still owed: the parent context was
+// canceled (aborting in-flight settlement) or the input watch failed.
 func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) error {
 	if callbackUrl == nil {
 		return errors.New("callback is required")
@@ -72,7 +63,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 	// bind ctx to the lease so that operations only happen while the lease is valid
 	ctx = activeLease
 
-	executable := r.executor.ExecuteFrom(r.userContainer)
+	executable := r.executor.ExecuteFrom(r.SettlementContainers)
 
 	watchCtx, watchCancel := context.WithCancel(ctx)
 	defer watchCancel()
@@ -113,7 +104,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 			defer execWg.Done()
 
 			execSingleflightMu.Lock()
-			callbackDeliveryFailure, err := executable.Execute(runCtx, input, callbackUrl, fopt.WithStepWrapper(func(
+			runErr = executable.Settle(runCtx, input, callbackUrl, fopt.WithStepWrapper(func(
 				ctx context.Context,
 				fnLabel string,
 				args any,
@@ -131,24 +122,6 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 				return nil
 			}))
 			execSingleflightMu.Unlock()
-
-			if errors.Is(err, ErrRunFatal) {
-				if !testing.Testing() {
-					panic(fmt.Errorf("This error should never be used outside of tests: %w", err))
-				}
-				mu.Lock()
-				if runErr == nil {
-					runErr = err
-				}
-				mu.Unlock()
-				watchCancel()
-				return
-			}
-
-			if callbackDeliveryFailure.IsSome() {
-				// todo: handle callback delivery failure with a dead letter queue
-			}
-
 			watchCancel()
 		}(marshalledInput, runCtx)
 	}

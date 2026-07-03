@@ -14,18 +14,18 @@ import (
 	"github.com/futura-platform/futura/flog"
 )
 
-var deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
-	return manager.deleteTaskAfterCallback(ctx, runnable)
+var deleteTask = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+	return manager.deleteTask(ctx, runnable)
 }
 
-// run shadows the runMap.run method. This is to abstract away the callback function.
+// run shadows the runMap.run method.
 func (m *taskManager) run(ctx context.Context, r run.RunnableTask) error {
 	return m.runMap.run(ctx, r.Runnable, r.CallbackUrl())
 }
 
-func (m *taskManager) deleteTaskAfterCallback(ctx context.Context, runnable run.RunnableTask) error {
+func (m *taskManager) deleteTask(ctx context.Context, runnable run.RunnableTask) error {
 	l := flog.FromContext(ctx)
-	l.LogAttrs(ctx, slog.LevelDebug, "deleting task after callback",
+	l.LogAttrs(ctx, slog.LevelDebug, "deleting settled task",
 		slog.String("task_id", string(runnable.Id())))
 	_, err := m.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		taskKey, err := m.taskDirectory.Open(tx, runnable.Id())

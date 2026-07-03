@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -12,6 +13,7 @@ import (
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	"github.com/samber/mo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,11 +57,11 @@ func TestLoadTasks(t *testing.T) {
 			setTaskMetadata(t, db, tkeyOne, &executorIdOne, &callbackUrlOne)
 			setTaskMetadata(t, db, tkeyTwo, &executorIdTwo, &callbackUrlTwo)
 
-			executorOne := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executorOne := &testutil.MockExecutor{Settle: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+				return mo.None[string](), nil
 			}}
-			executorTwo := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executorTwo := &testutil.MockExecutor{Settle: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+				return mo.None[string](), nil
 			}}
 			router := execute.NewRouter(
 				execute.Route{Id: executorIdOne, Executor: executorOne},
@@ -138,8 +140,8 @@ func TestLoadTasks(t *testing.T) {
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkey, &executorId, &callbackUrl)
 
-			executor := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executor := &testutil.MockExecutor{Settle: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) (mo.Option[string], error) {
+				return mo.None[string](), nil
 			}}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 

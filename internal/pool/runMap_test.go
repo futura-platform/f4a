@@ -23,7 +23,7 @@ func setInput(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey, input []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		tkey.Input().Set(tx, input)
-		return nil, nil
+		return mo.None[string](), nil
 	})
 	assert.NoError(t, err)
 }
@@ -46,7 +46,7 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 						return []byte("output"), nil
 					},
 				},
@@ -92,7 +92,7 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 						executeWg.Done()
 						<-ctx.Done()
 						return []byte("output"), ctx.Err()
@@ -149,7 +149,7 @@ func TestRunMap(t *testing.T) {
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
-						Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 							executeWg.Done()
 							<-ctx.Done()
 							return nil, ctx.Err()
@@ -196,7 +196,7 @@ func TestRunMap(t *testing.T) {
 				setInput(t, db, tkey, []byte("input"))
 				err = m.run(ctx, run.NewRunnable(
 					&testutil.MockExecutor{
-						Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 							executeWg.Done()
 							<-ctx.Done()
 							time.Sleep(sleepTime)
@@ -240,7 +240,7 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 						return nil, expectedErr
 					},
 				},
@@ -279,8 +279,8 @@ func TestRunMap(t *testing.T) {
 			setInput(t, db, tkey, []byte("input"))
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-						return nil, nil
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+						return mo.None[string](), nil
 					},
 				},
 				execute.ExecutorId("test"),
@@ -311,7 +311,7 @@ func TestRunMap(t *testing.T) {
 			started := make(chan struct{}, 2)
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 						executionCount.Add(1)
 						started <- struct{}{}
 						<-ctx.Done()
@@ -354,7 +354,7 @@ func TestRunMap(t *testing.T) {
 			started := make(chan struct{}, 3)
 			runnable := run.NewRunnable(
 				&testutil.MockExecutor{
-					Execute: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
+					Settle: func(inContainer executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
 						executionCount.Add(1)
 						started <- struct{}{}
 						<-ctx.Done()
