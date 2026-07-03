@@ -2,7 +2,9 @@ package run
 
 import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype/executiontype"
 )
@@ -18,7 +20,7 @@ type Runnable struct {
 	db      fdb.Database
 	taskKey task.TaskKey
 
-	execution executiontype.TransactionalContainer
+	userContainer, callbackDeliveryContainer executiontype.TransactionalContainer
 }
 
 func (r Runnable) Id() task.Id {
@@ -40,15 +42,15 @@ func (r Runnable) Db() fdb.Database {
 func NewRunnable(
 	executor execute.Executor,
 	executorId execute.ExecutorId,
-	db fdb.Database,
+	db dbutil.DbRoot,
 	taskKey task.TaskKey,
-	execution executiontype.TransactionalContainer,
 ) Runnable {
 	return Runnable{
-		executor:   executor,
-		executorId: executorId,
-		db:         db,
-		taskKey:    taskKey,
-		execution:  execution,
+		executor:                  executor,
+		executorId:                executorId,
+		db:                        db.Database,
+		taskKey:                   taskKey,
+		userContainer:             fdbexec.OpenTaskContainer(db, taskKey, "user"),
+		callbackDeliveryContainer: fdbexec.OpenTaskContainer(db, taskKey, "callback_delivery"),
 	}
 }

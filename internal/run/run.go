@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
+	"net/url"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/reliablelock"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
-	"github.com/futura-platform/futura/flog"
 	"github.com/futura-platform/futura/fopt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -51,8 +49,8 @@ var (
 // 2. The execution fails and the callback succeeds at least once (delivering the error)
 // 3. The parent context is canceled, which aborts any in-flight execution and callback delivery
 // 4. The watch fails
-func (r Runnable) Run(ctx context.Context, runnerId string, callback func(context.Context, []byte, error) error) error {
-	if callback == nil {
+func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) error {
+	if callbackUrl == nil {
 		return errors.New("callback is required")
 	}
 
@@ -74,7 +72,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	// bind ctx to the lease so that operations only happen while the lease is valid
 	ctx = activeLease
 
-	executable := r.executor.ExecuteFrom(r.execution)
+	executable := r.executor.ExecuteFrom(r.userContainer)
 
 	watchCtx, watchCancel := context.WithCancel(ctx)
 	defer watchCancel()
@@ -96,12 +94,10 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 	var runErr error
 	var execWg sync.WaitGroup
 
-	// Once callback delivery finishes, later input changes are ignored.
-	var executionResultDeliveryFinished atomic.Bool
 	span := trace.SpanFromContext(ctx)
 	startExecution := func(marshalledInput []byte) {
 		mu.Lock()
-		if executionResultDeliveryFinished.Load() || watchCtx.Err() != nil {
+		if watchCtx.Err() != nil {
 			mu.Unlock()
 			return
 		}
@@ -117,7 +113,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			defer execWg.Done()
 
 			execSingleflightMu.Lock()
-			result, err := executable.Execute(runCtx, input, fopt.WithStepWrapper(func(
+			callbackDeliveryFailure, err := executable.Execute(runCtx, input, callbackUrl, fopt.WithStepWrapper(func(
 				ctx context.Context,
 				fnLabel string,
 				args any,
@@ -147,70 +143,12 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 				mu.Unlock()
 				watchCancel()
 				return
-			} else if errors.Is(context.Cause(runCtx), errInputChanged) {
-				return
 			}
 
-			mu.Lock()
-			defer mu.Unlock()
-
-			finishedAt, finishedAtErr := r.ensureFinishedAt(time.Now())
-			if finishedAtErr != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				if runErr == nil {
-					runErr = finishedAtErr
-				}
-				watchCancel()
-				return
+			if callbackDeliveryFailure.IsSome() {
+				// todo: handle callback delivery failure with a dead letter queue
 			}
 
-			deadline := finishedAt.Add(callbackDeliveryTimeout)
-			callbackCtx, callbackCancel := context.WithDeadline(runCtx, deadline)
-			defer callbackCancel()
-			callbackCtx, span := tracer.Start(callbackCtx, "callback")
-			defer span.End()
-			deliveryErr := retryCallback(
-				callbackCtx,
-				func(callbackCtx context.Context) error {
-					return callback(callbackCtx, result, err)
-				},
-				func(err error, duration time.Duration) {
-					span.RecordError(err)
-					flog.FromContext(watchCtx).LogAttrs(
-						watchCtx, slog.LevelDebug, "callback failed, retrying",
-						slog.String("task_id", string(r.Id())),
-						slog.String("error", err.Error()),
-						slog.Duration("duration", duration),
-					)
-				},
-			)
-			if deliveryErr != nil {
-				if time.Now().After(deadline) {
-					flog.FromContext(ctx).LogAttrs(
-						ctx, slog.LevelDebug, "callback delivery timed out",
-						slog.String("task_id", string(r.Id())),
-					)
-				} else {
-					if ctx.Err() != nil {
-						return
-					}
-					if runErr == nil {
-						runErr = deliveryErr
-					}
-					watchCancel()
-					return
-				}
-			} else {
-				span.AddEvent("delivered callback")
-				flog.FromContext(ctx).LogAttrs(
-					ctx, slog.LevelDebug, "delivered callback",
-					slog.String("task_id", string(r.Id())),
-					slog.Bool("error", err != nil),
-				)
-			}
-			executionResultDeliveryFinished.Store(true)
 			watchCancel()
 		}(marshalledInput, runCtx)
 	}
@@ -233,67 +171,8 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callback func(contex
 			defer mu.Unlock()
 			if runErr != nil {
 				return runErr
-			} else if executionResultDeliveryFinished.Load() {
-				// if the execution result delivery finished, we should ignore the error
-				return nil
 			}
 			return err
-		}
-	}
-}
-
-func (r Runnable) ensureFinishedAt(candidate time.Time) (time.Time, error) {
-	finishedAtValue, err := r.db.Transact(func(tx fdb.Transaction) (any, error) {
-		existing, err := r.taskKey.FinishedAt().Get(tx).Get()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read finishedAt: %w", err)
-		}
-		if existing != nil {
-			return *existing, nil
-		}
-
-		finishedAt := candidate
-		r.taskKey.FinishedAt().Set(tx, &finishedAt)
-		return finishedAt, nil
-	})
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to persist finishedAt: %w", err)
-	}
-	return finishedAtValue.(time.Time), nil
-}
-
-func retryCallback(
-	ctx context.Context,
-	callback func(context.Context) error,
-	notify func(error, time.Duration),
-) error {
-	delay := callbackRetryInitialDelay
-	for {
-		attemptCtx, cancel := context.WithTimeout(ctx, callbackAttemptTimeout)
-		err := callback(attemptCtx)
-		cancel()
-		if err == nil {
-			return nil
-		} else if notify != nil {
-			notify(err, delay)
-		}
-
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-
-		delay *= 2
-		if delay > callbackRetryMaxDelay {
-			delay = callbackRetryMaxDelay
 		}
 	}
 }

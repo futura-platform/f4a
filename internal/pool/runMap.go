@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -41,7 +42,7 @@ var (
 	ErrDuplicateRun = errors.New("run already exists for task")
 )
 
-func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.Context, []byte, error) error) error {
+func (m *runMap) run(ctx context.Context, r run.Runnable, callbackUrl *url.URL) error {
 	ctx = task.WithTaskKey(ctx, r.TaskKey())
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,7 +80,7 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callback func(context.
 			})
 		}
 
-		err := r.Run(runCtx, m.runnerId, callback)
+		err := r.Run(runCtx, m.runnerId, callbackUrl)
 		if err != nil && runCtx.Err() == nil {
 			span.RecordError(err)
 			m.onRunError(r.Id(), err)

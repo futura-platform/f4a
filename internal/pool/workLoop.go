@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -35,7 +34,6 @@ type taskManager struct {
 	taskSet       *servicestate.RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
-	c             *http.Client
 }
 
 var (
@@ -89,7 +87,6 @@ func RunWorkLoop(
 		taskSet:       taskSet,
 		taskDirectory: taskDirectory,
 		revisionStore: revisionStore,
-		c:             http.DefaultClient,
 	}
 	defer func() {
 		cancel()

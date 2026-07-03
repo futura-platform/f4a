@@ -80,14 +80,14 @@ func TestLoadTasks(t *testing.T) {
 			assert.Equal(t, callbackUrlOne, loadedOne.CallbackUrl().String())
 			assert.Same(t, executorOne, loadedOne.Runnable.executor)
 			assert.Equal(t, idOne, loadedOne.Id())
-			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedOne.execution)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedOne.userContainer)
 
 			require.Contains(t, loadedById, idTwo)
 			loadedTwo := loadedById[idTwo]
 			assert.Equal(t, callbackUrlTwo, loadedTwo.CallbackUrl().String())
 			assert.Same(t, executorTwo, loadedTwo.executor)
 			assert.Equal(t, idTwo, loadedTwo.Id())
-			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedTwo.execution)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedTwo.userContainer)
 		})
 	})
 

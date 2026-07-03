@@ -378,10 +378,10 @@ func TestRun(t *testing.T) {
 			)
 
 			runnable := Runnable{
-				db:        db.Database,
-				taskKey:   tkey,
-				executor:  executor,
-				execution: executiontype.NewInMemoryContainer(),
+				db:            db.Database,
+				taskKey:       tkey,
+				executor:      executor,
+				userContainer: executiontype.NewInMemoryContainer(),
 			}
 
 			done := make(chan struct{})

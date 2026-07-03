@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	"github.com/samber/mo"
 )
 
 var ErrExecutorNotFound = errors.New("executor not found")
@@ -23,6 +25,6 @@ type notFoundExecutable struct {
 	requestedExecutorId ExecutorId
 }
 
-func (r notFoundExecutable) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-	return nil, fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
+func (r notFoundExecutable) Execute(ctx context.Context, marshalledInput []byte, callbackUrl *url.URL, opts ...ftype.FlowLoopOption) (mo.Option[string], error) {
+	return mo.None[string](), fmt.Errorf("%w: %s", ErrExecutorNotFound, r.requestedExecutorId)
 }
