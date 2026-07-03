@@ -17,7 +17,7 @@ const (
 	StreamEventTypeDequeued
 )
 
-type StreamEventBatch struct {
+type streamEventBatch struct {
 	Type  StreamEventType
 	Items [][]byte
 }
@@ -32,9 +32,9 @@ type epochChunk struct {
 // Stream establishes the necessary things for the consumer to construct the list of queued items, and have it update in realtime.
 // It is gauranteed to eventually send every change that happens to the queue, in order (unless there is an error).
 // The events channel is a channel of batches of events, each batch is a slice of StreamEvent.
-func (q *FIFO) Stream(ctx context.Context, initialReadBatchSize int) (
+func (q *fifo) Stream(ctx context.Context, initialReadBatchSize int) (
 	initialValues [][]byte,
-	events <-chan StreamEventBatch,
+	events <-chan streamEventBatch,
 	errCh <-chan error,
 	err error,
 ) {
@@ -114,7 +114,7 @@ func (q *FIFO) Stream(ctx context.Context, initialReadBatchSize int) (
 		},
 	)
 
-	eventsCh := make(chan StreamEventBatch)
+	eventsCh := make(chan streamEventBatch)
 	_errCh := make(chan error)
 
 	// start goroutine to listen for changes to the queue
@@ -134,7 +134,7 @@ func (q *FIFO) Stream(ctx context.Context, initialReadBatchSize int) (
 				// enqueue all new items
 				if len(c.enqueued) > 0 {
 					currentKvs = append(currentKvs, c.enqueued...)
-					eventBatch := StreamEventBatch{Type: StreamEventTypeEnqueued, Items: make([][]byte, len(c.enqueued))}
+					eventBatch := streamEventBatch{Type: StreamEventTypeEnqueued, Items: make([][]byte, len(c.enqueued))}
 					for i, kv := range c.enqueued {
 						eventBatch.Items[i] = kv.Value
 					}
@@ -165,10 +165,10 @@ func (q *FIFO) Stream(ctx context.Context, initialReadBatchSize int) (
 
 // applyHeadAdvance removes all items strictly before headKey.
 // If headKey is empty, it dequeues everything.
-func applyHeadAdvance(eventsCh chan<- StreamEventBatch, currentKvs []fdb.KeyValue, headKey fdb.Key) ([]fdb.KeyValue, error) {
+func applyHeadAdvance(eventsCh chan<- streamEventBatch, currentKvs []fdb.KeyValue, headKey fdb.Key) ([]fdb.KeyValue, error) {
 	// if the head key is empty, this signals that the queue is empty
 	if len(headKey) == 0 {
-		eventBatch := StreamEventBatch{Type: StreamEventTypeDequeued, Items: make([][]byte, len(currentKvs))}
+		eventBatch := streamEventBatch{Type: StreamEventTypeDequeued, Items: make([][]byte, len(currentKvs))}
 		for i, kv := range currentKvs {
 			eventBatch.Items[i] = kv.Value
 		}
@@ -188,10 +188,17 @@ func applyHeadAdvance(eventsCh chan<- StreamEventBatch, currentKvs []fdb.KeyValu
 		return currentKvs, fmt.Errorf("stream desync: head key not found")
 	}
 
-	eventBatch := StreamEventBatch{Type: StreamEventTypeDequeued, Items: make([][]byte, len(currentKvs[:headIdx]))}
+	eventBatch := streamEventBatch{Type: StreamEventTypeDequeued, Items: make([][]byte, len(currentKvs[:headIdx]))}
 	for i, kv := range currentKvs[:headIdx] {
 		eventBatch.Items[i] = kv.Value
 	}
 	eventsCh <- eventBatch
 	return currentKvs[headIdx:], nil
+}
+
+func sendStreamErr(errCh chan<- error, err error) {
+	select {
+	case errCh <- err:
+	default:
+	}
 }

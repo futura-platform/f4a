@@ -21,6 +21,33 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// The fixture shares one FoundationDB container across the whole test run,
+// keyed by a fixed name and a fixed host port (4500), because FDB clients
+// connect to the concrete address baked into the cluster file — dynamic
+// per-container ports aren't workable. `go test ./...` compiles one binary
+// per package and runs several concurrently, and each binary is its own
+// testcontainers "session" with its own Ryuk reaper. Ryuk reaps by the
+// session that *created* a container, so when the first package's binary
+// exits, its reaper tears the shared container down while sibling packages
+// are still using it — surfacing as "container is marked for removal" and
+// FDB 1031 timeouts in unrelated tests.
+//
+// A single container that must outlive individual sessions is exactly the
+// case Ryuk should not manage, so we opt this process out of reaping. The
+// container is the only one this repo starts (verified: ephemeraldb.go is the
+// sole testcontainers user), it is reused by name across runs, and
+// testcontainers restarts it if it was stopped — so "leaking" it is the
+// intended persistence of a reused fixture, not a resource leak. An explicit
+// value is respected so a caller can force Ryuk back on if they accept
+// per-binary containers.
+//
+// Set in init() so it lands before testcontainers' cached config.Read().
+func init() {
+	if _, ok := os.LookupEnv("TESTCONTAINERS_RYUK_DISABLED"); !ok {
+		os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	}
+}
+
 type contextProvider interface {
 	Context() context.Context
 }
@@ -35,10 +62,6 @@ func testContext(t testing.TB) context.Context {
 func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 	fdb.MustAPIVersion(constants.FDB_API_VERSION)
 	ctx := testContext(t)
-
-	// Extend Ryuk timeout to allow for debugging sessions
-	// Default is 1m which is too short when paused at breakpoints
-	os.Setenv("TESTCONTAINERS_RYUK_CONNECTION_TIMEOUT", "10m")
 
 	req := testcontainers.ContainerRequest{
 		Name:         "f4a-fdb-test",
@@ -73,6 +96,13 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 		}
 	}
 
+	// "FDBD joined cluster" only means the process started (fdbserver logs go
+	// to trace files, so no stdout line ever indicates availability), and a
+	// fresh database is unavailable until the configure above completes its
+	// recovery. Gate on the status probe or the first transactions race the
+	// recovery and die with 1031 timeouts.
+	require.NoError(t, waitForDatabaseAvailable(ctx, c, 30*time.Second))
+
 	clusterFile, err := setupClusterFile(ctx, c)
 	require.NoError(t, err)
 
@@ -95,6 +125,45 @@ func WithEphemeralDBRoot(t testing.TB, fn func(db dbutil.DbRoot)) {
 		assert.NoError(t, err)
 	})
 	fn(db)
+}
+
+// waitForDatabaseAvailable polls fdbcli until the cluster reports the
+// database as available ("status minimal" prints "The database is available."
+// once recovery completes). Availability is a status property, not a log
+// line — it cannot be expressed as a container WaitingFor strategy on first
+// boot because the database only becomes configurable after startup.
+func waitForDatabaseAvailable(ctx context.Context, c testcontainers.Container, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastDiag string
+	for time.Now().Before(deadline) {
+		exitCode, reader, err := c.Exec(ctx, []string{"fdbcli", "--exec", "status minimal"})
+		// capture output on every path (exec error, non-zero exit, or success)
+		// so a persistent failure — e.g. a container being torn down — is
+		// diagnosable rather than an empty string.
+		var out string
+		if reader != nil {
+			if b, readErr := io.ReadAll(reader); readErr == nil {
+				out = string(b)
+			}
+		}
+		switch {
+		case err != nil:
+			lastDiag = fmt.Sprintf("exec error: %v", err)
+		case exitCode != 0:
+			lastDiag = fmt.Sprintf("exit %d: %s", exitCode, strings.TrimSpace(out))
+		default:
+			lastDiag = strings.TrimSpace(out)
+			if strings.Contains(out, "The database is available") {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("database not available after %s; last status: %s", timeout, lastDiag)
 }
 
 const (
