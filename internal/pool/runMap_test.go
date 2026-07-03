@@ -48,7 +48,7 @@ func neverCallErrorCallback(t testing.TB) func(id task.Id, err error) {
 func TestRunMap(t *testing.T) {
 	t.Run("natural run completion", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())
@@ -86,7 +86,7 @@ func TestRunMap(t *testing.T) {
 
 	t.Run("run, then cancel", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 
 			var executeWg sync.WaitGroup
 			executeWg.Add(1)
@@ -141,7 +141,7 @@ func TestRunMap(t *testing.T) {
 	})
 	t.Run("run, then cancel parent context", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			runCount := 10
@@ -181,7 +181,7 @@ func TestRunMap(t *testing.T) {
 	})
 	t.Run("wait blocks until runs exit after parent cancellation", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			runCount := 3
@@ -230,7 +230,7 @@ func TestRunMap(t *testing.T) {
 			runErrCh := make(chan runError, 1)
 			m := newRunMap(t.Name(), func(id task.Id, err error) {
 				runErrCh <- runError{id: id, err: err}
-			})
+			}, nil)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())
@@ -260,18 +260,18 @@ func TestRunMap(t *testing.T) {
 		})
 	})
 	t.Run("wait on empty map", func(t *testing.T) {
-		m := newRunMap(t.Name(), neverCallErrorCallback(t))
+		m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 		m.wait() // should not panic
 		assert.Equal(t, 0, len(m.runStates))
 	})
 	t.Run("delete non-existent run", func(t *testing.T) {
-		m := newRunMap(t.Name(), neverCallErrorCallback(t))
+		m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 		err := m.cancel(task.NewId())
 		assert.ErrorIs(t, err, ErrRunNotFound)
 	})
 	t.Run("duplicate run", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())
@@ -299,7 +299,7 @@ func TestRunMap(t *testing.T) {
 	})
 	t.Run("remove add remove does not start queued successor", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())
@@ -341,7 +341,7 @@ func TestRunMap(t *testing.T) {
 	})
 	t.Run("remove add remove add only starts final successor once", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-			m := newRunMap(t.Name(), neverCallErrorCallback(t))
+			m := newRunMap(t.Name(), neverCallErrorCallback(t), nil)
 			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
 			assert.NoError(t, err)
 			tkey, err := tasksDirectory.Create(db, task.NewId())

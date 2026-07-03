@@ -101,9 +101,7 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 			t.Fatal("timed out waiting for task execution")
 		}
 
-		// TODO(settlement): re-enable once terminal task deletion is wired —
-		// a settled task must be deleted from the task directory.
-		// waitForTaskDeletion(t, db, taskID)
+		waitForTaskDeletion(t, db, taskID)
 
 		cancel()
 		select {

@@ -14,21 +14,23 @@ import (
 	"github.com/futura-platform/futura/flog"
 )
 
-var deleteTask = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
-	return manager.deleteTask(ctx, runnable)
-}
-
 // run shadows the runMap.run method.
 func (m *taskManager) run(ctx context.Context, r run.RunnableTask) error {
 	return m.runMap.run(ctx, r.Runnable, r.CallbackUrl())
 }
 
-func (m *taskManager) deleteTask(ctx context.Context, runnable run.RunnableTask) error {
+// deleteTask is indirected through a package var so tests can inject
+// failures/races into the retirement path.
+var deleteTask = func(ctx context.Context, m *taskManager, id task.Id) error {
+	return m.deleteTask(ctx, id)
+}
+
+func (m *taskManager) deleteTask(ctx context.Context, id task.Id) error {
 	l := flog.FromContext(ctx)
 	l.LogAttrs(ctx, slog.LevelDebug, "deleting settled task",
-		slog.String("task_id", string(runnable.Id())))
+		slog.String("task_id", string(id)))
 	_, err := m.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
-		taskKey, err := m.taskDirectory.Open(tx, runnable.Id())
+		taskKey, err := m.taskDirectory.Open(tx, id)
 		if err != nil {
 			if errors.Is(err, directory.ErrDirNotExists) {
 				return nil, nil
@@ -49,7 +51,7 @@ func (m *taskManager) deleteTask(ctx context.Context, runnable run.RunnableTask)
 			return nil, nil
 		}
 
-		_, err = m.revisionStore.ApplyNext(tx, runnable.Id(), task.RevisionOperationDelete, func() error {
+		_, err = m.revisionStore.ApplyNext(tx, id, task.RevisionOperationDelete, func() error {
 			if err := m.placer.PlaceTaskIn(tx, servicestate.PlacementLocationNowhere, taskKey); err != nil {
 				return fmt.Errorf("failed to remove task from task queue: %w", err)
 			}

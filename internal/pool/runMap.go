@@ -21,19 +21,27 @@ type runMap struct {
 	mu sync.Mutex
 	wg sync.WaitGroup
 
-	runStates  map[task.Id]*runState
-	runnerId   string
-	onRunError func(task.Id, error)
+	runStates map[task.Id]*runState
+	runnerId  string
+	// onRunError receives the outcome of a run that failed without being
+	// cancelled; onRunSettled receives every run that settled (returned nil)
+	// so the owner can retire the task.
+	onRunError   func(task.Id, error)
+	onRunSettled func(context.Context, task.Id)
 }
 
-func newRunMap(runnerId string, onRunError func(task.Id, error)) *runMap {
+func newRunMap(runnerId string, onRunError func(task.Id, error), onRunSettled func(context.Context, task.Id)) *runMap {
 	if onRunError == nil {
 		onRunError = func(task.Id, error) {}
 	}
+	if onRunSettled == nil {
+		onRunSettled = func(context.Context, task.Id) {}
+	}
 	return &runMap{
-		runStates:  make(map[task.Id]*runState),
-		runnerId:   runnerId,
-		onRunError: onRunError,
+		runStates:    make(map[task.Id]*runState),
+		runnerId:     runnerId,
+		onRunError:   onRunError,
+		onRunSettled: onRunSettled,
 	}
 }
 
@@ -92,6 +100,10 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callbackUrl *url.URL) 
 			if cause := context.Cause(runCtx); cause != nil {
 				span.SetAttributes(attribute.String("cancel_cause", cause.Error()))
 			}
+		} else if err == nil {
+			// settled: the task owes nothing — hand it back to the owner to
+			// be retired
+			m.onRunSettled(runCtx, r.Id())
 		}
 	})
 
