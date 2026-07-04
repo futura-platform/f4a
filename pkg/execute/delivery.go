@@ -133,6 +133,8 @@ func attemptDelivery(ctx context.Context, r deliveryRequest) error {
 		contentType = "application/octet-stream"
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
