@@ -138,14 +138,21 @@ func (q *fifo) Stream(ctx context.Context, initialReadBatchSize int) (
 					for i, kv := range c.enqueued {
 						eventBatch.Items[i] = kv.Value
 					}
-					eventsCh <- eventBatch
+					select {
+					case eventsCh <- eventBatch:
+					case <-ctx.Done():
+						return
+					}
 				}
 
 				// dequeue all removed items
 				var err error
-				currentKvs, err = applyHeadAdvance(eventsCh, currentKvs, c.headKey)
+				currentKvs, err = applyHeadAdvance(ctx, eventsCh, currentKvs, c.headKey)
 				if err != nil {
-					_errCh <- err
+					select {
+					case _errCh <- err:
+					case <-ctx.Done():
+					}
 					return
 				}
 
@@ -154,7 +161,10 @@ func (q *fifo) Stream(ctx context.Context, initialReadBatchSize int) (
 				if !ok {
 					return
 				}
-				_errCh <- err
+				select {
+				case _errCh <- err:
+				case <-ctx.Done():
+				}
 				return
 			}
 		}
@@ -165,14 +175,18 @@ func (q *fifo) Stream(ctx context.Context, initialReadBatchSize int) (
 
 // applyHeadAdvance removes all items strictly before headKey.
 // If headKey is empty, it dequeues everything.
-func applyHeadAdvance(eventsCh chan<- streamEventBatch, currentKvs []fdb.KeyValue, headKey fdb.Key) ([]fdb.KeyValue, error) {
+func applyHeadAdvance(ctx context.Context, eventsCh chan<- streamEventBatch, currentKvs []fdb.KeyValue, headKey fdb.Key) ([]fdb.KeyValue, error) {
 	// if the head key is empty, this signals that the queue is empty
 	if len(headKey) == 0 {
 		eventBatch := streamEventBatch{Type: StreamEventTypeDequeued, Items: make([][]byte, len(currentKvs))}
 		for i, kv := range currentKvs {
 			eventBatch.Items[i] = kv.Value
 		}
-		eventsCh <- eventBatch
+		select {
+		case eventsCh <- eventBatch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		return nil, nil
 	}
 
@@ -192,7 +206,11 @@ func applyHeadAdvance(eventsCh chan<- streamEventBatch, currentKvs []fdb.KeyValu
 	for i, kv := range currentKvs[:headIdx] {
 		eventBatch.Items[i] = kv.Value
 	}
-	eventsCh <- eventBatch
+	select {
+	case eventsCh <- eventBatch:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	return currentKvs[headIdx:], nil
 }
 
