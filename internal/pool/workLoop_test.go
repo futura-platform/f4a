@@ -25,6 +25,7 @@ import (
 	"github.com/futura-platform/futura/ftype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -33,10 +34,10 @@ const (
 )
 
 func testResourceRequest() *taskv1.TaskResourceRequest {
-	return &taskv1.TaskResourceRequest{
-		CpuMillis:   500,
-		MemoryBytes: 1024,
-	}
+	return taskv1.TaskResourceRequest_builder{
+		CpuMillis:   proto.Uint32(500),
+		MemoryBytes: proto.Uint64(1024),
+	}.Build()
 }
 
 func seedTask(

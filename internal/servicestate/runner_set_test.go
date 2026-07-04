@@ -9,13 +9,14 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func testResourceRequest() *taskv1.TaskResourceRequest {
-	return &taskv1.TaskResourceRequest{
-		CpuMillis:   500,
-		MemoryBytes: 1024,
-	}
+	return taskv1.TaskResourceRequest_builder{
+		CpuMillis:   proto.Uint32(500),
+		MemoryBytes: proto.Uint64(1024),
+	}.Build()
 }
 
 func requireRunnerSetUtilization(t testing.TB, db dbutil.DbRoot, runnerSet *RunnerSet, expectedCpuMillis, expectedMemoryBytes int64) {
@@ -62,11 +63,11 @@ func TestRunnerSet(t *testing.T) {
 
 				cpuUtilization, err := runnerSet.utilizationAggregate.get(tx, UtilizationDimensionCPU)
 				require.NoError(t, err)
-				require.Equal(t, int64(resourceRequest.CpuMillis), cpuUtilization)
+				require.Equal(t, int64(resourceRequest.GetCpuMillis()), cpuUtilization)
 
 				memoryUtilization, err := runnerSet.utilizationAggregate.get(tx, UtilizationDimensionMemory)
 				require.NoError(t, err)
-				require.Equal(t, int64(resourceRequest.MemoryBytes), memoryUtilization)
+				require.Equal(t, int64(resourceRequest.GetMemoryBytes()), memoryUtilization)
 
 				return nil, nil
 			})
@@ -81,7 +82,7 @@ func TestRunnerSet(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			requireRunnerSetUtilization(t, db, runnerSet, int64(resourceRequest.CpuMillis), int64(resourceRequest.MemoryBytes))
+			requireRunnerSetUtilization(t, db, runnerSet, int64(resourceRequest.GetCpuMillis()), int64(resourceRequest.GetMemoryBytes()))
 		})
 
 		t.Run("removing tasks should automatically update the utilization aggregate", func(t *testing.T) {

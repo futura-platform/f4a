@@ -99,56 +99,56 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 
 		result := &taskv1.BatchTaskOperationResult{}
 
-		switch operation := op.GetOperation().(type) {
-		case *taskv1.BatchTaskOperation_CreateTask:
-			response, decision, err := c.createTaskRevisioned(ctx, operation.CreateTask)
+		switch op.WhichOperation() {
+		case taskv1.BatchTaskOperation_CreateTask_case:
+			response, decision, err := c.createTaskRevisioned(ctx, op.GetCreateTask())
 			status, message := classifyBatchResult(decision, err)
-			result.Status = status
-			result.ErrorMessage = message
+			result.SetStatus(status)
+			result.SetErrorMessage(message)
 			if err == nil {
-				result.Response = &taskv1.BatchTaskOperationResult_CreateTask{CreateTask: response}
+				result.SetCreateTask(response)
 			}
-		case *taskv1.BatchTaskOperation_UpdateTask:
-			response, decision, err := c.updateTaskRevisioned(ctx, operation.UpdateTask)
+		case taskv1.BatchTaskOperation_UpdateTask_case:
+			response, decision, err := c.updateTaskRevisioned(ctx, op.GetUpdateTask())
 			status, message := classifyBatchResult(decision, err)
-			result.Status = status
-			result.ErrorMessage = message
+			result.SetStatus(status)
+			result.SetErrorMessage(message)
 			if err == nil {
-				result.Response = &taskv1.BatchTaskOperationResult_UpdateTask{UpdateTask: response}
+				result.SetUpdateTask(response)
 			}
-		case *taskv1.BatchTaskOperation_ActivateTask:
-			response, decision, err := c.activateTaskRevisioned(ctx, operation.ActivateTask)
+		case taskv1.BatchTaskOperation_ActivateTask_case:
+			response, decision, err := c.activateTaskRevisioned(ctx, op.GetActivateTask())
 			status, message := classifyBatchResult(decision, err)
-			result.Status = status
-			result.ErrorMessage = message
+			result.SetStatus(status)
+			result.SetErrorMessage(message)
 			if err == nil {
-				result.Response = &taskv1.BatchTaskOperationResult_ActivateTask{ActivateTask: response}
+				result.SetActivateTask(response)
 			}
-		case *taskv1.BatchTaskOperation_SuspendTask:
-			response, decision, err := c.suspendTaskRevisioned(ctx, operation.SuspendTask)
+		case taskv1.BatchTaskOperation_SuspendTask_case:
+			response, decision, err := c.suspendTaskRevisioned(ctx, op.GetSuspendTask())
 			status, message := classifyBatchResult(decision, err)
-			result.Status = status
-			result.ErrorMessage = message
+			result.SetStatus(status)
+			result.SetErrorMessage(message)
 			if err == nil {
-				result.Response = &taskv1.BatchTaskOperationResult_SuspendTask{SuspendTask: response}
+				result.SetSuspendTask(response)
 			}
-		case *taskv1.BatchTaskOperation_DeleteTask:
-			response, decision, err := c.deleteTaskRevisioned(ctx, operation.DeleteTask)
+		case taskv1.BatchTaskOperation_DeleteTask_case:
+			response, decision, err := c.deleteTaskRevisioned(ctx, op.GetDeleteTask())
 			status, message := classifyBatchResult(decision, err)
-			result.Status = status
-			result.ErrorMessage = message
+			result.SetStatus(status)
+			result.SetErrorMessage(message)
 			if err == nil {
-				result.Response = &taskv1.BatchTaskOperationResult_DeleteTask{DeleteTask: response}
+				result.SetDeleteTask(response)
 			}
 		default:
-			result.Status = taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_ERROR
-			result.ErrorMessage = "missing operation payload"
+			result.SetStatus(taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_ERROR)
+			result.SetErrorMessage("missing operation payload")
 		}
 
 		results = append(results, result)
 	}
 
-	return &taskv1.BatchTaskOperationsResponse{Results: results}, nil
+	return taskv1.BatchTaskOperationsResponse_builder{Results: results}.Build(), nil
 }
 
 var (
@@ -189,7 +189,12 @@ func (c *controller) createTaskRevisioned(
 			}
 			tkey.ResourceRequest().Set(t, resourceRequest)
 			tkey.ExecutorId().Set(t, execute.ExecutorId(inner.GetExecutorId()))
-			tkey.CallbackUrl().Set(t, inner.CallbackUrl)
+			var callbackUrl *string
+			if inner.HasCallbackUrl() {
+				v := inner.GetCallbackUrl()
+				callbackUrl = &v
+			}
+			tkey.CallbackUrl().Set(t, callbackUrl)
 			tkey.Input().Set(t, parameters.GetInput())
 
 			return c.taskPlacer.PlaceTaskIn(t, servicestate.PlacementLocationSuspended, tkey)

@@ -19,6 +19,7 @@ import (
 	"github.com/futura-platform/futura/ftype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestTaskIdFromContext_Integration(t *testing.T) {
@@ -40,10 +41,10 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 			taskKey.Input().Set(tx, []byte("input"))
 			taskKey.RunnerId().Set(tx, &runnerID)
 			taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-			taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
-				CpuMillis:   500,
-				MemoryBytes: 1024,
-			})
+			taskKey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+				CpuMillis:   proto.Uint32(500),
+				MemoryBytes: proto.Uint64(1024),
+			}.Build())
 			return nil, nil
 		})
 		require.NoError(t, err)

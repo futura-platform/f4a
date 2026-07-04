@@ -9,6 +9,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestTaskPlacer(t *testing.T) {
@@ -37,10 +38,10 @@ func TestTaskPlacer(t *testing.T) {
 			}
 
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				tkey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
-					CpuMillis:   testingTaskCpuMillis,
-					MemoryBytes: testingTaskMemoryBytes,
-				})
+				tkey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+					CpuMillis:   proto.Uint32(testingTaskCpuMillis),
+					MemoryBytes: proto.Uint64(testingTaskMemoryBytes),
+				}.Build())
 				return nil, nil
 			})
 			if err != nil {

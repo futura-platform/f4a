@@ -15,6 +15,7 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -282,10 +283,10 @@ func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirector
 	require.NoError(t, err)
 
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
-			CpuMillis:   100,
-			MemoryBytes: 128 * 1024 * 1024,
-		})
+		taskKey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+			CpuMillis:   proto.Uint32(100),
+			MemoryBytes: proto.Uint64(128 * 1024 * 1024),
+		}.Build())
 		if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 			return nil, err
 		}

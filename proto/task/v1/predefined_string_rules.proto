@@ -1,0 +1,17 @@
+edition = "2024";
+
+package task.v1;
+
+import "buf/validate/validate.proto";
+
+// Predefined protovalidate rules shared across task.v1 schemas.
+// See https://protovalidate.com/schemas/predefined-rules/
+extend buf.validate.StringRules {
+  // task_id validates a task ID string.
+  // Keep in sync with internal/task.MAX_ID_LENGTH.
+  bool task_id = 50000 [(buf.validate.predefined).cel = {
+    id: "string.task_id"
+    message: "task id must be at most 64 characters"
+    expression: "this.size() <= 64"
+  }];
+}

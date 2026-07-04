@@ -84,8 +84,8 @@ func (r *RunnerSet) Add(tx fdb.Transaction, taskKey task.TaskKey) error {
 	if err != nil {
 		return err
 	}
-	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.CpuMillis))
-	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.MemoryBytes))
+	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.GetCpuMillis()))
+	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.GetMemoryBytes()))
 	r.setTaskOwnership(tx, taskKey.Id(), true)
 	return r.set.Add(tx, taskKey.Id())
 }
@@ -103,8 +103,8 @@ func (r *RunnerSet) Remove(tx fdb.Transaction, taskKey task.TaskKey) error {
 	if err != nil {
 		return err
 	}
-	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.CpuMillis))
-	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.MemoryBytes))
+	r.utilizationAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.GetCpuMillis()))
+	r.utilizationAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.GetMemoryBytes()))
 	r.setTaskOwnership(tx, taskKey.Id(), false)
 	return r.set.Remove(tx, taskKey.Id())
 }

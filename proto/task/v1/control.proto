@@ -1,8 +1,9 @@
-syntax = "proto3";
+edition = "2024";
 
 package task.v1;
 
 import "buf/validate/validate.proto";
+import "task/v1/predefined_string_rules.proto";
 
 message TaskParameters {
   bytes input = 1;
@@ -22,12 +23,9 @@ message TaskResourceRequest {
 message CreateTaskRequest {
   // This value should be randomly generated.
   // This is to reduce hotspots on the database.
-  string task_id = 1 [
-    // this value should be kept in sync with internal/task.MAX_ID_LENGTH
-    (buf.validate.field).string.max_len = 64
-  ];
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
   string executor_id = 2;
-  optional string callback_url = 3;
+  string callback_url = 3;
   TaskParameters parameters = 4;
   TaskResourceRequest resource_request = 5;
   // todo: add the ability to connect this task to a trace
@@ -41,7 +39,7 @@ message ControlServiceCreateTaskRequest {
 }
 
 message UpdateTaskRequest {
-  string task_id = 1;
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
   TaskParameters parameters = 2;
 }
 message UpdateTaskResponse {}
@@ -53,7 +51,7 @@ message ControlServiceUpdateTaskRequest {
 }
 
 message ActivateTaskRequest {
-  string task_id = 1;
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
 }
 message ActivateTaskResponse {}
 
@@ -64,7 +62,7 @@ message ControlServiceActivateTaskRequest {
 }
 
 message SuspendTaskRequest {
-  string task_id = 1;
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
 }
 message SuspendTaskResponse {}
 
@@ -75,7 +73,7 @@ message ControlServiceSuspendTaskRequest {
 }
 
 message DeleteTaskRequest {
-  string task_id = 1;
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
 }
 message DeleteTaskResponse {}
 
