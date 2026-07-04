@@ -547,6 +547,8 @@ func TestCreateTaskProtovalidateRejectsZeroResourceRequest(t *testing.T) {
 			}.Build(),
 		}.Build())
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "cpu_millis")
+		require.Contains(t, err.Error(), "memory_bytes")
 
 		_, exists := readTaskState(t, db, taskID)
 		require.False(t, exists)
