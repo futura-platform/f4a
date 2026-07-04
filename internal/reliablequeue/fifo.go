@@ -9,10 +9,10 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-// FIFO is an implementation of a FIFO queue built on FoundationDB.
+// fifo is an implementation of a FIFO queue built on FoundationDB.
 // It is gauranteed to be contention free on write operations
 // (unless versiontimestamp collisions occur across FDB shards).
-type FIFO struct {
+type fifo struct {
 	db fdb.Database
 	// epochKey changes on Enqueue and Dequeue.
 	// It lives outside the queue subspace so consumers can watch for those events.
@@ -21,8 +21,8 @@ type FIFO struct {
 	subspace directory.DirectorySubspace
 }
 
-func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
-	var fifo *FIFO
+func createOrOpenFIFO(t fdb.Transactor, path []string) (*fifo, error) {
+	var q *fifo
 	_, err := t.Transact(func(tx fdb.Transaction) (any, error) {
 		subspace, err := directory.CreateOrOpen(tx, path, nil)
 		if err != nil {
@@ -35,7 +35,7 @@ func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
 			return nil, err
 		}
 
-		fifo = &FIFO{
+		q = &fifo{
 			db:       tx.GetDatabase(),
 			epochKey: metaSubspace.Pack(tuple.Tuple{"epoch"}),
 			subspace: subspace,
@@ -45,11 +45,11 @@ func CreateOrOpenFIFO(t fdb.Transactor, path []string) (*FIFO, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fifo, nil
+	return q, nil
 }
 
 // Enqueue enqueues an item into the queue, within a given transaction.
-func (q *FIFO) Enqueue(tx fdb.Transaction, item []byte) error {
+func (q *fifo) Enqueue(tx fdb.Transaction, item []byte) error {
 	k, err := q.subspace.PackWithVersionstamp(
 		dbutil.IncompleteGloballyOrderedVersionstamp(),
 	)
@@ -65,7 +65,7 @@ var ErrQueueEmpty = errors.New("queue is empty")
 
 // Dequeue dequeues an item from the queue, within a given transaction.
 // It returns the item and a boolean indicating if the item was successfully dequeued.
-func (q *FIFO) Dequeue(tx fdb.Transaction) ([]byte, error) {
+func (q *fifo) Dequeue(tx fdb.Transaction) ([]byte, error) {
 	begin, end := q.subspace.FDBRangeKeys()
 	kvs, err := tx.GetRange(
 		fdb.KeyRange{Begin: begin, End: end},

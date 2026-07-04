@@ -4,6 +4,8 @@
 // 	protoc        (unknown)
 // source: task/v1/control.proto
 
+//go:build protoopaque
+
 package taskv1
 
 import (
@@ -72,12 +74,10 @@ func (x BatchTaskOperationStatus) Number() protoreflect.EnumNumber {
 }
 
 type TaskParameters struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Input       []byte                 `protobuf:"bytes,1,opt,name=input"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Input []byte                 `protobuf:"bytes,1,opt,name=input"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TaskParameters) Reset() {
@@ -117,19 +117,6 @@ func (x *TaskParameters) SetInput(v []byte) {
 		v = []byte{}
 	}
 	x.xxx_hidden_Input = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
-}
-
-func (x *TaskParameters) HasInput() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *TaskParameters) ClearInput() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Input = nil
 }
 
 type TaskParameters_builder struct {
@@ -142,10 +129,7 @@ func (b0 TaskParameters_builder) Build() *TaskParameters {
 	m0 := &TaskParameters{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Input != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
-		x.xxx_hidden_Input = b.Input
-	}
+	x.xxx_hidden_Input = b.Input
 	return m0
 }
 
@@ -153,8 +137,6 @@ type TaskResourceRequest struct {
 	state                  protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_CpuMillis   uint32                 `protobuf:"varint,1,opt,name=cpu_millis,json=cpuMillis"`
 	xxx_hidden_MemoryBytes uint64                 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -200,66 +182,34 @@ func (x *TaskResourceRequest) GetMemoryBytes() uint64 {
 
 func (x *TaskResourceRequest) SetCpuMillis(v uint32) {
 	x.xxx_hidden_CpuMillis = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *TaskResourceRequest) SetMemoryBytes(v uint64) {
 	x.xxx_hidden_MemoryBytes = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
-}
-
-func (x *TaskResourceRequest) HasCpuMillis() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *TaskResourceRequest) HasMemoryBytes() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
-}
-
-func (x *TaskResourceRequest) ClearCpuMillis() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_CpuMillis = 0
-}
-
-func (x *TaskResourceRequest) ClearMemoryBytes() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
-	x.xxx_hidden_MemoryBytes = 0
 }
 
 type TaskResourceRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// 1000 = 1 CPU core, 500 = half a core, 100 = 0.1 core.
-	CpuMillis *uint32
+	CpuMillis uint32
 	// Memory in bytes.
-	MemoryBytes *uint64
+	MemoryBytes uint64
 }
 
 func (b0 TaskResourceRequest_builder) Build() *TaskResourceRequest {
 	m0 := &TaskResourceRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.CpuMillis != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_CpuMillis = *b.CpuMillis
-	}
-	if b.MemoryBytes != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
-		x.xxx_hidden_MemoryBytes = *b.MemoryBytes
-	}
+	x.xxx_hidden_CpuMillis = b.CpuMillis
+	x.xxx_hidden_MemoryBytes = b.MemoryBytes
 	return m0
 }
 
 type CreateTaskRequest struct {
 	state                      protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_TaskId          *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
-	xxx_hidden_ExecutorId      *string                `protobuf:"bytes,2,opt,name=executor_id,json=executorId"`
+	xxx_hidden_TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	xxx_hidden_ExecutorId      string                 `protobuf:"bytes,2,opt,name=executor_id,json=executorId"`
 	xxx_hidden_CallbackUrl     *string                `protobuf:"bytes,3,opt,name=callback_url,json=callbackUrl"`
 	xxx_hidden_Parameters      *TaskParameters        `protobuf:"bytes,4,opt,name=parameters"`
 	xxx_hidden_ResourceRequest *TaskResourceRequest   `protobuf:"bytes,5,opt,name=resource_request,json=resourceRequest"`
@@ -296,20 +246,14 @@ func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
 
 func (x *CreateTaskRequest) GetTaskId() string {
 	if x != nil {
-		if x.xxx_hidden_TaskId != nil {
-			return *x.xxx_hidden_TaskId
-		}
-		return ""
+		return x.xxx_hidden_TaskId
 	}
 	return ""
 }
 
 func (x *CreateTaskRequest) GetExecutorId() string {
 	if x != nil {
-		if x.xxx_hidden_ExecutorId != nil {
-			return *x.xxx_hidden_ExecutorId
-		}
-		return ""
+		return x.xxx_hidden_ExecutorId
 	}
 	return ""
 }
@@ -339,13 +283,11 @@ func (x *CreateTaskRequest) GetResourceRequest() *TaskResourceRequest {
 }
 
 func (x *CreateTaskRequest) SetTaskId(v string) {
-	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 5)
+	x.xxx_hidden_TaskId = v
 }
 
 func (x *CreateTaskRequest) SetExecutorId(v string) {
-	x.xxx_hidden_ExecutorId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 5)
+	x.xxx_hidden_ExecutorId = v
 }
 
 func (x *CreateTaskRequest) SetCallbackUrl(v string) {
@@ -359,20 +301,6 @@ func (x *CreateTaskRequest) SetParameters(v *TaskParameters) {
 
 func (x *CreateTaskRequest) SetResourceRequest(v *TaskResourceRequest) {
 	x.xxx_hidden_ResourceRequest = v
-}
-
-func (x *CreateTaskRequest) HasTaskId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *CreateTaskRequest) HasExecutorId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
 }
 
 func (x *CreateTaskRequest) HasCallbackUrl() bool {
@@ -396,16 +324,6 @@ func (x *CreateTaskRequest) HasResourceRequest() bool {
 	return x.xxx_hidden_ResourceRequest != nil
 }
 
-func (x *CreateTaskRequest) ClearTaskId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_TaskId = nil
-}
-
-func (x *CreateTaskRequest) ClearExecutorId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
-	x.xxx_hidden_ExecutorId = nil
-}
-
 func (x *CreateTaskRequest) ClearCallbackUrl() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
 	x.xxx_hidden_CallbackUrl = nil
@@ -424,8 +342,8 @@ type CreateTaskRequest_builder struct {
 
 	// This value should be randomly generated.
 	// This is to reduce hotspots on the database.
-	TaskId          *string
-	ExecutorId      *string
+	TaskId          string
+	ExecutorId      string
 	CallbackUrl     *string
 	Parameters      *TaskParameters
 	ResourceRequest *TaskResourceRequest
@@ -435,14 +353,8 @@ func (b0 CreateTaskRequest_builder) Build() *CreateTaskRequest {
 	m0 := &CreateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 5)
-		x.xxx_hidden_TaskId = b.TaskId
-	}
-	if b.ExecutorId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 5)
-		x.xxx_hidden_ExecutorId = b.ExecutorId
-	}
+	x.xxx_hidden_TaskId = b.TaskId
+	x.xxx_hidden_ExecutorId = b.ExecutorId
 	if b.CallbackUrl != nil {
 		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 5)
 		x.xxx_hidden_CallbackUrl = b.CallbackUrl
@@ -496,13 +408,11 @@ func (b0 CreateTaskResponse_builder) Build() *CreateTaskResponse {
 }
 
 type ControlServiceCreateTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Revision    uint64                 `protobuf:"varint,1,opt,name=revision"`
-	xxx_hidden_Request     *CreateTaskRequest     `protobuf:"bytes,2,opt,name=request"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Revision uint64                 `protobuf:"varint,1,opt,name=revision"`
+	xxx_hidden_Request  *CreateTaskRequest     `protobuf:"bytes,2,opt,name=request"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ControlServiceCreateTaskRequest) Reset() {
@@ -546,18 +456,10 @@ func (x *ControlServiceCreateTaskRequest) GetRequest() *CreateTaskRequest {
 
 func (x *ControlServiceCreateTaskRequest) SetRevision(v uint64) {
 	x.xxx_hidden_Revision = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *ControlServiceCreateTaskRequest) SetRequest(v *CreateTaskRequest) {
 	x.xxx_hidden_Request = v
-}
-
-func (x *ControlServiceCreateTaskRequest) HasRevision() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *ControlServiceCreateTaskRequest) HasRequest() bool {
@@ -565,11 +467,6 @@ func (x *ControlServiceCreateTaskRequest) HasRequest() bool {
 		return false
 	}
 	return x.xxx_hidden_Request != nil
-}
-
-func (x *ControlServiceCreateTaskRequest) ClearRevision() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Revision = 0
 }
 
 func (x *ControlServiceCreateTaskRequest) ClearRequest() {
@@ -580,7 +477,7 @@ type ControlServiceCreateTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Monotonically increasing per task. Must be 1 for task creation.
-	Revision *uint64
+	Revision uint64
 	Request  *CreateTaskRequest
 }
 
@@ -588,22 +485,17 @@ func (b0 ControlServiceCreateTaskRequest_builder) Build() *ControlServiceCreateT
 	m0 := &ControlServiceCreateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Revision != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_Revision = *b.Revision
-	}
+	x.xxx_hidden_Revision = b.Revision
 	x.xxx_hidden_Request = b.Request
 	return m0
 }
 
 type UpdateTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_TaskId      *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
-	xxx_hidden_Parameters  *TaskParameters        `protobuf:"bytes,2,opt,name=parameters"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TaskId     string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	xxx_hidden_Parameters *TaskParameters        `protobuf:"bytes,2,opt,name=parameters"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *UpdateTaskRequest) Reset() {
@@ -633,10 +525,7 @@ func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
 
 func (x *UpdateTaskRequest) GetTaskId() string {
 	if x != nil {
-		if x.xxx_hidden_TaskId != nil {
-			return *x.xxx_hidden_TaskId
-		}
-		return ""
+		return x.xxx_hidden_TaskId
 	}
 	return ""
 }
@@ -649,19 +538,11 @@ func (x *UpdateTaskRequest) GetParameters() *TaskParameters {
 }
 
 func (x *UpdateTaskRequest) SetTaskId(v string) {
-	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+	x.xxx_hidden_TaskId = v
 }
 
 func (x *UpdateTaskRequest) SetParameters(v *TaskParameters) {
 	x.xxx_hidden_Parameters = v
-}
-
-func (x *UpdateTaskRequest) HasTaskId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *UpdateTaskRequest) HasParameters() bool {
@@ -671,11 +552,6 @@ func (x *UpdateTaskRequest) HasParameters() bool {
 	return x.xxx_hidden_Parameters != nil
 }
 
-func (x *UpdateTaskRequest) ClearTaskId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_TaskId = nil
-}
-
 func (x *UpdateTaskRequest) ClearParameters() {
 	x.xxx_hidden_Parameters = nil
 }
@@ -683,7 +559,7 @@ func (x *UpdateTaskRequest) ClearParameters() {
 type UpdateTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	TaskId     *string
+	TaskId     string
 	Parameters *TaskParameters
 }
 
@@ -691,10 +567,7 @@ func (b0 UpdateTaskRequest_builder) Build() *UpdateTaskRequest {
 	m0 := &UpdateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_TaskId = b.TaskId
-	}
+	x.xxx_hidden_TaskId = b.TaskId
 	x.xxx_hidden_Parameters = b.Parameters
 	return m0
 }
@@ -743,13 +616,11 @@ func (b0 UpdateTaskResponse_builder) Build() *UpdateTaskResponse {
 }
 
 type ControlServiceUpdateTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Revision    uint64                 `protobuf:"varint,1,opt,name=revision"`
-	xxx_hidden_Request     *UpdateTaskRequest     `protobuf:"bytes,2,opt,name=request"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Revision uint64                 `protobuf:"varint,1,opt,name=revision"`
+	xxx_hidden_Request  *UpdateTaskRequest     `protobuf:"bytes,2,opt,name=request"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ControlServiceUpdateTaskRequest) Reset() {
@@ -793,18 +664,10 @@ func (x *ControlServiceUpdateTaskRequest) GetRequest() *UpdateTaskRequest {
 
 func (x *ControlServiceUpdateTaskRequest) SetRevision(v uint64) {
 	x.xxx_hidden_Revision = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *ControlServiceUpdateTaskRequest) SetRequest(v *UpdateTaskRequest) {
 	x.xxx_hidden_Request = v
-}
-
-func (x *ControlServiceUpdateTaskRequest) HasRevision() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *ControlServiceUpdateTaskRequest) HasRequest() bool {
@@ -812,11 +675,6 @@ func (x *ControlServiceUpdateTaskRequest) HasRequest() bool {
 		return false
 	}
 	return x.xxx_hidden_Request != nil
-}
-
-func (x *ControlServiceUpdateTaskRequest) ClearRevision() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Revision = 0
 }
 
 func (x *ControlServiceUpdateTaskRequest) ClearRequest() {
@@ -827,7 +685,7 @@ type ControlServiceUpdateTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Monotonically increasing per task.
-	Revision *uint64
+	Revision uint64
 	Request  *UpdateTaskRequest
 }
 
@@ -835,21 +693,16 @@ func (b0 ControlServiceUpdateTaskRequest_builder) Build() *ControlServiceUpdateT
 	m0 := &ControlServiceUpdateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Revision != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_Revision = *b.Revision
-	}
+	x.xxx_hidden_Revision = b.Revision
 	x.xxx_hidden_Request = b.Request
 	return m0
 }
 
 type ActivateTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_TaskId      *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ActivateTaskRequest) Reset() {
@@ -879,45 +732,26 @@ func (x *ActivateTaskRequest) ProtoReflect() protoreflect.Message {
 
 func (x *ActivateTaskRequest) GetTaskId() string {
 	if x != nil {
-		if x.xxx_hidden_TaskId != nil {
-			return *x.xxx_hidden_TaskId
-		}
-		return ""
+		return x.xxx_hidden_TaskId
 	}
 	return ""
 }
 
 func (x *ActivateTaskRequest) SetTaskId(v string) {
-	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
-}
-
-func (x *ActivateTaskRequest) HasTaskId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *ActivateTaskRequest) ClearTaskId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_TaskId = nil
+	x.xxx_hidden_TaskId = v
 }
 
 type ActivateTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	TaskId *string
+	TaskId string
 }
 
 func (b0 ActivateTaskRequest_builder) Build() *ActivateTaskRequest {
 	m0 := &ActivateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
-		x.xxx_hidden_TaskId = b.TaskId
-	}
+	x.xxx_hidden_TaskId = b.TaskId
 	return m0
 }
 
@@ -965,13 +799,11 @@ func (b0 ActivateTaskResponse_builder) Build() *ActivateTaskResponse {
 }
 
 type ControlServiceActivateTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Revision    uint64                 `protobuf:"varint,1,opt,name=revision"`
-	xxx_hidden_Request     *ActivateTaskRequest   `protobuf:"bytes,2,opt,name=request"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Revision uint64                 `protobuf:"varint,1,opt,name=revision"`
+	xxx_hidden_Request  *ActivateTaskRequest   `protobuf:"bytes,2,opt,name=request"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ControlServiceActivateTaskRequest) Reset() {
@@ -1015,18 +847,10 @@ func (x *ControlServiceActivateTaskRequest) GetRequest() *ActivateTaskRequest {
 
 func (x *ControlServiceActivateTaskRequest) SetRevision(v uint64) {
 	x.xxx_hidden_Revision = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *ControlServiceActivateTaskRequest) SetRequest(v *ActivateTaskRequest) {
 	x.xxx_hidden_Request = v
-}
-
-func (x *ControlServiceActivateTaskRequest) HasRevision() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *ControlServiceActivateTaskRequest) HasRequest() bool {
@@ -1034,11 +858,6 @@ func (x *ControlServiceActivateTaskRequest) HasRequest() bool {
 		return false
 	}
 	return x.xxx_hidden_Request != nil
-}
-
-func (x *ControlServiceActivateTaskRequest) ClearRevision() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Revision = 0
 }
 
 func (x *ControlServiceActivateTaskRequest) ClearRequest() {
@@ -1049,7 +868,7 @@ type ControlServiceActivateTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Monotonically increasing per task.
-	Revision *uint64
+	Revision uint64
 	Request  *ActivateTaskRequest
 }
 
@@ -1057,21 +876,16 @@ func (b0 ControlServiceActivateTaskRequest_builder) Build() *ControlServiceActiv
 	m0 := &ControlServiceActivateTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Revision != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_Revision = *b.Revision
-	}
+	x.xxx_hidden_Revision = b.Revision
 	x.xxx_hidden_Request = b.Request
 	return m0
 }
 
 type SuspendTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_TaskId      *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SuspendTaskRequest) Reset() {
@@ -1101,45 +915,26 @@ func (x *SuspendTaskRequest) ProtoReflect() protoreflect.Message {
 
 func (x *SuspendTaskRequest) GetTaskId() string {
 	if x != nil {
-		if x.xxx_hidden_TaskId != nil {
-			return *x.xxx_hidden_TaskId
-		}
-		return ""
+		return x.xxx_hidden_TaskId
 	}
 	return ""
 }
 
 func (x *SuspendTaskRequest) SetTaskId(v string) {
-	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
-}
-
-func (x *SuspendTaskRequest) HasTaskId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *SuspendTaskRequest) ClearTaskId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_TaskId = nil
+	x.xxx_hidden_TaskId = v
 }
 
 type SuspendTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	TaskId *string
+	TaskId string
 }
 
 func (b0 SuspendTaskRequest_builder) Build() *SuspendTaskRequest {
 	m0 := &SuspendTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
-		x.xxx_hidden_TaskId = b.TaskId
-	}
+	x.xxx_hidden_TaskId = b.TaskId
 	return m0
 }
 
@@ -1187,13 +982,11 @@ func (b0 SuspendTaskResponse_builder) Build() *SuspendTaskResponse {
 }
 
 type ControlServiceSuspendTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Revision    uint64                 `protobuf:"varint,1,opt,name=revision"`
-	xxx_hidden_Request     *SuspendTaskRequest    `protobuf:"bytes,2,opt,name=request"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Revision uint64                 `protobuf:"varint,1,opt,name=revision"`
+	xxx_hidden_Request  *SuspendTaskRequest    `protobuf:"bytes,2,opt,name=request"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ControlServiceSuspendTaskRequest) Reset() {
@@ -1237,18 +1030,10 @@ func (x *ControlServiceSuspendTaskRequest) GetRequest() *SuspendTaskRequest {
 
 func (x *ControlServiceSuspendTaskRequest) SetRevision(v uint64) {
 	x.xxx_hidden_Revision = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *ControlServiceSuspendTaskRequest) SetRequest(v *SuspendTaskRequest) {
 	x.xxx_hidden_Request = v
-}
-
-func (x *ControlServiceSuspendTaskRequest) HasRevision() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *ControlServiceSuspendTaskRequest) HasRequest() bool {
@@ -1256,11 +1041,6 @@ func (x *ControlServiceSuspendTaskRequest) HasRequest() bool {
 		return false
 	}
 	return x.xxx_hidden_Request != nil
-}
-
-func (x *ControlServiceSuspendTaskRequest) ClearRevision() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Revision = 0
 }
 
 func (x *ControlServiceSuspendTaskRequest) ClearRequest() {
@@ -1271,7 +1051,7 @@ type ControlServiceSuspendTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Monotonically increasing per task.
-	Revision *uint64
+	Revision uint64
 	Request  *SuspendTaskRequest
 }
 
@@ -1279,21 +1059,16 @@ func (b0 ControlServiceSuspendTaskRequest_builder) Build() *ControlServiceSuspen
 	m0 := &ControlServiceSuspendTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Revision != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_Revision = *b.Revision
-	}
+	x.xxx_hidden_Revision = b.Revision
 	x.xxx_hidden_Request = b.Request
 	return m0
 }
 
 type DeleteTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_TaskId      *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DeleteTaskRequest) Reset() {
@@ -1323,45 +1098,26 @@ func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
 
 func (x *DeleteTaskRequest) GetTaskId() string {
 	if x != nil {
-		if x.xxx_hidden_TaskId != nil {
-			return *x.xxx_hidden_TaskId
-		}
-		return ""
+		return x.xxx_hidden_TaskId
 	}
 	return ""
 }
 
 func (x *DeleteTaskRequest) SetTaskId(v string) {
-	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
-}
-
-func (x *DeleteTaskRequest) HasTaskId() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *DeleteTaskRequest) ClearTaskId() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_TaskId = nil
+	x.xxx_hidden_TaskId = v
 }
 
 type DeleteTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	TaskId *string
+	TaskId string
 }
 
 func (b0 DeleteTaskRequest_builder) Build() *DeleteTaskRequest {
 	m0 := &DeleteTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
-		x.xxx_hidden_TaskId = b.TaskId
-	}
+	x.xxx_hidden_TaskId = b.TaskId
 	return m0
 }
 
@@ -1409,13 +1165,11 @@ func (b0 DeleteTaskResponse_builder) Build() *DeleteTaskResponse {
 }
 
 type ControlServiceDeleteTaskRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Revision    uint64                 `protobuf:"varint,1,opt,name=revision"`
-	xxx_hidden_Request     *DeleteTaskRequest     `protobuf:"bytes,2,opt,name=request"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Revision uint64                 `protobuf:"varint,1,opt,name=revision"`
+	xxx_hidden_Request  *DeleteTaskRequest     `protobuf:"bytes,2,opt,name=request"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ControlServiceDeleteTaskRequest) Reset() {
@@ -1459,18 +1213,10 @@ func (x *ControlServiceDeleteTaskRequest) GetRequest() *DeleteTaskRequest {
 
 func (x *ControlServiceDeleteTaskRequest) SetRevision(v uint64) {
 	x.xxx_hidden_Revision = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
 }
 
 func (x *ControlServiceDeleteTaskRequest) SetRequest(v *DeleteTaskRequest) {
 	x.xxx_hidden_Request = v
-}
-
-func (x *ControlServiceDeleteTaskRequest) HasRevision() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
 func (x *ControlServiceDeleteTaskRequest) HasRequest() bool {
@@ -1478,11 +1224,6 @@ func (x *ControlServiceDeleteTaskRequest) HasRequest() bool {
 		return false
 	}
 	return x.xxx_hidden_Request != nil
-}
-
-func (x *ControlServiceDeleteTaskRequest) ClearRevision() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Revision = 0
 }
 
 func (x *ControlServiceDeleteTaskRequest) ClearRequest() {
@@ -1493,7 +1234,7 @@ type ControlServiceDeleteTaskRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Monotonically increasing per task.
-	Revision *uint64
+	Revision uint64
 	Request  *DeleteTaskRequest
 }
 
@@ -1501,10 +1242,7 @@ func (b0 ControlServiceDeleteTaskRequest_builder) Build() *ControlServiceDeleteT
 	m0 := &ControlServiceDeleteTaskRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Revision != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
-		x.xxx_hidden_Revision = *b.Revision
-	}
+	x.xxx_hidden_Revision = b.Revision
 	x.xxx_hidden_Request = b.Request
 	return m0
 }
@@ -1874,10 +1612,8 @@ func (*batchTaskOperation_DeleteTask) isBatchTaskOperation_Operation() {}
 type BatchTaskOperationResult struct {
 	state                   protoimpl.MessageState              `protogen:"opaque.v1"`
 	xxx_hidden_Status       BatchTaskOperationStatus            `protobuf:"varint,1,opt,name=status,enum=task.v1.BatchTaskOperationStatus"`
-	xxx_hidden_ErrorMessage *string                             `protobuf:"bytes,2,opt,name=error_message,json=errorMessage"`
+	xxx_hidden_ErrorMessage string                              `protobuf:"bytes,2,opt,name=error_message,json=errorMessage"`
 	xxx_hidden_Response     isBatchTaskOperationResult_Response `protobuf_oneof:"response"`
-	XXX_raceDetectHookData  protoimpl.RaceDetectHookData
-	XXX_presence            [1]uint32
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -1909,19 +1645,14 @@ func (x *BatchTaskOperationResult) ProtoReflect() protoreflect.Message {
 
 func (x *BatchTaskOperationResult) GetStatus() BatchTaskOperationStatus {
 	if x != nil {
-		if protoimpl.X.Present(&(x.XXX_presence[0]), 0) {
-			return x.xxx_hidden_Status
-		}
+		return x.xxx_hidden_Status
 	}
 	return BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_UNSPECIFIED
 }
 
 func (x *BatchTaskOperationResult) GetErrorMessage() string {
 	if x != nil {
-		if x.xxx_hidden_ErrorMessage != nil {
-			return *x.xxx_hidden_ErrorMessage
-		}
-		return ""
+		return x.xxx_hidden_ErrorMessage
 	}
 	return ""
 }
@@ -1973,12 +1704,10 @@ func (x *BatchTaskOperationResult) GetDeleteTask() *DeleteTaskResponse {
 
 func (x *BatchTaskOperationResult) SetStatus(v BatchTaskOperationStatus) {
 	x.xxx_hidden_Status = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
 }
 
 func (x *BatchTaskOperationResult) SetErrorMessage(v string) {
-	x.xxx_hidden_ErrorMessage = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+	x.xxx_hidden_ErrorMessage = v
 }
 
 func (x *BatchTaskOperationResult) SetCreateTask(v *CreateTaskResponse) {
@@ -2019,20 +1748,6 @@ func (x *BatchTaskOperationResult) SetDeleteTask(v *DeleteTaskResponse) {
 		return
 	}
 	x.xxx_hidden_Response = &batchTaskOperationResult_DeleteTask{v}
-}
-
-func (x *BatchTaskOperationResult) HasStatus() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
-}
-
-func (x *BatchTaskOperationResult) HasErrorMessage() bool {
-	if x == nil {
-		return false
-	}
-	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
 }
 
 func (x *BatchTaskOperationResult) HasResponse() bool {
@@ -2080,16 +1795,6 @@ func (x *BatchTaskOperationResult) HasDeleteTask() bool {
 	}
 	_, ok := x.xxx_hidden_Response.(*batchTaskOperationResult_DeleteTask)
 	return ok
-}
-
-func (x *BatchTaskOperationResult) ClearStatus() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
-	x.xxx_hidden_Status = BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_UNSPECIFIED
-}
-
-func (x *BatchTaskOperationResult) ClearErrorMessage() {
-	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
-	x.xxx_hidden_ErrorMessage = nil
 }
 
 func (x *BatchTaskOperationResult) ClearResponse() {
@@ -2156,8 +1861,8 @@ func (x *BatchTaskOperationResult) WhichResponse() case_BatchTaskOperationResult
 type BatchTaskOperationResult_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	Status       *BatchTaskOperationStatus
-	ErrorMessage *string
+	Status       BatchTaskOperationStatus
+	ErrorMessage string
 	// Fields of oneof xxx_hidden_Response:
 	CreateTask   *CreateTaskResponse
 	UpdateTask   *UpdateTaskResponse
@@ -2171,14 +1876,8 @@ func (b0 BatchTaskOperationResult_builder) Build() *BatchTaskOperationResult {
 	m0 := &BatchTaskOperationResult{}
 	b, x := &b0, m0
 	_, _ = b, x
-	if b.Status != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
-		x.xxx_hidden_Status = *b.Status
-	}
-	if b.ErrorMessage != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
-		x.xxx_hidden_ErrorMessage = b.ErrorMessage
-	}
+	x.xxx_hidden_Status = b.Status
+	x.xxx_hidden_ErrorMessage = b.ErrorMessage
 	if b.CreateTask != nil {
 		x.xxx_hidden_Response = &batchTaskOperationResult_CreateTask{b.CreateTask}
 	}
@@ -2306,20 +2005,21 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"\x15task/v1/control.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\x1a%task/v1/predefined_string_rules.proto\"&\n" +
 	"\x0eTaskParameters\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\fR\x05input\"s\n" +
-	"\x13TaskResourceRequest\x12&\n" +
+	"\x05input\x18\x01 \x01(\fR\x05input\"h\n" +
+	"\x13TaskResourceRequest\x12\x1d\n" +
 	"\n" +
-	"cpu_millis\x18\x01 \x01(\rB\a\xbaH\x04*\x02(\x01R\tcpuMillis\x124\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04B\x11\xbaH\x0e2\f\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7f(\x01R\vmemoryBytes\"\x85\x02\n" +
+	"cpu_millis\x18\x01 \x01(\rR\tcpuMillis\x122\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04B\x0f\xbaH\f2\n" +
+	"\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\vmemoryBytes\"\x84\x02\n" +
 	"\x11CreateTaskRequest\x12\"\n" +
 	"\atask_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x80\xb5\x18\x01R\x06taskId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
-	"executorId\x12!\n" +
-	"\fcallback_url\x18\x03 \x01(\tR\vcallbackUrl\x127\n" +
+	"executorId\x12(\n" +
+	"\fcallback_url\x18\x03 \x01(\tB\x05\xaa\x01\x02\b\x01R\vcallbackUrl\x127\n" +
 	"\n" +
 	"parameters\x18\x04 \x01(\v2\x17.task.v1.TaskParametersR\n" +
-	"parameters\x12O\n" +
-	"\x10resource_request\x18\x05 \x01(\v2\x1c.task.v1.TaskResourceRequestB\x06\xbaH\x03\xc8\x01\x01R\x0fresourceRequest\"\x14\n" +
+	"parameters\x12G\n" +
+	"\x10resource_request\x18\x05 \x01(\v2\x1c.task.v1.TaskResourceRequestR\x0fresourceRequest\"\x14\n" +
 	"\x12CreateTaskResponse\"s\n" +
 	"\x1fControlServiceCreateTaskRequest\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +
@@ -2395,8 +2095,8 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\vSuspendTask\x12).task.v1.ControlServiceSuspendTaskRequest\x1a\x1c.task.v1.SuspendTaskResponse\x12S\n" +
 	"\n" +
 	"DeleteTask\x12(.task.v1.ControlServiceDeleteTaskRequest\x1a\x1b.task.v1.DeleteTaskResponse\x12`\n" +
-	"\x13BatchTaskOperations\x12#.task.v1.BatchTaskOperationsRequest\x1a$.task.v1.BatchTaskOperationsResponseB\x94\x01\n" +
-	"\vcom.task.v1B\fControlProtoP\x01Z:github.com/futura-platform/f4a/internal/gen/task/v1;taskv1\xa2\x02\x03TXX\xaa\x02\aTask.V1\xca\x02\aTask\\V1\xe2\x02\x13Task\\V1\\GPBMetadata\xea\x02\bTask::V1b\beditionsp\xe9\a"
+	"\x13BatchTaskOperations\x12#.task.v1.BatchTaskOperationsRequest\x1a$.task.v1.BatchTaskOperationsResponseB\x9e\x01\n" +
+	"\vcom.task.v1B\fControlProtoP\x01Z:github.com/futura-platform/f4a/internal/gen/task/v1;taskv1\xa2\x02\x03TXX\xaa\x02\aTask.V1\xca\x02\aTask\\V1\xe2\x02\x13Task\\V1\\GPBMetadata\xea\x02\bTask::V1\x92\x03\a\xd2>\x02\x10\x02\b\x02b\beditionsp\xe9\az!google/protobuf/go_features.proto"
 
 var file_task_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_task_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 21)

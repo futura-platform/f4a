@@ -14,9 +14,9 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-// Set is a log-structured set built on FoundationDB.
+// set is a log-structured set built on FoundationDB.
 // It is gauranteed to be contention free on write operations
-type Set struct {
+type set struct {
 	db dbutil.DbRoot
 
 	// this key should be incremented for every new log entry
@@ -70,12 +70,12 @@ func constructWith[T fdb.ReadTransactor](
 	path []string,
 	directoryConstructor func(tr T, path []string) (directory.DirectorySubspace, error),
 	clearFunc func(fdb.Transaction) (bool, error),
-) (*Set, error) {
+) (*set, error) {
 	dirs, err := newSetDirectories(tr, path, directoryConstructor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
-	s := &Set{
+	s := &set{
 		db:             db,
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
 		setDirectories: dirs,
@@ -85,8 +85,8 @@ func constructWith[T fdb.ReadTransactor](
 	return s, nil
 }
 
-func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
-	var set *Set
+func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*set, error) {
+	var set *set
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		var err error
 		set, err = constructWith(
@@ -105,8 +105,8 @@ func Create(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
 	return set, err
 }
 
-func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, error) {
-	var set *Set
+func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*set, error) {
+	var set *set
 	_, err := tr.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
 		var err error
 		set, err = constructWith(
@@ -125,8 +125,8 @@ func Open(tr fdb.ReadTransactor, db dbutil.DbRoot, path []string) (*Set, error) 
 	return set, err
 }
 
-func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, error) {
-	var set *Set
+func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*set, error) {
+	var set *set
 	_, err := tr.Transact(func(t fdb.Transaction) (any, error) {
 		var err error
 		set, err = constructWith(
@@ -145,15 +145,15 @@ func CreateOrOpen(tr fdb.Transactor, db dbutil.DbRoot, path []string) (*Set, err
 	return set, err
 }
 
-func (s *Set) RunCompactor() (cancel func()) {
+func (s *set) RunCompactor() (cancel func()) {
 	return s.compactor.Run()
 }
 
-func (s *Set) releaseRuntime() {
+func (s *set) releaseRuntime() {
 	s.compactor.release()
 }
 
-func (s *Set) Items(ctx context.Context, db fdb.Database) (
+func (s *set) Items(ctx context.Context, db fdb.Database) (
 	items mapset.Set[string],
 	tail fdb.KeyConvertible,
 	err error,
@@ -166,7 +166,7 @@ func (s *Set) Items(ctx context.Context, db fdb.Database) (
 	return items, tail, activeLease.BestEffortRelease(ctx, backoff.WithMaxElapsedTime(10*time.Second))
 }
 
-func (s *Set) leasedItems(ctx context.Context, db fdb.Database) (
+func (s *set) leasedItems(ctx context.Context, db fdb.Database) (
 	items mapset.Set[string],
 	tail fdb.KeyConvertible,
 	compactionLease *reliablelock.ActiveLease,
@@ -213,7 +213,7 @@ func (s *Set) leasedItems(ctx context.Context, db fdb.Database) (
 
 // Clear stops background runtime and removes this set directory recursively.
 // It is idempotent.
-func (s *Set) Clear(tx fdb.Transaction) error {
+func (s *set) Clear(tx fdb.Transaction) error {
 	s.releaseRuntime()
 	_, err := s.clearFunc(tx)
 	if err != nil {

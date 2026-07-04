@@ -2,37 +2,39 @@ package testutil
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
 type MockExecutor struct {
-	Execute func(
-		inContainer executiontype.TransactionalContainer,
+	Settle func(
+		containers execute.SettlementContainers,
 		ctx context.Context,
 		marshalledInput []byte,
+		callbackUrl *url.URL,
 		opts ...ftype.FlowLoopOption,
-	) ([]byte, error)
+	) error
 }
 
 var _ execute.Executor = &MockExecutor{}
 
 type mockExecutable struct {
-	container executiontype.TransactionalContainer
-	execute   func(
-		inContainer executiontype.TransactionalContainer,
+	containers execute.SettlementContainers
+	settle     func(
+		containers execute.SettlementContainers,
 		ctx context.Context,
 		marshalledInput []byte,
+		callbackUrl *url.URL,
 		opts ...ftype.FlowLoopOption,
-	) ([]byte, error)
+	) error
 }
 
-func (e *MockExecutor) ExecuteFrom(c executiontype.TransactionalContainer) execute.Executable {
-	return &mockExecutable{container: c, execute: e.Execute}
+func (e *MockExecutor) ExecuteFrom(c execute.SettlementContainers) execute.Executable {
+	return &mockExecutable{containers: c, settle: e.Settle}
 }
 
-func (m *mockExecutable) Execute(ctx context.Context, marshalledInput []byte, opts ...ftype.FlowLoopOption) ([]byte, error) {
-	return m.execute(m.container, ctx, marshalledInput, opts...)
+func (m *mockExecutable) Settle(ctx context.Context, marshalledInput []byte, callbackUrl *url.URL, opts ...ftype.FlowLoopOption) error {
+	return m.settle(m.containers, ctx, marshalledInput, callbackUrl, opts...)
 }

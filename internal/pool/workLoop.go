@@ -2,10 +2,12 @@ package pool
 
 import (
 	"context"
+	"time"
+
 	"errors"
 	"fmt"
+	"github.com/cenkalti/backoff/v4"
 	"log/slog"
-	"net/http"
 	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -35,7 +37,6 @@ type taskManager struct {
 	taskSet       *servicestate.RunnerSet
 	taskDirectory task.TasksDirectory
 	revisionStore task.RevisionStore
-	c             *http.Client
 }
 
 var (
@@ -77,20 +78,33 @@ func RunWorkLoop(
 	ctx, cancel := context.WithCancel(ctx)
 	var runErrOnce sync.Once
 	runErrCh := make(chan error, 1)
+	reportRunError := func(id task.Id, err error) {
+		runErrOnce.Do(func() {
+			runErrCh <- fmt.Errorf("%w: %s: %w", ErrRunFailed, id, err)
+		})
+	}
 	taskManager := &taskManager{
-		runMap: newRunMap(runnerId, func(id task.Id, err error) {
-			runErrOnce.Do(func() {
-				runErrCh <- fmt.Errorf("%w: %s: %w", ErrRunFailed, id, err)
-			})
-		}),
 		db:            db,
 		runnerId:      runnerId,
 		placer:        placer,
 		taskSet:       taskSet,
 		taskDirectory: taskDirectory,
 		revisionStore: revisionStore,
-		c:             http.DefaultClient,
 	}
+	taskManager.runMap = newRunMap(runnerId, reportRunError,
+		func(runCtx context.Context, id task.Id) {
+			// Retire the settled task. Deletion targets our own storage, so
+			// transient failures are retried briefly; a persistent failure
+			// escalates like a run failure — the restarted loop re-runs the
+			// task, settlement replays from its durable state (no re-delivery),
+			// and the delete is retried.
+			err := util.WithBestEffort(runCtx, func() error {
+				return deleteTask(runCtx, taskManager, id)
+			}, backoff.WithMaxElapsedTime(time.Minute))
+			if err != nil {
+				reportRunError(id, fmt.Errorf("failed to delete settled task: %w", err))
+			}
+		})
 	defer func() {
 		cancel()
 		taskManager.wait()

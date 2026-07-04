@@ -17,6 +17,7 @@ import (
 	"github.com/futura-platform/f4a/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -145,10 +146,10 @@ func TestRunWithLeaderElection(t *testing.T) {
 
 			// place a task in the pending set
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-				taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
-					CpuMillis:   50,
-					MemoryBytes: 64 * 1024 * 1024,
-				})
+				taskKey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+					CpuMillis:   proto.Uint32(50),
+					MemoryBytes: proto.Uint64(64 * 1024 * 1024),
+				}.Build())
 				if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 					return nil, err
 				}

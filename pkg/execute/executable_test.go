@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"testing"
 
+	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type trackingMarshaller[A, R any] struct {
@@ -30,8 +35,7 @@ func (m *trackingMarshaller[A, R]) MarshalOutput(data R) ([]byte, error) {
 	return m.marshal(data)
 }
 
-func TestExecutableExecuteSuccess(t *testing.T) {
-	container := executiontype.NewInMemoryContainer()
+func TestExecutableSettleSuccess(t *testing.T) {
 	var received string
 
 	marshaller := &trackingMarshaller[string, string]{
@@ -48,18 +52,31 @@ func TestExecutableExecuteSuccess(t *testing.T) {
 		return input + "-out", nil
 	}, marshaller)
 
-	executable := executor.ExecuteFrom(container)
-	output, err := executable.Execute(context.Background(), []byte("input"))
+	capturedCh := make(chan []byte, 1)
+	server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		capturedCh <- body
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	callbackURL, err := url.Parse(server.URL + "/callback")
+	require.NoError(t, err)
+
+	executable := executor.ExecuteFrom(execute.SettlementContainers{
+		User:      executiontype.NewInMemoryContainer(),
+		Discharge: executiontype.NewInMemoryContainer(),
+	})
+	err = executable.Settle(context.Background(), []byte("input"), callbackURL)
 
 	assert.NoError(t, err)
-	assert.Equal(t, "input-out", string(output))
 	assert.Equal(t, "input", received)
 	assert.Equal(t, 1, marshaller.unmarshalCalls)
 	assert.Equal(t, 1, marshaller.marshalCalls)
+	assert.Equal(t, []byte("input-out"), <-capturedCh)
 }
 
-func TestExecutableExecuteUnmarshalError(t *testing.T) {
-	container := executiontype.NewInMemoryContainer()
+func TestExecutableSettleUnmarshalError(t *testing.T) {
 	sentinel := errors.New("unmarshal failure")
 	called := false
 
@@ -77,8 +94,11 @@ func TestExecutableExecuteUnmarshalError(t *testing.T) {
 		return "", nil
 	}, marshaller)
 
-	executable := executor.ExecuteFrom(container)
-	_, err := executable.Execute(context.Background(), []byte("input"))
+	executable := executor.ExecuteFrom(execute.SettlementContainers{
+		User:      executiontype.NewInMemoryContainer(),
+		Discharge: executiontype.NewInMemoryContainer(),
+	})
+	err := executable.Settle(context.Background(), []byte("input"), nil)
 
 	assert.ErrorIs(t, err, sentinel)
 	assert.False(t, called)
@@ -86,8 +106,7 @@ func TestExecutableExecuteUnmarshalError(t *testing.T) {
 	assert.Equal(t, 0, marshaller.marshalCalls)
 }
 
-func TestExecutableExecuteFlowError(t *testing.T) {
-	container := executiontype.NewInMemoryContainer()
+func TestExecutableSettleFlowError(t *testing.T) {
 	sentinel := errors.New("flow failure")
 
 	marshaller := &trackingMarshaller[string, string]{
@@ -103,8 +122,11 @@ func TestExecutableExecuteFlowError(t *testing.T) {
 		return "", fmt.Errorf("%w: %w", ftype.ErrCancelFlow, sentinel)
 	}, marshaller)
 
-	executable := executor.ExecuteFrom(container)
-	_, err := executable.Execute(t.Context(), []byte("input"))
+	executable := executor.ExecuteFrom(execute.SettlementContainers{
+		User:      executiontype.NewInMemoryContainer(),
+		Discharge: executiontype.NewInMemoryContainer(),
+	})
+	err := executable.Settle(t.Context(), []byte("input"), nil)
 
 	assert.ErrorIs(t, err, sentinel)
 	assert.Equal(t, 1, marshaller.unmarshalCalls)

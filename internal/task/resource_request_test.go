@@ -11,10 +11,10 @@ import (
 
 func TestResourceRequestSerializerRoundTrip(t *testing.T) {
 	serializer := resourceRequestSerializer{}
-	original := &taskv1.TaskResourceRequest{
-		CpuMillis:   500,
-		MemoryBytes: 1024,
-	}
+	original := taskv1.TaskResourceRequest_builder{
+		CpuMillis:   proto.Uint32(500),
+		MemoryBytes: proto.Uint64(1024),
+	}.Build()
 
 	marshalled := serializer.Marshal(original)
 	decoded, err := serializer.Unmarshal(marshalled)

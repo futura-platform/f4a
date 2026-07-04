@@ -19,24 +19,22 @@ type ExecutionContainer struct {
 
 var _ executiontype.TransactionalContainer = &ExecutionContainer{}
 
-func NewContainer(id task.Id, db dbutil.DbRoot) *ExecutionContainer {
-	tasks, err := task.CreateOrOpenTasksDirectory(db)
+// OpenTaskContainer opens a task container for the given task id and namespace.
+// the namespace is used to isolate different sub execution containers, all scoped within the same task.
+func OpenTaskContainer(
+	db dbutil.DbRoot,
+	tkey task.TaskKey,
+	namespace string,
+) *ExecutionContainer {
+	memoTable, err := tkey.MemoTable(db, namespace)
 	if err != nil {
 		panic(err)
 	}
-	tkey, err := tasks.Open(db, id)
+	callOrder, err := tkey.CallOrder(db, namespace)
 	if err != nil {
 		panic(err)
 	}
-	memoTable, err := tkey.MemoTable(db)
-	if err != nil {
-		panic(err)
-	}
-	callOrder, err := tkey.CallOrder(db)
-	if err != nil {
-		panic(err)
-	}
-	durableObjects, err := tkey.DurableObjectSpace(db)
+	durableObjects, err := tkey.DurableObjectSpace(db, namespace)
 	if err != nil {
 		panic(err)
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/futura-platform/f4a/internal/fdbexec"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -108,9 +107,8 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 					Runnable: NewRunnable(
 						executor,
 						executorId,
-						db.Database,
+						db,
 						taskKey,
-						fdbexec.NewContainer(id, db),
 					),
 					callbackUrl: callbackUrl,
 				},

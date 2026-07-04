@@ -23,7 +23,11 @@ func createTaskAndContainer(t *testing.T, db dbutil.DbRoot, id task.Id) *fdbexec
 	require.NoError(t, err)
 	_, err = tasks.Create(db, id)
 	require.NoError(t, err)
-	return fdbexec.NewContainer(id, db)
+
+	tkey, err := tasks.Open(db, id)
+	require.NoError(t, err)
+
+	return fdbexec.OpenTaskContainer(db, tkey, "user")
 }
 
 func TestExecutionContainer(t *testing.T) {

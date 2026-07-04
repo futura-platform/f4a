@@ -136,12 +136,12 @@ func (p *TaskPlacer) handleAggregateUpdate(
 		return err
 	}
 	if oldAggregate != nil {
-		oldAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.CpuMillis))
-		oldAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.MemoryBytes))
+		oldAggregate.add(tx, UtilizationDimensionCPU, -int64(resourceRequest.GetCpuMillis()))
+		oldAggregate.add(tx, UtilizationDimensionMemory, -int64(resourceRequest.GetMemoryBytes()))
 	}
 	if newAggregate != nil {
-		newAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.CpuMillis))
-		newAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.MemoryBytes))
+		newAggregate.add(tx, UtilizationDimensionCPU, int64(resourceRequest.GetCpuMillis()))
+		newAggregate.add(tx, UtilizationDimensionMemory, int64(resourceRequest.GetMemoryBytes()))
 	}
 
 	return nil

@@ -289,7 +289,7 @@ func FuzzFIFOStreamConcurrentReadersWriters(f *testing.F) {
 			type readerState struct {
 				mu     sync.Mutex
 				local  [][]byte
-				events <-chan StreamEventBatch
+				events <-chan streamEventBatch
 				errCh  <-chan error
 			}
 
@@ -584,7 +584,7 @@ func FuzzFIFOStreamConcurrentReadersWriters(f *testing.F) {
 	})
 }
 
-func applyStreamBatch(current [][]byte, batch StreamEventBatch) ([][]byte, error) {
+func applyStreamBatch(current [][]byte, batch streamEventBatch) ([][]byte, error) {
 	switch batch.Type {
 	case StreamEventTypeEnqueued:
 		if len(batch.Items) == 0 {
@@ -610,7 +610,7 @@ func applyStreamBatch(current [][]byte, batch StreamEventBatch) ([][]byte, error
 func awaitQueueState(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan StreamEventBatch,
+	events <-chan streamEventBatch,
 	errCh <-chan error,
 	local *[][]byte,
 	expected [][]byte,
@@ -661,9 +661,9 @@ func awaitQueueState(
 func readNextBatch(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan StreamEventBatch,
+	events <-chan streamEventBatch,
 	errCh <-chan error,
-) StreamEventBatch {
+) streamEventBatch {
 	t.Helper()
 	select {
 	case batch, ok := <-events:
@@ -679,13 +679,13 @@ func readNextBatch(
 	case <-ctx.Done():
 		t.Fatalf("timeout waiting for batch: %v", ctx.Err())
 	}
-	return StreamEventBatch{}
+	return streamEventBatch{}
 }
 
 func drainOptionalEmptyDequeue(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan StreamEventBatch,
+	events <-chan streamEventBatch,
 	errCh <-chan error,
 ) {
 	t.Helper()
@@ -711,7 +711,7 @@ func drainOptionalEmptyDequeue(
 func assertNoExtraBatch(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan StreamEventBatch,
+	events <-chan streamEventBatch,
 	errCh <-chan error,
 ) {
 	t.Helper()
@@ -753,7 +753,7 @@ func queuesEqual(a, b [][]byte) bool {
 	return true
 }
 
-func readQueueValues(t testing.TB, db dbutil.DbRoot, queue *FIFO) [][]byte {
+func readQueueValues(t testing.TB, db dbutil.DbRoot, queue *fifo) [][]byte {
 	t.Helper()
 	var kvs []fdb.KeyValue
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -774,13 +774,13 @@ func readQueueValues(t testing.TB, db dbutil.DbRoot, queue *FIFO) [][]byte {
 	return values
 }
 
-func requireQueueMatchesDB(t *testing.T, db dbutil.DbRoot, queue *FIFO, expected [][]byte) {
+func requireQueueMatchesDB(t *testing.T, db dbutil.DbRoot, queue *fifo, expected [][]byte) {
 	t.Helper()
 	actual := readQueueValues(t, db, queue)
 	require.True(t, queuesEqual(expected, actual), "queue mismatch: expected %q got %q", expected, actual)
 }
 
-func dequeueAllowEmpty(t testing.TB, db dbutil.DbRoot, queue *FIFO) ([]byte, error) {
+func dequeueAllowEmpty(t testing.TB, db dbutil.DbRoot, queue *fifo) ([]byte, error) {
 	t.Helper()
 	var item []byte
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
@@ -791,7 +791,7 @@ func dequeueAllowEmpty(t testing.TB, db dbutil.DbRoot, queue *FIFO) ([]byte, err
 	return item, err
 }
 
-func enqueueBatch(t testing.TB, db dbutil.DbRoot, queue *FIFO, items [][]byte) {
+func enqueueBatch(t testing.TB, db dbutil.DbRoot, queue *fifo, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -804,7 +804,7 @@ func enqueueBatch(t testing.TB, db dbutil.DbRoot, queue *FIFO, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func dequeueBatch(t testing.TB, db dbutil.DbRoot, queue *FIFO, count int) ([][]byte, error) {
+func dequeueBatch(t testing.TB, db dbutil.DbRoot, queue *fifo, count int) ([][]byte, error) {
 	t.Helper()
 	items := make([][]byte, 0, count)
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {

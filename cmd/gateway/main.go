@@ -50,6 +50,11 @@ func run() error {
 	}
 	defer releaseController()
 
+	queryService, err := api.NewQueryService(dbRoot)
+	if err != nil {
+		return fmt.Errorf("failed to create query service: %w", err)
+	}
+
 	s, mux := serverutil.NewBaseK8sService(dbRoot, func() int {
 		return http.StatusOK
 	}, func() int {
@@ -73,6 +78,12 @@ func run() error {
 		connect.WithInterceptors(validate.NewInterceptor()),
 	)
 	mux.Handle(controlPath, otelhttp.NewHandler(controlHandler, taskv1connect.ControlServiceName))
+
+	queryPath, queryHandler := taskv1connect.NewQueryServiceHandler(
+		queryService,
+		connect.WithInterceptors(validate.NewInterceptor()),
+	)
+	mux.Handle(queryPath, otelhttp.NewHandler(queryHandler, taskv1connect.QueryServiceName))
 
 	err = serverutil.K8sAwareListenAndServe(s, constants.SHUTDOWN_TIMEOUT, nil)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

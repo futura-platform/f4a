@@ -1,0 +1,57 @@
+edition = "2024";
+
+package task.v1;
+
+import "buf/validate/validate.proto";
+import "task/v1/predefined_string_rules.proto";
+
+// TaskResult is the terminal outcome of a task: exactly one of a successful
+// result payload or a failure.
+message TaskResult {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+
+    // The marshalled result of a successful task. 
+    // (using the provided execution marshaller)
+    bytes result = 1;
+
+    // Error message of a failed task.
+    string failure = 2;
+  }
+}
+
+message DeadLetter {
+  string task_id = 1 [(buf.validate.field).string.(task.v1.task_id) = true];
+  TaskResult result = 2;
+}
+
+message PullDeadLettersRequest {
+  uint32 max_results = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint32 = {
+      gte: 1
+      lte: 1000
+    }
+  ];
+}
+
+message PullDeadLettersResponse {
+  repeated DeadLetter dead_letters = 1;
+}
+
+message AcknowledgeDeadLettersRequest {
+  repeated string task_ids = 1 [
+    (buf.validate.field).repeated.items.string.(task.v1.task_id) = true
+  ];
+}
+
+message AcknowledgeDeadLettersResponse {}
+
+service QueryService {
+  // PullDeadLetters returns dead-lettered tasks available for consumption.
+  rpc PullDeadLetters(PullDeadLettersRequest) returns (PullDeadLettersResponse);
+
+  // AcknowledgeDeadLetters confirms that the caller has processed the given
+  // dead-lettered tasks and removes them from the queue.
+  rpc AcknowledgeDeadLetters(AcknowledgeDeadLettersRequest) returns (AcknowledgeDeadLettersResponse);
+}

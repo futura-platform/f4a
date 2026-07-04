@@ -18,8 +18,8 @@ func fifoPath(db dbutil.DbRoot, name string) []string {
 	return path
 }
 
-func newFIFO(db dbutil.DbRoot, name string) *FIFO {
-	fifo, err := CreateOrOpenFIFO(db.Database, fifoPath(db, name))
+func newFIFO(db dbutil.DbRoot, name string) *fifo {
+	fifo, err := createOrOpenFIFO(db.Database, fifoPath(db, name))
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +40,7 @@ func (t *transactorWithNotify) Transact(fn func(fdb.Transaction) (any, error)) (
 	return result, err
 }
 
-func enqueue(t testing.TB, db dbutil.DbRoot, queue *FIFO, item []byte) {
+func enqueue(t testing.TB, db dbutil.DbRoot, queue *fifo, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, queue.Enqueue(tx, item)
@@ -48,7 +48,7 @@ func enqueue(t testing.TB, db dbutil.DbRoot, queue *FIFO, item []byte) {
 	require.NoError(t, err)
 }
 
-func dequeue(t testing.TB, db dbutil.DbRoot, queue *FIFO) ([]byte, error) {
+func dequeue(t testing.TB, db dbutil.DbRoot, queue *fifo) ([]byte, error) {
 	t.Helper()
 	var item []byte
 	var err error
@@ -131,11 +131,11 @@ func TestFIFOMultipleDequeueSingleTransaction(t *testing.T) {
 func TestFIFOCreateOrOpenReusesPath(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		path := fifoPath(db, "reopen")
-		queue, err := CreateOrOpenFIFO(db.Database, path)
+		queue, err := createOrOpenFIFO(db.Database, path)
 		require.NoError(t, err)
 		enqueue(t, db, queue, []byte("payload"))
 
-		reopened, err := CreateOrOpenFIFO(db.Database, path)
+		reopened, err := createOrOpenFIFO(db.Database, path)
 		require.NoError(t, err)
 		item, err := dequeue(t, db, reopened)
 		require.NoError(t, err)

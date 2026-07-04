@@ -164,8 +164,8 @@ func (s *Scheduler) assignPending(
 		// select the first runner with enough resources
 		var selectedRunner *runnerWithResources
 		for _, runner := range remainingResourcesPerRunnerSlice {
-			if runner.resources.cpuMillis >= int64(t.resourceRequest.CpuMillis) &&
-				runner.resources.memoryBytes >= int64(t.resourceRequest.MemoryBytes) {
+			if runner.resources.cpuMillis >= int64(t.resourceRequest.GetCpuMillis()) &&
+				runner.resources.memoryBytes >= int64(t.resourceRequest.GetMemoryBytes()) {
 				selectedRunner = runner
 				break
 			}
@@ -178,8 +178,8 @@ func (s *Scheduler) assignPending(
 			continue
 		}
 		assignmentPlan[selectedRunner.runnerId].Add(t)
-		selectedRunner.resources.cpuMillis -= int64(t.resourceRequest.CpuMillis)
-		selectedRunner.resources.memoryBytes -= int64(t.resourceRequest.MemoryBytes)
+		selectedRunner.resources.cpuMillis -= int64(t.resourceRequest.GetCpuMillis())
+		selectedRunner.resources.memoryBytes -= int64(t.resourceRequest.GetMemoryBytes())
 	}
 
 	executionFailures, err := s.executeAssignmentPlan(ctx, assignmentPlan)

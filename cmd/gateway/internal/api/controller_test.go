@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"net/http/httptest"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -18,6 +17,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
@@ -33,10 +33,10 @@ func newTestController(t *testing.T, db dbutil.DbRoot) *controller {
 }
 
 func testResourceRequest() *taskv1.TaskResourceRequest {
-	return &taskv1.TaskResourceRequest{
-		CpuMillis:   500,
-		MemoryBytes: 1024,
-	}
+	return taskv1.TaskResourceRequest_builder{
+		CpuMillis:   proto.Uint32(500),
+		MemoryBytes: proto.Uint64(1024),
+	}.Build()
 }
 
 type taskState struct {
@@ -54,61 +54,61 @@ func mustCreateTask(
 	input []byte,
 ) {
 	t.Helper()
-	_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
-		Revision: revision,
-		Request: &taskv1.CreateTaskRequest{
-			TaskId:          taskID,
-			ExecutorId:      executorID,
-			CallbackUrl:     &callbackURL,
-			Parameters:      &taskv1.TaskParameters{Input: input},
+	_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+		Revision: proto.Uint64(revision),
+		Request: taskv1.CreateTaskRequest_builder{
+			TaskId:          proto.String(taskID),
+			ExecutorId:      proto.String(executorID),
+			CallbackUrl:     proto.String(callbackURL),
+			Parameters:      taskv1.TaskParameters_builder{Input: input}.Build(),
 			ResourceRequest: testResourceRequest(),
-		},
-	})
+		}.Build(),
+	}.Build())
 	require.NoError(t, err)
 }
 
 func mustUpdateTask(t *testing.T, c *controller, revision uint64, taskID string, input []byte) {
 	t.Helper()
-	_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
-		Revision: revision,
-		Request: &taskv1.UpdateTaskRequest{
-			TaskId:     taskID,
-			Parameters: &taskv1.TaskParameters{Input: input},
-		},
-	})
+	_, err := c.UpdateTask(context.Background(), taskv1.ControlServiceUpdateTaskRequest_builder{
+		Revision: proto.Uint64(revision),
+		Request: taskv1.UpdateTaskRequest_builder{
+			TaskId:     proto.String(taskID),
+			Parameters: taskv1.TaskParameters_builder{Input: input}.Build(),
+		}.Build(),
+	}.Build())
 	require.NoError(t, err)
 }
 
 func mustActivateTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.ActivateTask(context.Background(), &taskv1.ControlServiceActivateTaskRequest{
-		Revision: revision,
-		Request: &taskv1.ActivateTaskRequest{
-			TaskId: taskID,
-		},
-	})
+	_, err := c.ActivateTask(context.Background(), taskv1.ControlServiceActivateTaskRequest_builder{
+		Revision: proto.Uint64(revision),
+		Request: taskv1.ActivateTaskRequest_builder{
+			TaskId: proto.String(taskID),
+		}.Build(),
+	}.Build())
 	require.NoError(t, err)
 }
 
 func mustSuspendTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.SuspendTask(context.Background(), &taskv1.ControlServiceSuspendTaskRequest{
-		Revision: revision,
-		Request: &taskv1.SuspendTaskRequest{
-			TaskId: taskID,
-		},
-	})
+	_, err := c.SuspendTask(context.Background(), taskv1.ControlServiceSuspendTaskRequest_builder{
+		Revision: proto.Uint64(revision),
+		Request: taskv1.SuspendTaskRequest_builder{
+			TaskId: proto.String(taskID),
+		}.Build(),
+	}.Build())
 	require.NoError(t, err)
 }
 
 func mustDeleteTask(t *testing.T, c *controller, revision uint64, taskID string) {
 	t.Helper()
-	_, err := c.DeleteTask(context.Background(), &taskv1.ControlServiceDeleteTaskRequest{
-		Revision: revision,
-		Request: &taskv1.DeleteTaskRequest{
-			TaskId: taskID,
-		},
-	})
+	_, err := c.DeleteTask(context.Background(), taskv1.ControlServiceDeleteTaskRequest_builder{
+		Revision: proto.Uint64(revision),
+		Request: taskv1.DeleteTaskRequest_builder{
+			TaskId: proto.String(taskID),
+		}.Build(),
+	}.Build())
 	require.NoError(t, err)
 }
 
@@ -198,30 +198,52 @@ func TestControllerCreateTask(t *testing.T) {
 			})
 		})
 
+		t.Run("without callback url", func(t *testing.T) {
+			taskID := "create-no-callback"
+			input := []byte("payload-no-callback")
+			_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+				Revision: proto.Uint64(1),
+				Request: taskv1.CreateTaskRequest_builder{
+					TaskId:          proto.String(taskID),
+					ExecutorId:      proto.String("executor-a"),
+					Parameters:      taskv1.TaskParameters_builder{Input: input}.Build(),
+					ResourceRequest: testResourceRequest(),
+				}.Build(),
+			}.Build())
+			require.NoError(t, err)
+
+			state, exists := readTaskState(t, db, taskID)
+			require.True(t, exists)
+			require.Equal(t, taskState{
+				ExecutorID:      "executor-a",
+				CallbackURL:     nil,
+				Input:           input,
+				LifecycleStatus: task.LifecycleStatusSuspended,
+			}, state)
+		})
+
 		t.Run("rejects memory request above int64 max", func(t *testing.T) {
 			_, controlHandler := taskv1connect.NewControlServiceHandler(
 				c,
 				connect.WithInterceptors(validate.NewInterceptor()),
 			)
-			server := httptest.NewServer(controlHandler)
-			t.Cleanup(server.Close)
+			server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
 			client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
 
 			taskID := "create-memory-overflow"
-			callbackURL := "https://example.com/a"
-			_, err := client.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
-				Revision: 1,
-				Request: &taskv1.CreateTaskRequest{
-					TaskId:      taskID,
-					ExecutorId:  "executor-a",
-					CallbackUrl: &callbackURL,
-					Parameters:  &taskv1.TaskParameters{Input: []byte("payload-a")},
-					ResourceRequest: &taskv1.TaskResourceRequest{
-						CpuMillis:   500,
-						MemoryBytes: uint64(math.MaxInt64) + 1,
-					},
-				},
-			})
+			_, err := client.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+				Revision: proto.Uint64(1),
+				Request: taskv1.CreateTaskRequest_builder{
+					TaskId:      proto.String(taskID),
+					ExecutorId:  proto.String("executor-a"),
+					CallbackUrl: proto.String("https://example.com/a"),
+					Parameters:  taskv1.TaskParameters_builder{Input: []byte("payload-a")}.Build(),
+					ResourceRequest: taskv1.TaskResourceRequest_builder{
+						CpuMillis:   proto.Uint32(500),
+						MemoryBytes: proto.Uint64(uint64(math.MaxInt64) + 1),
+					}.Build(),
+				}.Build(),
+			}.Build())
 			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 			require.Contains(t, err.Error(), "memory_bytes")
 
@@ -356,12 +378,12 @@ func TestControllerSuspendTask_RunningTaskMissingQueueIsInvariantViolation(t *te
 		mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
 		setTaskRunnerAndLifecycleStatus(t, db, taskID, "missing-runner", task.LifecycleStatusRunning)
 
-		_, err := c.SuspendTask(context.Background(), &taskv1.ControlServiceSuspendTaskRequest{
-			Revision: 2,
-			Request: &taskv1.SuspendTaskRequest{
-				TaskId: taskID,
-			},
-		})
+		_, err := c.SuspendTask(context.Background(), taskv1.ControlServiceSuspendTaskRequest_builder{
+			Revision: proto.Uint64(2),
+			Request: taskv1.SuspendTaskRequest_builder{
+				TaskId: proto.String(taskID),
+			}.Build(),
+		}.Build())
 		require.ErrorIs(t, err, servicestate.ErrRunnerSetDoesNotExist)
 	})
 }
@@ -371,17 +393,16 @@ func TestControllerRevisionRules(t *testing.T) {
 		c := newTestController(t, db)
 
 		t.Run("create revision must be one", func(t *testing.T) {
-			callbackURL := "https://example.com/a"
-			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
-				Revision: 2,
-				Request: &taskv1.CreateTaskRequest{
-					TaskId:          "bad-create-revision",
-					ExecutorId:      "executor-a",
-					CallbackUrl:     &callbackURL,
-					Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+			_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+				Revision: proto.Uint64(2),
+				Request: taskv1.CreateTaskRequest_builder{
+					TaskId:          proto.String("bad-create-revision"),
+					ExecutorId:      proto.String("executor-a"),
+					CallbackUrl:     proto.String("https://example.com/a"),
+					Parameters:      taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
 					ResourceRequest: testResourceRequest(),
-				},
-			})
+				}.Build(),
+			}.Build())
 			require.Error(t, err)
 			require.ErrorIs(t, err, task.ErrCreateRevisionMustBeOne)
 		})
@@ -390,13 +411,13 @@ func TestControllerRevisionRules(t *testing.T) {
 			taskID := "revision-gap"
 			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
 
-			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
-				Revision: 3,
-				Request: &taskv1.UpdateTaskRequest{
-					TaskId:     taskID,
-					Parameters: &taskv1.TaskParameters{Input: []byte("payload-new")},
-				},
-			})
+			_, err := c.UpdateTask(context.Background(), taskv1.ControlServiceUpdateTaskRequest_builder{
+				Revision: proto.Uint64(3),
+				Request: taskv1.UpdateTaskRequest_builder{
+					TaskId:     proto.String(taskID),
+					Parameters: taskv1.TaskParameters_builder{Input: []byte("payload-new")}.Build(),
+				}.Build(),
+			}.Build())
 			require.Error(t, err)
 			require.ErrorIs(t, err, task.ErrRevisionGap)
 		})
@@ -406,13 +427,13 @@ func TestControllerRevisionRules(t *testing.T) {
 			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("v1"))
 			mustUpdateTask(t, c, 2, taskID, []byte("v2"))
 
-			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
-				Revision: 1,
-				Request: &taskv1.UpdateTaskRequest{
-					TaskId:     taskID,
-					Parameters: &taskv1.TaskParameters{Input: []byte("stale")},
-				},
-			})
+			_, err := c.UpdateTask(context.Background(), taskv1.ControlServiceUpdateTaskRequest_builder{
+				Revision: proto.Uint64(1),
+				Request: taskv1.UpdateTaskRequest_builder{
+					TaskId:     proto.String(taskID),
+					Parameters: taskv1.TaskParameters_builder{Input: []byte("stale")}.Build(),
+				}.Build(),
+			}.Build())
 			require.NoError(t, err)
 
 			state, exists := readTaskState(t, db, taskID)
@@ -427,30 +448,29 @@ func TestControllerRejectsMissingParameters(t *testing.T) {
 		c := newTestController(t, db)
 
 		t.Run("create requires parameters", func(t *testing.T) {
-			callbackURL := "https://example.com/a"
-			_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
-				Revision: 1,
-				Request: &taskv1.CreateTaskRequest{
-					TaskId:          "missing-create-params",
-					ExecutorId:      "executor-a",
-					CallbackUrl:     &callbackURL,
+			_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+				Revision: proto.Uint64(1),
+				Request: taskv1.CreateTaskRequest_builder{
+					TaskId:          proto.String("missing-create-params"),
+					ExecutorId:      proto.String("executor-a"),
+					CallbackUrl:     proto.String("https://example.com/a"),
 					Parameters:      nil,
 					ResourceRequest: testResourceRequest(),
-				},
-			})
+				}.Build(),
+			}.Build())
 			require.ErrorIs(t, err, ErrMissingParameters)
 		})
 
 		t.Run("update requires parameters", func(t *testing.T) {
 			taskID := "missing-update-params"
 			mustCreateTask(t, c, 1, taskID, "executor-a", "https://example.com/a", []byte("payload"))
-			_, err := c.UpdateTask(context.Background(), &taskv1.ControlServiceUpdateTaskRequest{
-				Revision: 2,
-				Request: &taskv1.UpdateTaskRequest{
-					TaskId:     taskID,
+			_, err := c.UpdateTask(context.Background(), taskv1.ControlServiceUpdateTaskRequest_builder{
+				Revision: proto.Uint64(2),
+				Request: taskv1.UpdateTaskRequest_builder{
+					TaskId:     proto.String(taskID),
 					Parameters: nil,
-				},
-			})
+				}.Build(),
+			}.Build())
 			require.ErrorIs(t, err, ErrMissingParameters)
 		})
 	})
@@ -460,18 +480,78 @@ func TestControllerRejectsMissingResourceRequest(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
 
-		callbackURL := "https://example.com/a"
-		_, err := c.CreateTask(context.Background(), &taskv1.ControlServiceCreateTaskRequest{
-			Revision: 1,
-			Request: &taskv1.CreateTaskRequest{
-				TaskId:          "missing-resource-request",
-				ExecutorId:      "executor-a",
-				CallbackUrl:     &callbackURL,
-				Parameters:      &taskv1.TaskParameters{Input: []byte("payload")},
+		_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+			Revision: proto.Uint64(1),
+			Request: taskv1.CreateTaskRequest_builder{
+				TaskId:          proto.String("missing-resource-request"),
+				ExecutorId:      proto.String("executor-a"),
+				CallbackUrl:     proto.String("https://example.com/a"),
+				Parameters:      taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
 				ResourceRequest: nil,
-			},
-		})
+			}.Build(),
+		}.Build())
 		require.ErrorIs(t, err, ErrMissingResourceRequest)
+	})
+}
+
+func TestCreateTaskProtovalidateRejectsMissingResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		_, controlHandler := taskv1connect.NewControlServiceHandler(
+			c,
+			connect.WithInterceptors(validate.NewInterceptor()),
+		)
+		server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
+		client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+		taskID := "protovalidate-missing-resource-request"
+		_, err := client.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+			Revision: proto.Uint64(1),
+			Request: taskv1.CreateTaskRequest_builder{
+				TaskId:      proto.String(taskID),
+				ExecutorId:  proto.String("executor-a"),
+				CallbackUrl: proto.String("https://example.com/a"),
+				Parameters:  taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
+			}.Build(),
+		}.Build())
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "resource_request")
+
+		_, exists := readTaskState(t, db, taskID)
+		require.False(t, exists)
+	})
+}
+
+func TestCreateTaskProtovalidateRejectsZeroResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		_, controlHandler := taskv1connect.NewControlServiceHandler(
+			c,
+			connect.WithInterceptors(validate.NewInterceptor()),
+		)
+		server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
+		client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+		taskID := "protovalidate-zero-resource-request"
+		_, err := client.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+			Revision: proto.Uint64(1),
+			Request: taskv1.CreateTaskRequest_builder{
+				TaskId:      proto.String(taskID),
+				ExecutorId:  proto.String("executor-a"),
+				CallbackUrl: proto.String("https://example.com/a"),
+				Parameters:  taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
+				ResourceRequest: taskv1.TaskResourceRequest_builder{
+					CpuMillis:   proto.Uint32(0),
+					MemoryBytes: proto.Uint64(0),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "cpu_millis")
+		require.Contains(t, err.Error(), "memory_bytes")
+
+		_, exists := readTaskState(t, db, taskID)
+		require.False(t, exists)
 	})
 }
 
@@ -479,84 +559,70 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
 
-		callbackUrlA := "https://example.com/a"
-		callbackUrlB := "https://example.com/b"
 		operations := []*taskv1.BatchTaskOperation{
-			{
-				Operation: &taskv1.BatchTaskOperation_CreateTask{
-					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
-						Revision: 1,
-						Request: &taskv1.CreateTaskRequest{
-							TaskId:          "batch-task-a",
-							ExecutorId:      "executor-a",
-							CallbackUrl:     &callbackUrlA,
-							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
-							ResourceRequest: testResourceRequest(),
-						},
-					},
-				},
-			},
-			{
-				Operation: &taskv1.BatchTaskOperation_CreateTask{
-					CreateTask: &taskv1.ControlServiceCreateTaskRequest{
-						Revision: 2,
-						Request: &taskv1.CreateTaskRequest{
-							TaskId:          "batch-task-b",
-							ExecutorId:      "executor-b",
-							CallbackUrl:     &callbackUrlB,
-							Parameters:      &taskv1.TaskParameters{Input: []byte("v1")},
-							ResourceRequest: testResourceRequest(),
-						},
-					},
-				},
-			},
-			{
-				Operation: &taskv1.BatchTaskOperation_UpdateTask{
-					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-						Revision: 2,
-						Request: &taskv1.UpdateTaskRequest{
-							TaskId:     "batch-task-a",
-							Parameters: &taskv1.TaskParameters{Input: []byte("v2")},
-						},
-					},
-				},
-			},
-			{
-				Operation: &taskv1.BatchTaskOperation_UpdateTask{
-					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-						Revision: 4,
-						Request: &taskv1.UpdateTaskRequest{
-							TaskId:     "batch-task-a",
-							Parameters: &taskv1.TaskParameters{Input: []byte("v4")},
-						},
-					},
-				},
-			},
-			{
-				Operation: &taskv1.BatchTaskOperation_UpdateTask{
-					UpdateTask: &taskv1.ControlServiceUpdateTaskRequest{
-						Revision: 2,
-						Request: &taskv1.UpdateTaskRequest{
-							TaskId:     "batch-task-a",
-							Parameters: &taskv1.TaskParameters{Input: []byte("duplicate")},
-						},
-					},
-				},
-			},
-			{
-				Operation: &taskv1.BatchTaskOperation_DeleteTask{
-					DeleteTask: &taskv1.ControlServiceDeleteTaskRequest{
-						Revision: 1,
-						Request: &taskv1.DeleteTaskRequest{
-							TaskId: "batch-missing-delete",
-						},
-					},
-				},
-			},
+			taskv1.BatchTaskOperation_builder{
+				CreateTask: taskv1.ControlServiceCreateTaskRequest_builder{
+					Revision: proto.Uint64(1),
+					Request: taskv1.CreateTaskRequest_builder{
+						TaskId:          proto.String("batch-task-a"),
+						ExecutorId:      proto.String("executor-a"),
+						CallbackUrl:     proto.String("https://example.com/a"),
+						Parameters:      taskv1.TaskParameters_builder{Input: []byte("v1")}.Build(),
+						ResourceRequest: testResourceRequest(),
+					}.Build(),
+				}.Build(),
+			}.Build(),
+			taskv1.BatchTaskOperation_builder{
+				CreateTask: taskv1.ControlServiceCreateTaskRequest_builder{
+					Revision: proto.Uint64(2),
+					Request: taskv1.CreateTaskRequest_builder{
+						TaskId:          proto.String("batch-task-b"),
+						ExecutorId:      proto.String("executor-b"),
+						CallbackUrl:     proto.String("https://example.com/b"),
+						Parameters:      taskv1.TaskParameters_builder{Input: []byte("v1")}.Build(),
+						ResourceRequest: testResourceRequest(),
+					}.Build(),
+				}.Build(),
+			}.Build(),
+			taskv1.BatchTaskOperation_builder{
+				UpdateTask: taskv1.ControlServiceUpdateTaskRequest_builder{
+					Revision: proto.Uint64(2),
+					Request: taskv1.UpdateTaskRequest_builder{
+						TaskId:     proto.String("batch-task-a"),
+						Parameters: taskv1.TaskParameters_builder{Input: []byte("v2")}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build(),
+			taskv1.BatchTaskOperation_builder{
+				UpdateTask: taskv1.ControlServiceUpdateTaskRequest_builder{
+					Revision: proto.Uint64(4),
+					Request: taskv1.UpdateTaskRequest_builder{
+						TaskId:     proto.String("batch-task-a"),
+						Parameters: taskv1.TaskParameters_builder{Input: []byte("v4")}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build(),
+			taskv1.BatchTaskOperation_builder{
+				UpdateTask: taskv1.ControlServiceUpdateTaskRequest_builder{
+					Revision: proto.Uint64(2),
+					Request: taskv1.UpdateTaskRequest_builder{
+						TaskId:     proto.String("batch-task-a"),
+						Parameters: taskv1.TaskParameters_builder{Input: []byte("duplicate")}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build(),
+			taskv1.BatchTaskOperation_builder{
+				DeleteTask: taskv1.ControlServiceDeleteTaskRequest_builder{
+					Revision: proto.Uint64(1),
+					Request: taskv1.DeleteTaskRequest_builder{
+						TaskId: proto.String("batch-missing-delete"),
+					}.Build(),
+				}.Build(),
+			}.Build(),
 		}
-		resp, err := c.BatchTaskOperations(context.Background(), &taskv1.BatchTaskOperationsRequest{
+		resp, err := c.BatchTaskOperations(context.Background(), taskv1.BatchTaskOperationsRequest_builder{
 			Operations: operations,
-		})
+		}.Build())
 		require.NoError(t, err)
 		require.Len(t, resp.GetResults(), 6)
 
@@ -572,30 +638,34 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 			result := resp.GetResults()[i]
 			require.Equal(t, expectedStatuses[i], result.GetStatus())
 
-			switch operation.GetOperation().(type) {
-			case *taskv1.BatchTaskOperation_CreateTask:
-				if response := result.GetResponse(); response != nil {
-					require.IsType(t, &taskv1.BatchTaskOperationResult_CreateTask{}, response)
-				}
+			switch operation.WhichOperation() {
+			case taskv1.BatchTaskOperation_CreateTask_case:
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.Equal(t, taskv1.BatchTaskOperationResult_CreateTask_case, result.WhichResponse())
 					require.NotNil(t, result.GetCreateTask())
+				} else {
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
-			case *taskv1.BatchTaskOperation_UpdateTask:
-				if response := result.GetResponse(); response != nil {
-					require.IsType(t, &taskv1.BatchTaskOperationResult_UpdateTask{}, response)
+			case taskv1.BatchTaskOperation_UpdateTask_case:
+				switch result.GetStatus() {
+				case taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED,
+					taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE:
+					require.Equal(t, taskv1.BatchTaskOperationResult_UpdateTask_case, result.WhichResponse())
+				default:
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
 					require.NotNil(t, result.GetUpdateTask())
 				}
-			case *taskv1.BatchTaskOperation_DeleteTask:
-				if response := result.GetResponse(); response != nil {
-					require.IsType(t, &taskv1.BatchTaskOperationResult_DeleteTask{}, response)
-				}
+			case taskv1.BatchTaskOperation_DeleteTask_case:
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.Equal(t, taskv1.BatchTaskOperationResult_DeleteTask_case, result.WhichResponse())
 					require.NotNil(t, result.GetDeleteTask())
+				} else {
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
 			default:
-				t.Fatalf("unexpected batch test operation type at index %d: %T", i, operation.GetOperation())
+				t.Fatalf("unexpected batch test operation type at index %d: %v", i, operation.WhichOperation())
 			}
 		}
 

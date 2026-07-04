@@ -11,12 +11,12 @@ import (
 )
 
 type logCursor struct {
-	set  *Set
+	set  *set
 	id   string
 	hint string
 }
 
-func newLogCursor(set *Set) *logCursor {
+func newLogCursor(set *set) *logCursor {
 	hostname, _ := os.Hostname()
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {

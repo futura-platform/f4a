@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -11,7 +12,6 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,11 +55,11 @@ func TestLoadTasks(t *testing.T) {
 			setTaskMetadata(t, db, tkeyOne, &executorIdOne, &callbackUrlOne)
 			setTaskMetadata(t, db, tkeyTwo, &executorIdTwo, &callbackUrlTwo)
 
-			executorOne := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executorOne := &testutil.MockExecutor{Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+				return nil
 			}}
-			executorTwo := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executorTwo := &testutil.MockExecutor{Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+				return nil
 			}}
 			router := execute.NewRouter(
 				execute.Route{Id: executorIdOne, Executor: executorOne},
@@ -80,14 +80,16 @@ func TestLoadTasks(t *testing.T) {
 			assert.Equal(t, callbackUrlOne, loadedOne.CallbackUrl().String())
 			assert.Same(t, executorOne, loadedOne.Runnable.executor)
 			assert.Equal(t, idOne, loadedOne.Id())
-			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedOne.execution)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedOne.SettlementContainers.User)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedOne.SettlementContainers.Discharge)
 
 			require.Contains(t, loadedById, idTwo)
 			loadedTwo := loadedById[idTwo]
 			assert.Equal(t, callbackUrlTwo, loadedTwo.CallbackUrl().String())
 			assert.Same(t, executorTwo, loadedTwo.executor)
 			assert.Equal(t, idTwo, loadedTwo.Id())
-			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedTwo.execution)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedTwo.SettlementContainers.User)
+			assert.IsType(t, &fdbexec.ExecutionContainer{}, loadedTwo.SettlementContainers.Discharge)
 		})
 	})
 
@@ -138,8 +140,8 @@ func TestLoadTasks(t *testing.T) {
 			assert.NoError(t, err)
 			setTaskMetadata(t, db, tkey, &executorId, &callbackUrl)
 
-			executor := &testutil.MockExecutor{Execute: func(_ executiontype.TransactionalContainer, _ context.Context, _ []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-				return nil, nil
+			executor := &testutil.MockExecutor{Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+				return nil
 			}}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 

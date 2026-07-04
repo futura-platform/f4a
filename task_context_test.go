@@ -3,6 +3,7 @@ package f4a
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
@@ -16,9 +17,9 @@ import (
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestTaskIdFromContext_Integration(t *testing.T) {
@@ -40,10 +41,10 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 			taskKey.Input().Set(tx, []byte("input"))
 			taskKey.RunnerId().Set(tx, &runnerID)
 			taskKey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
-			taskKey.ResourceRequest().Set(tx, &taskv1.TaskResourceRequest{
-				CpuMillis:   500,
-				MemoryBytes: 1024,
-			})
+			taskKey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+				CpuMillis:   proto.Uint32(500),
+				MemoryBytes: proto.Uint64(1024),
+			}.Build())
 			return nil, nil
 		})
 		require.NoError(t, err)
@@ -67,18 +68,19 @@ func TestTaskIdFromContext_Integration(t *testing.T) {
 		router := execute.NewRouter(execute.Route{
 			Id: executorID,
 			Executor: &testutil.MockExecutor{
-				Execute: func(
-					_ executiontype.TransactionalContainer,
+				Settle: func(
+					_ execute.SettlementContainers,
 					ctx context.Context,
 					_ []byte,
+					_ *url.URL,
 					_ ...ftype.FlowLoopOption,
-				) ([]byte, error) {
+				) error {
 					id, ok := TaskIdFromContext(ctx)
 					executionContextCh <- executionContextResult{
 						taskID: id,
 						ok:     ok,
 					}
-					return []byte("output"), nil
+					return nil
 				},
 			},
 		})

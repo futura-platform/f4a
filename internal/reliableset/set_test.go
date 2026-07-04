@@ -23,14 +23,14 @@ func setPath(db dbutil.DbRoot, name string) []string {
 	return path
 }
 
-func newSet(t testing.TB, db dbutil.DbRoot, name string) *Set {
+func newSet(t testing.TB, db dbutil.DbRoot, name string) *set {
 	t.Helper()
 	set, err := Create(db, db, setPath(db, name))
 	require.NoError(t, err)
 	return set
 }
 
-func addItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
+func addItem(t testing.TB, db dbutil.DbRoot, set *set, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, set.Add(tx, item)
@@ -38,7 +38,7 @@ func addItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
 	require.NoError(t, err)
 }
 
-func removeItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
+func removeItem(t testing.TB, db dbutil.DbRoot, set *set, item []byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		return nil, set.Remove(tx, item)
@@ -46,7 +46,7 @@ func removeItem(t testing.TB, db dbutil.DbRoot, set *Set, item []byte) {
 	require.NoError(t, err)
 }
 
-func addBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
+func addBatch(t testing.TB, db dbutil.DbRoot, set *set, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -59,7 +59,7 @@ func addBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func removeBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
+func removeBatch(t testing.TB, db dbutil.DbRoot, set *set, items [][]byte) {
 	t.Helper()
 	_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 		for _, item := range items {
@@ -72,14 +72,14 @@ func removeBatch(t testing.TB, db dbutil.DbRoot, set *Set, items [][]byte) {
 	require.NoError(t, err)
 }
 
-func readSetValues(t testing.TB, db dbutil.DbRoot, set *Set) mapset.Set[string] {
+func readSetValues(t testing.TB, db dbutil.DbRoot, set *set) mapset.Set[string] {
 	t.Helper()
 	items, _, err := set.Items(t.Context(), db.Database)
 	require.NoError(t, err)
 	return items
 }
 
-func requireSetMatchesDB(t *testing.T, db dbutil.DbRoot, set *Set, expected mapset.Set[string]) {
+func requireSetMatchesDB(t *testing.T, db dbutil.DbRoot, set *set, expected mapset.Set[string]) {
 	t.Helper()
 	actual := readSetValues(t, db, set)
 	equal := stateSetsEqual(actual, expected)
@@ -433,7 +433,7 @@ func cloneSet(in mapset.Set[string]) mapset.Set[string] {
 	return out
 }
 
-func readLastLogKey(t testing.TB, db dbutil.DbRoot, set *Set) fdb.Key {
+func readLastLogKey(t testing.TB, db dbutil.DbRoot, set *set) fdb.Key {
 	t.Helper()
 	var key fdb.Key
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -454,7 +454,7 @@ func readLastLogKey(t testing.TB, db dbutil.DbRoot, set *Set) fdb.Key {
 	return key
 }
 
-func readCursor(t testing.TB, db dbutil.DbRoot, set *Set, id string) (fdb.Key, time.Time) {
+func readCursor(t testing.TB, db dbutil.DbRoot, set *set, id string) (fdb.Key, time.Time) {
 	t.Helper()
 	var tail fdb.Key
 	var lease time.Time
@@ -472,7 +472,7 @@ func readCursor(t testing.TB, db dbutil.DbRoot, set *Set, id string) (fdb.Key, t
 	return tail, lease
 }
 
-func readSingleCursorID(t testing.TB, db dbutil.DbRoot, set *Set) string {
+func readSingleCursorID(t testing.TB, db dbutil.DbRoot, set *set) string {
 	t.Helper()
 	var id string
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -490,7 +490,7 @@ func readSingleCursorID(t testing.TB, db dbutil.DbRoot, set *Set) string {
 	return id
 }
 
-func readLogEntries(t testing.TB, db dbutil.DbRoot, set *Set) []KeyedLogEntry {
+func readLogEntries(t testing.TB, db dbutil.DbRoot, set *set) []KeyedLogEntry {
 	t.Helper()
 	var entries []KeyedLogEntry
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
@@ -503,7 +503,7 @@ func readLogEntries(t testing.TB, db dbutil.DbRoot, set *Set) []KeyedLogEntry {
 	return entries
 }
 
-func waitForCursorTail(t *testing.T, db dbutil.DbRoot, set *Set, id string, expected fdb.Key) {
+func waitForCursorTail(t *testing.T, db dbutil.DbRoot, set *set, id string, expected fdb.Key) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

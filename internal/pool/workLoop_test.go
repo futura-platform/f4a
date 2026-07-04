@@ -7,7 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,10 +21,11 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/futura-platform/f4a/pkg/execute"
+	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -33,10 +34,10 @@ const (
 )
 
 func testResourceRequest() *taskv1.TaskResourceRequest {
-	return &taskv1.TaskResourceRequest{
-		CpuMillis:   500,
-		MemoryBytes: 1024,
-	}
+	return taskv1.TaskResourceRequest_builder{
+		CpuMillis:   proto.Uint32(500),
+		MemoryBytes: proto.Uint64(1024),
+	}.Build()
 }
 
 func seedTask(
@@ -70,6 +71,13 @@ func seedTask(
 	})
 	return err
 }
+
+// rawStringMarshaller passes task input/output through as raw bytes, matching
+// seedTask's raw input values.
+type rawStringMarshaller struct{}
+
+func (rawStringMarshaller) UnmarshalInput(data []byte) (string, error) { return string(data), nil }
+func (rawStringMarshaller) MarshalOutput(data string) ([]byte, error)  { return []byte(data), nil }
 
 func openTaskSet(t testing.TB, db dbutil.DbRoot, runnerId string) *servicestate.RunnerSet {
 	t.Helper()
@@ -138,6 +146,7 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, id
 	require.NoError(t, err)
 }
 
+// waitForTaskDeletion polls until the task directory for id no longer exists.
 func waitForTaskDeletion(t testing.TB, db dbutil.DbRoot, id task.Id) {
 	t.Helper()
 
@@ -235,13 +244,13 @@ func TestWorkLoop(t *testing.T) {
 			canceledCh := make(chan task.Id, taskCount*2)
 
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+				Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 					id := task.Id(marshalledInput)
 					startedCh <- id
 
 					<-ctx.Done()
 					canceledCh <- id
-					return nil, nil
+					return context.Cause(ctx)
 				},
 			}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
@@ -298,10 +307,10 @@ func TestWorkLoop(t *testing.T) {
 			startedCh := make(chan task.Id, 1)
 			executorId := execute.ExecutorId("test-executor")
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
+				Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 					startedCh <- task.Id(marshalledInput)
 					<-ctx.Done()
-					return nil, nil
+					return context.Cause(ctx)
 				},
 			}
 			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
@@ -365,8 +374,8 @@ func TestWorkLoop(t *testing.T) {
 			taskSet := openTaskSet(t, db, runnerId)
 
 			executor := &testutil.MockExecutor{
-				Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-					return nil, expectedErr
+				Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+					return expectedErr
 				},
 			}
 			executorId := execute.ExecutorId("test-executor")
@@ -391,97 +400,102 @@ func TestWorkLoop(t *testing.T) {
 	})
 	t.Run("the result is reliably delivered at least once to the callback url", func(t *testing.T) {
 		t.Run("when there are no errors", func(t *testing.T) {
+			// Result delivery now lives inside Executable.Settle (pkg/execute);
+			// at this layer we assert the work loop drives an assigned task's
+			// settlement to completion without surfacing an error.
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
 
-				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
-				gotCallbackCh := make(chan struct{})
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "POST", r.Method)
-					assert.Equal(t, "/callback", r.URL.Path)
-					body, err := io.ReadAll(r.Body)
-					require.NoError(t, err)
-					assert.Equal(t, expectedOutput, body)
-					w.WriteHeader(http.StatusAccepted)
-					gotCallbackCh <- struct{}{}
-				}))
-				defer server.Close()
-
-				runWorkLoopErr := make(chan error, 1)
-				runnerId := "test-runner"
-				taskSet := openTaskSet(t, db, runnerId)
-
+				settledCh := make(chan task.Id, 1)
 				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
+					Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, callbackUrl *url.URL, _ ...ftype.FlowLoopOption) error {
+						assert.NotNil(t, callbackUrl)
+						settledCh <- task.Id(marshalledInput)
+						return nil
 					},
 				}
 				executorId := execute.ExecutorId("test-executor")
 				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
-
-				go func() {
-					runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, router)
-				}()
-
-				id := task.NewId()
-				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
-				addTasks(t, db, taskSet, []task.Id{id})
-				select {
-				case err := <-runWorkLoopErr:
-					t.Fatalf("RunWorkLoop returned an error: %v", err)
-				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for callback")
-				case <-gotCallbackCh:
-				}
-				waitForTaskDeletion(t, db, id)
-			})
-		})
-		t.Run("when delete fails transiently, callback is not reposted and delete is retried", func(t *testing.T) {
-			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
-
-				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
-				var callbackCalls atomic.Int32
-				gotCallbackCh := make(chan struct{}, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "POST", r.Method)
-					assert.Equal(t, "/callback", r.URL.Path)
-					body, err := io.ReadAll(r.Body)
-					require.NoError(t, err)
-					assert.Equal(t, expectedOutput, body)
-					if callbackCalls.Add(1) == 1 {
-						gotCallbackCh <- struct{}{}
-					}
-					w.WriteHeader(http.StatusAccepted)
-				}))
-				defer server.Close()
-
-				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
-				var deleteAttempts atomic.Int32
-				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
-					if deleteAttempts.Add(1) == 1 {
-						return errors.New("transient delete failure")
-					}
-					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
-				}
-				defer func() {
-					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
-				}()
 
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				runWorkLoopErr := make(chan error, 1)
 				runnerId := "test-runner"
 				taskSet := openTaskSet(t, db, runnerId)
+				go func() {
+					runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
+				}()
 
-				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
-					},
+				id := task.NewId()
+				require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback", runnerId))
+				addTasks(t, db, taskSet, []task.Id{id})
+
+				select {
+				case err := <-runWorkLoopErr:
+					t.Fatalf("RunWorkLoop returned an error: %v", err)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for the task to settle")
+				case settledId := <-settledCh:
+					assert.Equal(t, id, settledId)
 				}
+
+				// a settled task must be retired from the task directory
+				waitForTaskDeletion(t, db, id)
+
+				// a run that settled successfully must not surface an error to the loop
+				select {
+				case err := <-runWorkLoopErr:
+					t.Fatalf("RunWorkLoop returned an error after settlement: %v", err)
+				case <-time.After(waitShort):
+				}
+
+				cancel()
+				select {
+				case err := <-runWorkLoopErr:
+					assert.ErrorIs(t, err, context.Canceled)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for worker shutdown")
+				}
+			})
+		})
+		t.Run("when delete fails transiently, callback is not reposted and delete is retried", func(t *testing.T) {
+			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
+				expectedOutput := fmt.Sprintf("expected output: %f", rand.Float64())
+				var callbackCalls atomic.Int32
+				gotCallbackCh := make(chan struct{}, 1)
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.Equal(t, expectedOutput, string(body))
+					if callbackCalls.Add(1) == 1 {
+						gotCallbackCh <- struct{}{}
+					}
+					w.WriteHeader(http.StatusAccepted)
+				})
+
+				originalDeleteTask := deleteTask
+				var deleteAttempts atomic.Int32
+				deleteTask = func(ctx context.Context, m *taskManager, id task.Id) error {
+					if deleteAttempts.Add(1) == 1 {
+						return errors.New("transient delete failure")
+					}
+					return originalDeleteTask(ctx, m, id)
+				}
+				defer func() { deleteTask = originalDeleteTask }()
+
+				executor := execute.NewExecutor(func(b futura.FlowBuilder, input string) (string, error) {
+					return expectedOutput, nil
+				}, rawStringMarshaller{})
 				executorId := execute.ExecutorId("test-executor")
 				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				runWorkLoopErr := make(chan error, 1)
+				runnerId := "test-runner"
+				taskSet := openTaskSet(t, db, runnerId)
 				go func() {
 					runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
 				}()
@@ -494,13 +508,14 @@ func TestWorkLoop(t *testing.T) {
 				case err := <-runWorkLoopErr:
 					t.Fatalf("RunWorkLoop returned an error: %v", err)
 				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for first callback")
+					t.Fatal("timeout waiting for callback")
 				case <-gotCallbackCh:
 				}
 
 				waitForTaskDeletion(t, db, id)
 				assert.GreaterOrEqual(t, deleteAttempts.Load(), int32(2))
-				assert.Equal(t, int32(1), callbackCalls.Load())
+				assert.Equal(t, int32(1), callbackCalls.Load(),
+					"a retried delete must not re-deliver the callback")
 
 				cancel()
 				select {
@@ -515,35 +530,34 @@ func TestWorkLoop(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
 
-				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
+				expectedOutput := fmt.Sprintf("expected output: %f", rand.Float64())
 				var callbackCalls atomic.Int32
 				gotCallbackCh := make(chan struct{}, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "POST", r.Method)
-					assert.Equal(t, "/callback", r.URL.Path)
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 					body, err := io.ReadAll(r.Body)
 					require.NoError(t, err)
-					assert.Equal(t, expectedOutput, body)
+					assert.Equal(t, expectedOutput, string(body))
 					if callbackCalls.Add(1) == 1 {
 						gotCallbackCh <- struct{}{}
 					}
 					w.WriteHeader(http.StatusAccepted)
-				}))
-				defer server.Close()
+				})
 
-				originalDeleteTaskAfterCallback := deleteTaskAfterCallback
+				// simulate an external actor deleting the task between
+				// settlement and this runner's own retirement
+				originalDeleteTask := deleteTask
 				var externalDeleteStarted atomic.Bool
-				deleteTaskAfterCallback = func(ctx context.Context, manager *taskManager, runnable run.RunnableTask) error {
+				deleteTask = func(ctx context.Context, m *taskManager, id task.Id) error {
 					if externalDeleteStarted.CompareAndSwap(false, true) {
-						_, err := manager.db.Transact(func(tx fdb.Transaction) (any, error) {
-							taskKey, err := manager.taskDirectory.Open(tx, runnable.Id())
+						_, err := m.db.Transact(func(tx fdb.Transaction) (any, error) {
+							taskKey, err := m.taskDirectory.Open(tx, id)
 							if err != nil {
 								if errors.Is(err, directory.ErrDirNotExists) {
 									return nil, nil
 								}
 								return nil, err
 							}
-							if err := manager.taskSet.Remove(tx, taskKey); err != nil {
+							if err := m.taskSet.Remove(tx, taskKey); err != nil {
 								return nil, err
 							}
 							if err := taskKey.Clear(tx); err != nil {
@@ -555,26 +569,21 @@ func TestWorkLoop(t *testing.T) {
 							return err
 						}
 					}
-					return originalDeleteTaskAfterCallback(ctx, manager, runnable)
+					return originalDeleteTask(ctx, m, id)
 				}
-				defer func() {
-					deleteTaskAfterCallback = originalDeleteTaskAfterCallback
-				}()
+				defer func() { deleteTask = originalDeleteTask }()
+
+				executor := execute.NewExecutor(func(b futura.FlowBuilder, input string) (string, error) {
+					return expectedOutput, nil
+				}, rawStringMarshaller{})
+				executorId := execute.ExecutorId("test-executor")
+				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				runWorkLoopErr := make(chan error, 1)
 				runnerId := "test-runner"
 				taskSet := openTaskSet(t, db, runnerId)
-
-				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
-					},
-				}
-				executorId := execute.ExecutorId("test-executor")
-				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
-
 				go func() {
 					runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
 				}()
@@ -593,7 +602,8 @@ func TestWorkLoop(t *testing.T) {
 
 				waitForTaskDeletion(t, db, id)
 				assert.True(t, externalDeleteStarted.Load())
-				assert.Equal(t, int32(1), callbackCalls.Load())
+				assert.Equal(t, int32(1), callbackCalls.Load(),
+					"an externally deleted task must not re-run settlement or re-deliver")
 
 				cancel()
 				select {
@@ -608,71 +618,100 @@ func TestWorkLoop(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 				assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
 
-				expectedOutput := fmt.Appendf([]byte{}, "expected output: %f", rand.Float64())
-				callbackSuccessful := make(chan struct{})
-				var callCount atomic.Int32
-				firstWorkerLoopCtx, firstWorkerLoopCancel := context.WithCancel(t.Context())
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "POST", r.Method)
-					assert.Equal(t, "/callback", r.URL.Path)
+				expectedOutput := fmt.Sprintf("expected output: %f", rand.Float64())
+				var serverHealthy atomic.Bool
+				var failedAttempts, deliveredCalls atomic.Int32
+				firstAttemptCh := make(chan struct{}, 1)
+				deliveredCh := make(chan struct{}, 1)
+				server := testutil.NewEphemeralHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+					if !serverHealthy.Load() {
+						if failedAttempts.Add(1) == 1 {
+							firstAttemptCh <- struct{}{}
+						}
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
 					body, err := io.ReadAll(r.Body)
 					require.NoError(t, err)
-					assert.Equal(t, expectedOutput, body)
-					defer w.WriteHeader(http.StatusAccepted)
-
-					switch callCount.Add(1) {
-					case 1:
-						firstWorkerLoopCancel()
-						time.Sleep(waitShort)
-						return
-					case 2:
-						callbackSuccessful <- struct{}{}
-					default:
-						t.Fatalf("unexpected callback call: %d", callCount.Load())
+					assert.Equal(t, expectedOutput, string(body))
+					w.WriteHeader(http.StatusAccepted)
+					if deliveredCalls.Add(1) == 1 {
+						deliveredCh <- struct{}{}
 					}
-				}))
-				defer server.Close()
+				})
 
-				runWorkLoopErr := make(chan error, 1)
-				runnerId := "test-runner"
-				taskSet := openTaskSet(t, db, runnerId)
-
-				executor := &testutil.MockExecutor{
-					Execute: func(_ executiontype.TransactionalContainer, ctx context.Context, marshalledInput []byte, _ ...ftype.FlowLoopOption) ([]byte, error) {
-						return expectedOutput, nil
-					},
-				}
+				var userSteps atomic.Int32
+				executor := execute.NewExecutor(func(b futura.FlowBuilder, input string) (string, error) {
+					if err := futura.Effect(b, func(ctx context.Context, _ string) error {
+						userSteps.Add(1)
+						return nil
+					}, input); err != nil {
+						return "", err
+					}
+					return expectedOutput, nil
+				}, rawStringMarshaller{})
 				executorId := execute.ExecutorId("test-executor")
 				router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
 
-				// first we spawn a worker that will fail when the callback is called
-				go func() {
-					runWorkLoopErr <- RunWorkLoop(firstWorkerLoopCtx, runnerId, db, taskSet, router)
-				}()
-
+				runnerId := "test-runner"
+				taskSet := openTaskSet(t, db, runnerId)
 				id := task.NewId()
 				require.NoError(t, seedTask(t, db, id, executorId, fmt.Sprintf("%s/callback", server.URL), runnerId))
 
-				addTasks(t, db, taskSet, []task.Id{id})
-				select {
-				case err := <-runWorkLoopErr:
-					assert.ErrorIs(t, err, context.Canceled)
-				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for first callback")
-				case <-callbackSuccessful:
-					t.Fatal("callback successful before first worker loop context was canceled")
-				}
-
-				// now simulate the worker coming back online
+				// loop #1: delivery cannot succeed; kill the loop mid-delivery
+				// (worker crash analog) — the task stays owed
+				ctx1, cancel1 := context.WithCancel(t.Context())
+				runWorkLoopErr1 := make(chan error, 1)
 				go func() {
-					runWorkLoopErr <- RunWorkLoop(t.Context(), runnerId, db, taskSet, router)
+					runWorkLoopErr1 <- RunWorkLoop(ctx1, runnerId, db, taskSet, router)
 				}()
+				addTasks(t, db, taskSet, []task.Id{id})
+
 				select {
-				case err := <-runWorkLoopErr:
+				case err := <-runWorkLoopErr1:
 					t.Fatalf("RunWorkLoop returned an error: %v", err)
 				case <-time.After(waitTimeout):
-					t.Fatal("timeout waiting for second worker loop")
-				case <-callbackSuccessful:
+					t.Fatal("timeout waiting for first delivery attempt")
+				case <-firstAttemptCh:
+				}
+				cancel1()
+				select {
+				case err := <-runWorkLoopErr1:
+					assert.ErrorIs(t, err, context.Canceled)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for first worker shutdown")
+				}
+
+				// loop #2: endpoint recovered; the initial snapshot re-runs the
+				// task, settlement resumes from durable state (user flow
+				// memoized) and the callback is finally delivered
+				serverHealthy.Store(true)
+				ctx2, cancel2 := context.WithCancel(t.Context())
+				defer cancel2()
+				runWorkLoopErr2 := make(chan error, 1)
+				go func() {
+					runWorkLoopErr2 <- RunWorkLoop(ctx2, runnerId, db, taskSet, router)
+				}()
+
+				select {
+				case err := <-runWorkLoopErr2:
+					t.Fatalf("second RunWorkLoop returned an error: %v", err)
+				case <-time.After(20 * time.Second): // resumed delivery waits out the persisted backoff schedule
+					t.Fatal("timeout waiting for resumed delivery")
+				case <-deliveredCh:
+				}
+
+				waitForTaskDeletion(t, db, id)
+				assert.Equal(t, int32(1), deliveredCalls.Load())
+				assert.Equal(t, int32(1), userSteps.Load(),
+					"the user flow must replay from durable state, not re-execute")
+
+				cancel2()
+				select {
+				case err := <-runWorkLoopErr2:
+					assert.ErrorIs(t, err, context.Canceled)
+				case <-time.After(waitTimeout):
+					t.Fatal("timeout waiting for second worker shutdown")
 				}
 			})
 		})
