@@ -147,8 +147,6 @@ func removeTasks(t testing.TB, db dbutil.DbRoot, set *servicestate.RunnerSet, id
 }
 
 // waitForTaskDeletion polls until the task directory for id no longer exists.
-// It is currently unused: post-settlement task deletion is not wired into the
-// work loop yet. The pending subtests below will need it once deletion lands.
 func waitForTaskDeletion(t testing.TB, db dbutil.DbRoot, id task.Id) {
 	t.Helper()
 

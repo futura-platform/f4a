@@ -1,14 +1,26 @@
 package execute
 
 import (
+	"context"
+
 	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
 )
 
+// DeadLetterParker durably records that a task's terminal result could not
+// be delivered within the callback attempt budget, so the task can still
+// settle. Implementations are expected to be bound to a specific task.
+type DeadLetterParker interface {
+	Park(ctx context.Context, deliveryFailure string) error
+}
+
 type SettlementContainers struct {
 	User      executiontype.TransactionalContainer
 	Discharge executiontype.TransactionalContainer
+	// DeadLetters absorbs results whose delivery budget is exhausted.
+	// It may be nil only when no callback delivery can occur.
+	DeadLetters DeadLetterParker
 }
 
 type Executor interface {
@@ -37,6 +49,7 @@ func (e genericExecutor[A, R]) ExecuteFrom(s SettlementContainers) Executable {
 		genericExecutor:      e,
 		userFlow:             userFlow,
 		callbackDeliveryFlow: callbackDeliveryFlow,
+		deadLetters:          s.DeadLetters,
 		marshaller:           e.marshaller,
 		opts:                 e.opts,
 	}

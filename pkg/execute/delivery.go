@@ -3,6 +3,7 @@ package execute
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/futura/flog"
+	"github.com/futura-platform/futura/ftype"
 	"github.com/samber/mo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -84,12 +86,21 @@ func deliverResult(ctx context.Context, r deliveryRequest) (mo.Option[string], e
 	}
 }
 
+var ErrNoDeadLetterParker = errors.New("no dead letter parker configured")
+
 // parkDeadLetter durably parks a result whose delivery budget is exhausted so
 // the task can still settle (and be deleted). Unlike the callback endpoint,
 // the dead letter queue is our own infrastructure: failures here are flow
 // errors, retried by the normal machinery.
-func parkDeadLetter(ctx context.Context, deliveryFailure string) error {
-	panic("not implemented: dead letter queue")
+func (g *genericExecutable[A, R]) parkDeadLetter(ctx context.Context, deliveryFailure string) error {
+	if g.deadLetters == nil {
+		// A callback was configured but no parker was provided. This is a
+		// permanent misconfiguration, so cancel the flow instead of letting
+		// the loop retry it forever; the task stays owed either way.
+		return fmt.Errorf("%w: %w: cannot park delivery failure: %s",
+			ftype.ErrCancelFlow, ErrNoDeadLetterParker, deliveryFailure)
+	}
+	return g.deadLetters.Park(ctx, deliveryFailure)
 }
 
 func attemptDelivery(ctx context.Context, r deliveryRequest) error {

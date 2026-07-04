@@ -34,6 +34,7 @@ type genericExecutable[A, R any] struct {
 
 	userFlow             *futura.Flow[A, R]
 	callbackDeliveryFlow *futura.Flow[R, struct{}]
+	deadLetters          DeadLetterParker
 
 	marshaller ExecutionMarshaller[A, R]
 	opts       []ftype.FlowLoopOption
@@ -99,7 +100,7 @@ func (g *genericExecutable[A, R]) Settle(
 			if err != nil {
 				return struct{}{}, err
 			} else if deliveryFailure.IsSome() {
-				return struct{}{}, futura.Effect(b, parkDeadLetter, deliveryFailure.MustGet())
+				return struct{}{}, futura.Effect(b, g.parkDeadLetter, deliveryFailure.MustGet())
 			}
 
 			return struct{}{}, nil

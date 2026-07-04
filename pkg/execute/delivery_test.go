@@ -2,6 +2,7 @@ package execute
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -166,11 +167,31 @@ func TestAttemptDelivery(t *testing.T) {
 	})
 }
 
+// fakeParker records parked delivery failures and can be set to fail.
+type fakeParker struct {
+	parked  chan string
+	parks   atomic.Int64
+	parkErr atomic.Pointer[error]
+}
+
+func (p *fakeParker) Park(ctx context.Context, deliveryFailure string) error {
+	if errPtr := p.parkErr.Load(); errPtr != nil {
+		return *errPtr
+	}
+	p.parks.Add(1)
+	select {
+	case p.parked <- deliveryFailure:
+	default:
+	}
+	return nil
+}
+
 // settleHarness wires a real executor + in-memory settlement containers to an
 // ephemeral callback endpoint whose behavior is switchable per test.
 type settleHarness struct {
 	executable    Executable
 	containers    SettlementContainers
+	parker        *fakeParker
 	callbackURL   *url.URL
 	posts         atomic.Int64
 	userSteps     atomic.Int64
@@ -212,9 +233,11 @@ func newSettleHarness(t *testing.T) *settleHarness {
 		return strings.ToUpper(input), nil
 	}, NewJsonMarshaller[string, string]())
 
+	h.parker = &fakeParker{parked: make(chan string, 16)}
 	h.containers = SettlementContainers{
-		User:      executiontype.NewInMemoryContainer(),
-		Discharge: executiontype.NewInMemoryContainer(),
+		User:        executiontype.NewInMemoryContainer(),
+		Discharge:   executiontype.NewInMemoryContainer(),
+		DeadLetters: h.parker,
 	}
 	h.executable = executor.ExecuteFrom(h.containers)
 
@@ -244,10 +267,8 @@ func TestSettleRetriesDeliveryUntilAccepted(t *testing.T) {
 	assert.Equal(t, int64(1), h.userSteps.Load())
 }
 
-// The dead letter queue is not implemented yet: exhausting the delivery
-// budget must currently surface its not-implemented panic through the
-// discharge flow. Replace the error assertion with real dead-letter
-// assertions (park + settle nil) once the queue lands.
+// Exhausting the delivery budget must park the failure on the dead letter
+// parker and still settle the task (nil error), so it can be retired.
 func TestSettleParksDeadLetterWhenDeliveryExhausted(t *testing.T) {
 	compressDeliverySchedule(t, 2, time.Millisecond)
 	h := newSettleHarness(t)
@@ -256,10 +277,58 @@ func TestSettleParksDeadLetterWhenDeliveryExhausted(t *testing.T) {
 
 	err := h.executable.Settle(t.Context(), []byte(`"input"`), h.callbackURL)
 
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "failed to discharge result")
-	assert.ErrorContains(t, err, "not implemented: dead letter queue")
+	assert.NoError(t, err, "an exhausted delivery must still settle via the dead letter queue")
 	assert.GreaterOrEqual(t, h.posts.Load(), int64(2))
+	require.Equal(t, int64(1), h.parker.parks.Load())
+	select {
+	case failure := <-h.parker.parked:
+		assert.Contains(t, failure, "bad status")
+	default:
+		t.Fatal("expected a parked delivery failure")
+	}
+}
+
+// A parker failure is a flow error: the discharge loop retries it (the DLQ is
+// our own infrastructure) until it succeeds or the run is cancelled, keeping
+// the task owed. A later Settle resumes from durable state and parks without
+// re-running the user flow.
+func TestSettleRetriesParkFailureUntilCancelled(t *testing.T) {
+	compressDeliverySchedule(t, 2, time.Millisecond)
+	h := newSettleHarness(t)
+
+	h.respondStatus.Store(http.StatusInternalServerError)
+	parkErr := errors.New("dead letter queue unavailable")
+	h.parker.parkErr.Store(&parkErr)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	err := h.executable.Settle(ctx, []byte(`"input"`), h.callbackURL)
+	require.Error(t, err, "settlement interrupted mid-park must not report settled")
+
+	// once the parker recovers, a fresh Settle resumes discharge and parks
+	h.parker.parkErr.Store(nil)
+	require.NoError(t, h.executable.Settle(t.Context(), []byte(`"input"`), h.callbackURL))
+	assert.Equal(t, int64(1), h.parker.parks.Load())
+	assert.Equal(t, int64(1), h.userSteps.Load(), "user flow must not re-run for the park retry")
+}
+
+// Without a parker configured, an exhausted delivery cannot settle: the
+// discharge flow must surface ErrNoDeadLetterParker instead of dropping the
+// failure.
+func TestSettleFailsWhenNoParkerConfigured(t *testing.T) {
+	compressDeliverySchedule(t, 2, time.Millisecond)
+	h := newSettleHarness(t)
+	h.containers.DeadLetters = nil
+	h.executable = NewExecutor(func(b futura.FlowBuilder, input string) (string, error) {
+		return strings.ToUpper(input), nil
+	}, NewJsonMarshaller[string, string]()).ExecuteFrom(h.containers)
+
+	h.respondStatus.Store(http.StatusInternalServerError)
+
+	err := h.executable.Settle(t.Context(), []byte(`"input"`), h.callbackURL)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoDeadLetterParker)
 }
 
 // Flagship reliability property of the settlement design: an interrupted

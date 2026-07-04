@@ -3,6 +3,7 @@ package run
 import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/futura-platform/f4a/internal/fdbexec"
+	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -58,8 +59,9 @@ func NewRunnable(
 		db:         db.Database,
 		taskKey:    taskKey,
 		SettlementContainers: execute.SettlementContainers{
-			User:      fdbexec.OpenTaskContainer(db, taskKey, userFlowNamespace),
-			Discharge: fdbexec.OpenTaskContainer(db, taskKey, deliveryFlowNamespace),
+			User:        fdbexec.OpenTaskContainer(db, taskKey, userFlowNamespace),
+			Discharge:   fdbexec.OpenTaskContainer(db, taskKey, deliveryFlowNamespace),
+			DeadLetters: servicestate.NewDeadLetterParker(db, taskKey.Id()),
 		},
 	}
 }
