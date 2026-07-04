@@ -2306,12 +2306,11 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"\x15task/v1/control.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\x1a%task/v1/predefined_string_rules.proto\"&\n" +
 	"\x0eTaskParameters\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\fR\x05input\"h\n" +
-	"\x13TaskResourceRequest\x12\x1d\n" +
+	"\x05input\x18\x01 \x01(\fR\x05input\"s\n" +
+	"\x13TaskResourceRequest\x12&\n" +
 	"\n" +
-	"cpu_millis\x18\x01 \x01(\rR\tcpuMillis\x122\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04B\x0f\xbaH\f2\n" +
-	"\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\vmemoryBytes\"\xfd\x01\n" +
+	"cpu_millis\x18\x01 \x01(\rB\a\xbaH\x04*\x02(\x01R\tcpuMillis\x124\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04B\x11\xbaH\x0e2\f\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7f(\x01R\vmemoryBytes\"\x85\x02\n" +
 	"\x11CreateTaskRequest\x12\"\n" +
 	"\atask_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x80\xb5\x18\x01R\x06taskId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
@@ -2319,8 +2318,8 @@ const file_task_v1_control_proto_rawDesc = "" +
 	"\fcallback_url\x18\x03 \x01(\tR\vcallbackUrl\x127\n" +
 	"\n" +
 	"parameters\x18\x04 \x01(\v2\x17.task.v1.TaskParametersR\n" +
-	"parameters\x12G\n" +
-	"\x10resource_request\x18\x05 \x01(\v2\x1c.task.v1.TaskResourceRequestR\x0fresourceRequest\"\x14\n" +
+	"parameters\x12O\n" +
+	"\x10resource_request\x18\x05 \x01(\v2\x1c.task.v1.TaskResourceRequestB\x06\xbaH\x03\xc8\x01\x01R\x0fresourceRequest\"\x14\n" +
 	"\x12CreateTaskResponse\"s\n" +
 	"\x1fControlServiceCreateTaskRequest\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x124\n" +

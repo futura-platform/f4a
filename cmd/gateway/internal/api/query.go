@@ -77,5 +77,5 @@ func (q *queryService) AcknowledgeDeadLetters(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("acknowledge dead letters: %w", err))
 	}
-	return &taskv1.AcknowledgeDeadLettersResponse{}, nil
+	return taskv1.AcknowledgeDeadLettersResponse_builder{}.Build(), nil
 }

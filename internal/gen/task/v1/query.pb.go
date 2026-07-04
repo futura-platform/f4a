@@ -145,8 +145,8 @@ type TaskResult_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	// Fields of oneof xxx_hidden_Outcome:
-	// Opaque result payload produced by a successful task. May be empty for
-	// tasks that succeed without producing output.
+	// The marshalled result of a successful task.
+	// (using the provided execution marshaller)
 	Result []byte
 	// Error message of a failed task.
 	Failure *string
@@ -181,8 +181,8 @@ type isTaskResult_Outcome interface {
 }
 
 type taskResult_Result struct {
-	// Opaque result payload produced by a successful task. May be empty for
-	// tasks that succeed without producing output.
+	// The marshalled result of a successful task.
+	// (using the provided execution marshaller)
 	Result []byte `protobuf:"bytes,1,opt,name=result,oneof"`
 }
 
@@ -359,7 +359,6 @@ func (x *PullDeadLettersRequest) ClearMaxResults() {
 type PullDeadLettersRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	// Maximum number of dead letters to return (1-1000).
 	MaxResults *uint32
 }
 

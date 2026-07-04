@@ -198,6 +198,30 @@ func TestControllerCreateTask(t *testing.T) {
 			})
 		})
 
+		t.Run("without callback url", func(t *testing.T) {
+			taskID := "create-no-callback"
+			input := []byte("payload-no-callback")
+			_, err := c.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+				Revision: proto.Uint64(1),
+				Request: taskv1.CreateTaskRequest_builder{
+					TaskId:          proto.String(taskID),
+					ExecutorId:      proto.String("executor-a"),
+					Parameters:      taskv1.TaskParameters_builder{Input: input}.Build(),
+					ResourceRequest: testResourceRequest(),
+				}.Build(),
+			}.Build())
+			require.NoError(t, err)
+
+			state, exists := readTaskState(t, db, taskID)
+			require.True(t, exists)
+			require.Equal(t, taskState{
+				ExecutorID:      "executor-a",
+				CallbackURL:     nil,
+				Input:           input,
+				LifecycleStatus: task.LifecycleStatusSuspended,
+			}, state)
+		})
+
 		t.Run("rejects memory request above int64 max", func(t *testing.T) {
 			_, controlHandler := taskv1connect.NewControlServiceHandler(
 				c,
@@ -470,6 +494,65 @@ func TestControllerRejectsMissingResourceRequest(t *testing.T) {
 	})
 }
 
+func TestCreateTaskProtovalidateRejectsMissingResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		_, controlHandler := taskv1connect.NewControlServiceHandler(
+			c,
+			connect.WithInterceptors(validate.NewInterceptor()),
+		)
+		server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
+		client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+		taskID := "protovalidate-missing-resource-request"
+		_, err := client.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+			Revision: proto.Uint64(1),
+			Request: taskv1.CreateTaskRequest_builder{
+				TaskId:      proto.String(taskID),
+				ExecutorId:  proto.String("executor-a"),
+				CallbackUrl: proto.String("https://example.com/a"),
+				Parameters:  taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
+			}.Build(),
+		}.Build())
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "resource_request")
+
+		_, exists := readTaskState(t, db, taskID)
+		require.False(t, exists)
+	})
+}
+
+func TestCreateTaskProtovalidateRejectsZeroResourceRequest(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		_, controlHandler := taskv1connect.NewControlServiceHandler(
+			c,
+			connect.WithInterceptors(validate.NewInterceptor()),
+		)
+		server := testutil.NewEphemeralHTTPServer(t, controlHandler.ServeHTTP)
+		client := taskv1connect.NewControlServiceClient(server.Client(), server.URL)
+
+		taskID := "protovalidate-zero-resource-request"
+		_, err := client.CreateTask(context.Background(), taskv1.ControlServiceCreateTaskRequest_builder{
+			Revision: proto.Uint64(1),
+			Request: taskv1.CreateTaskRequest_builder{
+				TaskId:      proto.String(taskID),
+				ExecutorId:  proto.String("executor-a"),
+				CallbackUrl: proto.String("https://example.com/a"),
+				Parameters:  taskv1.TaskParameters_builder{Input: []byte("payload")}.Build(),
+				ResourceRequest: taskv1.TaskResourceRequest_builder{
+					CpuMillis:   proto.Uint32(0),
+					MemoryBytes: proto.Uint64(0),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+		_, exists := readTaskState(t, db, taskID)
+		require.False(t, exists)
+	})
+}
+
 func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		c := newTestController(t, db)
@@ -555,25 +638,29 @@ func TestControllerBatchTaskOperations_BestEffort(t *testing.T) {
 
 			switch operation.WhichOperation() {
 			case taskv1.BatchTaskOperation_CreateTask_case:
-				if result.WhichResponse() != taskv1.BatchTaskOperationResult_Response_not_set_case {
-					require.Equal(t, taskv1.BatchTaskOperationResult_CreateTask_case, result.WhichResponse())
-				}
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.Equal(t, taskv1.BatchTaskOperationResult_CreateTask_case, result.WhichResponse())
 					require.NotNil(t, result.GetCreateTask())
+				} else {
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
 			case taskv1.BatchTaskOperation_UpdateTask_case:
-				if result.WhichResponse() != taskv1.BatchTaskOperationResult_Response_not_set_case {
+				switch result.GetStatus() {
+				case taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED,
+					taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE:
 					require.Equal(t, taskv1.BatchTaskOperationResult_UpdateTask_case, result.WhichResponse())
+				default:
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
 					require.NotNil(t, result.GetUpdateTask())
 				}
 			case taskv1.BatchTaskOperation_DeleteTask_case:
-				if result.WhichResponse() != taskv1.BatchTaskOperationResult_Response_not_set_case {
-					require.Equal(t, taskv1.BatchTaskOperationResult_DeleteTask_case, result.WhichResponse())
-				}
 				if result.GetStatus() == taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED {
+					require.Equal(t, taskv1.BatchTaskOperationResult_DeleteTask_case, result.WhichResponse())
 					require.NotNil(t, result.GetDeleteTask())
+				} else {
+					require.Equal(t, taskv1.BatchTaskOperationResult_Response_not_set_case, result.WhichResponse())
 				}
 			default:
 				t.Fatalf("unexpected batch test operation type at index %d: %v", i, operation.WhichOperation())

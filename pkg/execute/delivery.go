@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -129,7 +129,7 @@ func attemptDelivery(ctx context.Context, r deliveryRequest) error {
 		bodyCloser = pr
 		contentType = problem.ContentTypeJSON
 	} else {
-		body = strings.NewReader(string(result.GetResult()))
+		body = bytes.NewReader(result.GetResult())
 		contentType = "application/octet-stream"
 	}
 

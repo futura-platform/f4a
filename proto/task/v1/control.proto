@@ -11,12 +11,15 @@ message TaskParameters {
 
 message TaskResourceRequest {
   // 1000 = 1 CPU core, 500 = half a core, 100 = 0.1 core.
-  uint32 cpu_millis = 1;
+  uint32 cpu_millis = 1 [(buf.validate.field).uint32.gte = 1];
 
   // Memory in bytes.
   uint64 memory_bytes = 2 [
     // Keep this within int64 range because scheduler utilization aggregates use signed atomic math.
-    (buf.validate.field).uint64.lte = 9223372036854775807
+    (buf.validate.field).uint64 = {
+      gte: 1
+      lte: 9223372036854775807
+    }
   ];
 }
 
@@ -27,7 +30,7 @@ message CreateTaskRequest {
   string executor_id = 2;
   string callback_url = 3;
   TaskParameters parameters = 4;
-  TaskResourceRequest resource_request = 5;
+  TaskResourceRequest resource_request = 5 [(buf.validate.field).required = true];
   // todo: add the ability to connect this task to a trace
 }
 message CreateTaskResponse {}
