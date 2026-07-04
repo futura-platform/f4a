@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/reliablequeue"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -12,61 +12,113 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func dequeueDeadLetter(t *testing.T, db dbutil.DbRoot) (task.Id, bool) {
+func pullDeadLetter(t *testing.T, db dbutil.DbRoot, maxResults int) []*taskv1.DeadLetter {
 	t.Helper()
 
 	queue, err := CreateOrOpenDeadLetterQueue(db)
 	require.NoError(t, err)
 
-	var (
-		id    task.Id
-		found bool
-	)
+	var deadLetters []*taskv1.DeadLetter
+	_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+		deadLetters, err = queue.Pull(tx, maxResults)
+		return nil, err
+	})
+	require.NoError(t, err)
+	return deadLetters
+}
+
+func pullAndAckDeadLetter(t *testing.T, db dbutil.DbRoot) (task.Id, bool) {
+	t.Helper()
+
+	queue, err := CreateOrOpenDeadLetterQueue(db)
+	require.NoError(t, err)
+
+	var deadLetters []*taskv1.DeadLetter
+	_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+		deadLetters, err = queue.Pull(tx, 1)
+		return nil, err
+	})
+	require.NoError(t, err)
+	if len(deadLetters) == 0 {
+		return "", false
+	}
+
+	taskID := task.Id(deadLetters[0].GetTaskId())
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-		id, found = task.Id(""), false
-		dequeued, err := queue.Dequeue(tx)
-		if err != nil {
-			if err == reliablequeue.ErrQueueEmpty {
-				return nil, nil
-			}
-			return nil, err
-		}
-		id, found = dequeued, true
+		queue.Acknowledge(tx, []task.Id{taskID})
 		return nil, nil
 	})
 	require.NoError(t, err)
-	return id, found
+	return taskID, true
 }
 
-func TestDeadLetterParkerEnqueuesTaskId(t *testing.T) {
+func parkTaskResult(t *testing.T, message string) *taskv1.TaskResult {
+	t.Helper()
+	result := &taskv1.TaskResult{}
+	result.SetFailure(message)
+	return result
+}
+
+func TestDeadLetterParkerParksTaskId(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		taskID := task.Id("dead-letter-task")
 		parker := NewDeadLetterParker(db, taskID)
+		result := parkTaskResult(t, "delivery exhausted: bad status")
 
-		require.NoError(t, parker.Park(t.Context(), "delivery exhausted: bad status"))
+		require.NoError(t, parker.Park(t.Context(), result))
 
-		id, found := dequeueDeadLetter(t, db)
-		require.True(t, found, "expected a dead letter to be enqueued")
+		id, found := pullAndAckDeadLetter(t, db)
+		require.True(t, found, "expected a dead letter to be parked")
 		assert.Equal(t, taskID, id)
 
-		_, found = dequeueDeadLetter(t, db)
+		_, found = pullAndAckDeadLetter(t, db)
 		assert.False(t, found, "expected exactly one dead letter")
 	})
 }
 
-func TestDeadLetterParkerPreservesFIFOOrder(t *testing.T) {
+func TestDeadLetterPullReturnsStoredResult(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		first := task.Id("dead-letter-first")
-		second := task.Id("dead-letter-second")
+		taskID := task.Id("dead-letter-task")
+		result := parkTaskResult(t, "delivery exhausted: bad status")
+		require.NoError(t, NewDeadLetterParker(db, taskID).Park(t.Context(), result))
 
-		require.NoError(t, NewDeadLetterParker(db, first).Park(t.Context(), "failure one"))
-		require.NoError(t, NewDeadLetterParker(db, second).Park(t.Context(), "failure two"))
+		deadLetters := pullDeadLetter(t, db, 1)
+		require.Len(t, deadLetters, 1)
+		assert.Equal(t, string(taskID), deadLetters[0].GetTaskId())
+		assert.Equal(t, result.GetFailure(), deadLetters[0].GetResult().GetFailure())
+	})
+}
 
-		id, found := dequeueDeadLetter(t, db)
+func TestDeadLetterUnacknowledgedPullLeavesEntryInQueue(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		taskID := task.Id("dead-letter-task")
+		result := parkTaskResult(t, "delivery exhausted: bad status")
+		require.NoError(t, NewDeadLetterParker(db, taskID).Park(t.Context(), result))
+
+		first := pullDeadLetter(t, db, 1)
+		require.Len(t, first, 1)
+		assert.Equal(t, string(taskID), first[0].GetTaskId())
+
+		second := pullDeadLetter(t, db, 1)
+		require.Len(t, second, 1, "pull without acknowledge must not remove the dead letter")
+		assert.Equal(t, string(taskID), second[0].GetTaskId())
+		assert.Equal(t, result.GetFailure(), second[0].GetResult().GetFailure())
+	})
+}
+
+func TestDeadLetterParkerPullOrder(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		first := task.Id("dead-letter-a")
+		second := task.Id("dead-letter-b")
+
+		require.NoError(t, NewDeadLetterParker(db, first).Park(t.Context(), parkTaskResult(t, "failure one")))
+		require.NoError(t, NewDeadLetterParker(db, second).Park(t.Context(), parkTaskResult(t, "failure two")))
+
+		id, found := pullAndAckDeadLetter(t, db)
 		require.True(t, found)
 		assert.Equal(t, first, id)
 
-		id, found = dequeueDeadLetter(t, db)
+		id, found = pullAndAckDeadLetter(t, db)
 		require.True(t, found)
 		assert.Equal(t, second, id)
 	})

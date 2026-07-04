@@ -6,13 +6,14 @@ import (
 	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 )
 
 // DeadLetterParker durably records that a task's terminal result could not
 // be delivered within the callback attempt budget, so the task can still
 // settle. Implementations are expected to be bound to a specific task.
 type DeadLetterParker interface {
-	Park(ctx context.Context, deliveryFailure string) error
+	Park(ctx context.Context, result *taskv1.TaskResult) error
 }
 
 type SettlementContainers struct {

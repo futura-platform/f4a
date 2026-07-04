@@ -15,6 +15,8 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/futura"
 	"github.com/futura-platform/futura/ftype/executiontype"
+	"github.com/futura-platform/futura/ftype/seal"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,14 +107,13 @@ func TestResultKey(t *testing.T) {
 // Ported from the retired taskManager.postResult tests: the transport
 // behavior of a single delivery attempt.
 func TestAttemptDelivery(t *testing.T) {
-	request := func(u string, failure string) deliveryRequest {
+	request := func(u string, result protoTaskResult) deliveryRequest {
 		parsed, err := url.Parse(u)
 		require.NoError(t, err)
 		return deliveryRequest{
 			completedAt: time.Now(),
 			callbackUrl: *parsed,
-			result:      "the-output",
-			failure:     failure,
+			result:      seal.Seal(result),
 		}
 	}
 
@@ -127,7 +128,7 @@ func TestAttemptDelivery(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		err := attemptDelivery(t.Context(), request(server.URL, ""))
+		err := attemptDelivery(t.Context(), request(server.URL, newTaskResultSuccess([]byte("the-output"))))
 
 		assert.NoError(t, err)
 		assert.Equal(t, "the-output", *body.Load())
@@ -145,7 +146,7 @@ func TestAttemptDelivery(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 		})
 
-		err := attemptDelivery(t.Context(), request(server.URL, "task exploded"))
+		err := attemptDelivery(t.Context(), request(server.URL, newTaskResultFailure("task exploded")))
 
 		assert.NoError(t, err)
 		assert.Contains(t, *body.Load(), "task exploded")
@@ -157,30 +158,30 @@ func TestAttemptDelivery(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
-		err := attemptDelivery(t.Context(), request(server.URL, ""))
+		err := attemptDelivery(t.Context(), request(server.URL, newTaskResultSuccess([]byte("the-output"))))
 		assert.ErrorContains(t, err, "bad status")
 	})
 
 	t.Run("returns error when the endpoint is unreachable", func(t *testing.T) {
-		err := attemptDelivery(t.Context(), request("http://127.0.0.1:1", ""))
+		err := attemptDelivery(t.Context(), request("http://127.0.0.1:1", newTaskResultSuccess(nil)))
 		assert.ErrorContains(t, err, "failed to send result")
 	})
 }
 
-// fakeParker records parked delivery failures and can be set to fail.
+// fakeParker records parked task results and can be set to fail.
 type fakeParker struct {
-	parked  chan string
+	parked  chan *taskv1.TaskResult
 	parks   atomic.Int64
 	parkErr atomic.Pointer[error]
 }
 
-func (p *fakeParker) Park(ctx context.Context, deliveryFailure string) error {
+func (p *fakeParker) Park(ctx context.Context, result *taskv1.TaskResult) error {
 	if errPtr := p.parkErr.Load(); errPtr != nil {
 		return *errPtr
 	}
 	p.parks.Add(1)
 	select {
-	case p.parked <- deliveryFailure:
+	case p.parked <- result:
 	default:
 	}
 	return nil
@@ -233,7 +234,7 @@ func newSettleHarness(t *testing.T) *settleHarness {
 		return strings.ToUpper(input), nil
 	}, NewJsonMarshaller[string, string]())
 
-	h.parker = &fakeParker{parked: make(chan string, 16)}
+	h.parker = &fakeParker{parked: make(chan *taskv1.TaskResult, 16)}
 	h.containers = SettlementContainers{
 		User:        executiontype.NewInMemoryContainer(),
 		Discharge:   executiontype.NewInMemoryContainer(),
@@ -281,10 +282,11 @@ func TestSettleParksDeadLetterWhenDeliveryExhausted(t *testing.T) {
 	assert.GreaterOrEqual(t, h.posts.Load(), int64(2))
 	require.Equal(t, int64(1), h.parker.parks.Load())
 	select {
-	case failure := <-h.parker.parked:
-		assert.Contains(t, failure, "bad status")
+	case parked := <-h.parker.parked:
+		require.True(t, parked.HasResult())
+		assert.Equal(t, []byte(`"INPUT"`), parked.GetResult())
 	default:
-		t.Fatal("expected a parked delivery failure")
+		t.Fatal("expected a parked task result")
 	}
 }
 

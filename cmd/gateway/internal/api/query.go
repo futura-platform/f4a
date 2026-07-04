@@ -2,12 +2,12 @@ package api
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
-	"github.com/futura-platform/f4a/internal/reliablequeue"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -27,7 +27,7 @@ func NewQueryService(db dbutil.DbRoot) (taskv1connect.QueryServiceHandler, error
 
 type queryService struct {
 	db              dbutil.DbRoot
-	deadLetterQueue reliablequeue.TFIFO[task.Id]
+	deadLetterQueue servicestate.DeadLetterQueue
 }
 
 // PullDeadLetters implements taskv1connect.QueryServiceHandler.
@@ -38,7 +38,22 @@ func (q *queryService) PullDeadLetters(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("PullDeadLetters is not implemented"))
+
+	var deadLetters []*taskv1.DeadLetter
+	_, err := q.db.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (any, error) {
+		pulled, err := q.deadLetterQueue.Pull(tx, int(req.GetMaxResults()))
+		if err != nil {
+			return nil, err
+		}
+		deadLetters = pulled
+		return nil, nil
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pull dead letters: %w", err))
+	}
+	return taskv1.PullDeadLettersResponse_builder{
+		DeadLetters: deadLetters,
+	}.Build(), nil
 }
 
 // AcknowledgeDeadLetters implements taskv1connect.QueryServiceHandler.
@@ -49,5 +64,18 @@ func (q *queryService) AcknowledgeDeadLetters(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("AcknowledgeDeadLetters is not implemented"))
+
+	taskIds := make([]task.Id, len(req.GetTaskIds()))
+	for i, id := range req.GetTaskIds() {
+		taskIds[i] = task.Id(id)
+	}
+
+	_, err := q.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
+		q.deadLetterQueue.Acknowledge(tx, taskIds)
+		return nil, nil
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("acknowledge dead letters: %w", err))
+	}
+	return &taskv1.AcknowledgeDeadLettersResponse{}, nil
 }

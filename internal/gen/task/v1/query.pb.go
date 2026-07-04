@@ -21,9 +21,184 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// TaskResult is the terminal outcome of a task: exactly one of a successful
+// result payload or a failure.
+type TaskResult struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome isTaskResult_Outcome   `protobuf_oneof:"outcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *TaskResult) Reset() {
+	*x = TaskResult{}
+	mi := &file_task_v1_query_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskResult) ProtoMessage() {}
+
+func (x *TaskResult) ProtoReflect() protoreflect.Message {
+	mi := &file_task_v1_query_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *TaskResult) GetResult() []byte {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Outcome.(*taskResult_Result); ok {
+			return x.Result
+		}
+	}
+	return nil
+}
+
+func (x *TaskResult) GetFailure() string {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Outcome.(*taskResult_Failure); ok {
+			return x.Failure
+		}
+	}
+	return ""
+}
+
+func (x *TaskResult) SetResult(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Outcome = &taskResult_Result{v}
+}
+
+func (x *TaskResult) SetFailure(v string) {
+	x.xxx_hidden_Outcome = &taskResult_Failure{v}
+}
+
+func (x *TaskResult) HasOutcome() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Outcome != nil
+}
+
+func (x *TaskResult) HasResult() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Outcome.(*taskResult_Result)
+	return ok
+}
+
+func (x *TaskResult) HasFailure() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Outcome.(*taskResult_Failure)
+	return ok
+}
+
+func (x *TaskResult) ClearOutcome() {
+	x.xxx_hidden_Outcome = nil
+}
+
+func (x *TaskResult) ClearResult() {
+	if _, ok := x.xxx_hidden_Outcome.(*taskResult_Result); ok {
+		x.xxx_hidden_Outcome = nil
+	}
+}
+
+func (x *TaskResult) ClearFailure() {
+	if _, ok := x.xxx_hidden_Outcome.(*taskResult_Failure); ok {
+		x.xxx_hidden_Outcome = nil
+	}
+}
+
+const TaskResult_Outcome_not_set_case case_TaskResult_Outcome = 0
+const TaskResult_Result_case case_TaskResult_Outcome = 1
+const TaskResult_Failure_case case_TaskResult_Outcome = 2
+
+func (x *TaskResult) WhichOutcome() case_TaskResult_Outcome {
+	if x == nil {
+		return TaskResult_Outcome_not_set_case
+	}
+	switch x.xxx_hidden_Outcome.(type) {
+	case *taskResult_Result:
+		return TaskResult_Result_case
+	case *taskResult_Failure:
+		return TaskResult_Failure_case
+	default:
+		return TaskResult_Outcome_not_set_case
+	}
+}
+
+type TaskResult_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// Fields of oneof xxx_hidden_Outcome:
+	// Opaque result payload produced by a successful task. May be empty for
+	// tasks that succeed without producing output.
+	Result []byte
+	// Error message of a failed task.
+	Failure *string
+	// -- end of xxx_hidden_Outcome
+}
+
+func (b0 TaskResult_builder) Build() *TaskResult {
+	m0 := &TaskResult{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.Result != nil {
+		x.xxx_hidden_Outcome = &taskResult_Result{b.Result}
+	}
+	if b.Failure != nil {
+		x.xxx_hidden_Outcome = &taskResult_Failure{*b.Failure}
+	}
+	return m0
+}
+
+type case_TaskResult_Outcome protoreflect.FieldNumber
+
+func (x case_TaskResult_Outcome) String() string {
+	md := file_task_v1_query_proto_msgTypes[0].Descriptor()
+	if x == 0 {
+		return "not set"
+	}
+	return protoimpl.X.MessageFieldStringOf(md, protoreflect.FieldNumber(x))
+}
+
+type isTaskResult_Outcome interface {
+	isTaskResult_Outcome()
+}
+
+type taskResult_Result struct {
+	// Opaque result payload produced by a successful task. May be empty for
+	// tasks that succeed without producing output.
+	Result []byte `protobuf:"bytes,1,opt,name=result,oneof"`
+}
+
+type taskResult_Failure struct {
+	// Error message of a failed task.
+	Failure string `protobuf:"bytes,2,opt,name=failure,oneof"`
+}
+
+func (*taskResult_Result) isTaskResult_Outcome() {}
+
+func (*taskResult_Failure) isTaskResult_Outcome() {}
+
 type DeadLetter struct {
 	state                  protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_TaskId      *string                `protobuf:"bytes,1,opt,name=task_id,json=taskId"`
+	xxx_hidden_Result      *TaskResult            `protobuf:"bytes,2,opt,name=result"`
 	XXX_raceDetectHookData protoimpl.RaceDetectHookData
 	XXX_presence           [1]uint32
 	unknownFields          protoimpl.UnknownFields
@@ -32,7 +207,7 @@ type DeadLetter struct {
 
 func (x *DeadLetter) Reset() {
 	*x = DeadLetter{}
-	mi := &file_task_v1_query_proto_msgTypes[0]
+	mi := &file_task_v1_query_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +219,7 @@ func (x *DeadLetter) String() string {
 func (*DeadLetter) ProtoMessage() {}
 
 func (x *DeadLetter) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_query_proto_msgTypes[0]
+	mi := &file_task_v1_query_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -65,9 +240,20 @@ func (x *DeadLetter) GetTaskId() string {
 	return ""
 }
 
+func (x *DeadLetter) GetResult() *TaskResult {
+	if x != nil {
+		return x.xxx_hidden_Result
+	}
+	return nil
+}
+
 func (x *DeadLetter) SetTaskId(v string) {
 	x.xxx_hidden_TaskId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+}
+
+func (x *DeadLetter) SetResult(v *TaskResult) {
+	x.xxx_hidden_Result = v
 }
 
 func (x *DeadLetter) HasTaskId() bool {
@@ -77,15 +263,27 @@ func (x *DeadLetter) HasTaskId() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
+func (x *DeadLetter) HasResult() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Result != nil
+}
+
 func (x *DeadLetter) ClearTaskId() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_TaskId = nil
+}
+
+func (x *DeadLetter) ClearResult() {
+	x.xxx_hidden_Result = nil
 }
 
 type DeadLetter_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	TaskId *string
+	Result *TaskResult
 }
 
 func (b0 DeadLetter_builder) Build() *DeadLetter {
@@ -93,9 +291,10 @@ func (b0 DeadLetter_builder) Build() *DeadLetter {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.TaskId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
 		x.xxx_hidden_TaskId = b.TaskId
 	}
+	x.xxx_hidden_Result = b.Result
 	return m0
 }
 
@@ -110,7 +309,7 @@ type PullDeadLettersRequest struct {
 
 func (x *PullDeadLettersRequest) Reset() {
 	*x = PullDeadLettersRequest{}
-	mi := &file_task_v1_query_proto_msgTypes[1]
+	mi := &file_task_v1_query_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -122,7 +321,7 @@ func (x *PullDeadLettersRequest) String() string {
 func (*PullDeadLettersRequest) ProtoMessage() {}
 
 func (x *PullDeadLettersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_query_proto_msgTypes[1]
+	mi := &file_task_v1_query_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -160,7 +359,7 @@ func (x *PullDeadLettersRequest) ClearMaxResults() {
 type PullDeadLettersRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	// Maximum number of dead letters to return. When zero, a server default is used.
+	// Maximum number of dead letters to return (1-1000).
 	MaxResults *uint32
 }
 
@@ -184,7 +383,7 @@ type PullDeadLettersResponse struct {
 
 func (x *PullDeadLettersResponse) Reset() {
 	*x = PullDeadLettersResponse{}
-	mi := &file_task_v1_query_proto_msgTypes[2]
+	mi := &file_task_v1_query_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -196,7 +395,7 @@ func (x *PullDeadLettersResponse) String() string {
 func (*PullDeadLettersResponse) ProtoMessage() {}
 
 func (x *PullDeadLettersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_query_proto_msgTypes[2]
+	mi := &file_task_v1_query_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -243,7 +442,7 @@ type AcknowledgeDeadLettersRequest struct {
 
 func (x *AcknowledgeDeadLettersRequest) Reset() {
 	*x = AcknowledgeDeadLettersRequest{}
-	mi := &file_task_v1_query_proto_msgTypes[3]
+	mi := &file_task_v1_query_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -255,7 +454,7 @@ func (x *AcknowledgeDeadLettersRequest) String() string {
 func (*AcknowledgeDeadLettersRequest) ProtoMessage() {}
 
 func (x *AcknowledgeDeadLettersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_query_proto_msgTypes[3]
+	mi := &file_task_v1_query_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -299,7 +498,7 @@ type AcknowledgeDeadLettersResponse struct {
 
 func (x *AcknowledgeDeadLettersResponse) Reset() {
 	*x = AcknowledgeDeadLettersResponse{}
-	mi := &file_task_v1_query_proto_msgTypes[4]
+	mi := &file_task_v1_query_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -311,7 +510,7 @@ func (x *AcknowledgeDeadLettersResponse) String() string {
 func (*AcknowledgeDeadLettersResponse) ProtoMessage() {}
 
 func (x *AcknowledgeDeadLettersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_task_v1_query_proto_msgTypes[4]
+	mi := &file_task_v1_query_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -338,12 +537,19 @@ var File_task_v1_query_proto protoreflect.FileDescriptor
 
 const file_task_v1_query_proto_rawDesc = "" +
 	"\n" +
-	"\x13task/v1/query.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\x1a%task/v1/predefined_string_rules.proto\"0\n" +
+	"\x13task/v1/query.proto\x12\atask.v1\x1a\x1bbuf/validate/validate.proto\x1a%task/v1/predefined_string_rules.proto\"T\n" +
+	"\n" +
+	"TaskResult\x12\x18\n" +
+	"\x06result\x18\x01 \x01(\fH\x00R\x06result\x12\x1a\n" +
+	"\afailure\x18\x02 \x01(\tH\x00R\afailureB\x10\n" +
+	"\aoutcome\x12\x05\xbaH\x02\b\x01\"]\n" +
 	"\n" +
 	"DeadLetter\x12\"\n" +
-	"\atask_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x80\xb5\x18\x01R\x06taskId\"C\n" +
-	"\x16PullDeadLettersRequest\x12)\n" +
-	"\vmax_results\x18\x01 \x01(\rB\b\xbaH\x05*\x03\x18\xe8\aR\n" +
+	"\atask_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x80\xb5\x18\x01R\x06taskId\x12+\n" +
+	"\x06result\x18\x02 \x01(\v2\x13.task.v1.TaskResultR\x06result\"H\n" +
+	"\x16PullDeadLettersRequest\x12.\n" +
+	"\vmax_results\x18\x01 \x01(\rB\r\xbaH\n" +
+	"\xc8\x01\x01*\x05\x18\xe8\a(\x01R\n" +
 	"maxResults\"Q\n" +
 	"\x17PullDeadLettersResponse\x126\n" +
 	"\fdead_letters\x18\x01 \x03(\v2\x13.task.v1.DeadLetterR\vdeadLetters\"J\n" +
@@ -356,25 +562,27 @@ const file_task_v1_query_proto_rawDesc = "" +
 	"\vcom.task.v1B\n" +
 	"QueryProtoP\x01Z:github.com/futura-platform/f4a/internal/gen/task/v1;taskv1\xa2\x02\x03TXX\xaa\x02\aTask.V1\xca\x02\aTask\\V1\xe2\x02\x13Task\\V1\\GPBMetadata\xea\x02\bTask::V1b\beditionsp\xe9\a"
 
-var file_task_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_task_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_task_v1_query_proto_goTypes = []any{
-	(*DeadLetter)(nil),                     // 0: task.v1.DeadLetter
-	(*PullDeadLettersRequest)(nil),         // 1: task.v1.PullDeadLettersRequest
-	(*PullDeadLettersResponse)(nil),        // 2: task.v1.PullDeadLettersResponse
-	(*AcknowledgeDeadLettersRequest)(nil),  // 3: task.v1.AcknowledgeDeadLettersRequest
-	(*AcknowledgeDeadLettersResponse)(nil), // 4: task.v1.AcknowledgeDeadLettersResponse
+	(*TaskResult)(nil),                     // 0: task.v1.TaskResult
+	(*DeadLetter)(nil),                     // 1: task.v1.DeadLetter
+	(*PullDeadLettersRequest)(nil),         // 2: task.v1.PullDeadLettersRequest
+	(*PullDeadLettersResponse)(nil),        // 3: task.v1.PullDeadLettersResponse
+	(*AcknowledgeDeadLettersRequest)(nil),  // 4: task.v1.AcknowledgeDeadLettersRequest
+	(*AcknowledgeDeadLettersResponse)(nil), // 5: task.v1.AcknowledgeDeadLettersResponse
 }
 var file_task_v1_query_proto_depIdxs = []int32{
-	0, // 0: task.v1.PullDeadLettersResponse.dead_letters:type_name -> task.v1.DeadLetter
-	1, // 1: task.v1.QueryService.PullDeadLetters:input_type -> task.v1.PullDeadLettersRequest
-	3, // 2: task.v1.QueryService.AcknowledgeDeadLetters:input_type -> task.v1.AcknowledgeDeadLettersRequest
-	2, // 3: task.v1.QueryService.PullDeadLetters:output_type -> task.v1.PullDeadLettersResponse
-	4, // 4: task.v1.QueryService.AcknowledgeDeadLetters:output_type -> task.v1.AcknowledgeDeadLettersResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: task.v1.DeadLetter.result:type_name -> task.v1.TaskResult
+	1, // 1: task.v1.PullDeadLettersResponse.dead_letters:type_name -> task.v1.DeadLetter
+	2, // 2: task.v1.QueryService.PullDeadLetters:input_type -> task.v1.PullDeadLettersRequest
+	4, // 3: task.v1.QueryService.AcknowledgeDeadLetters:input_type -> task.v1.AcknowledgeDeadLettersRequest
+	3, // 4: task.v1.QueryService.PullDeadLetters:output_type -> task.v1.PullDeadLettersResponse
+	5, // 5: task.v1.QueryService.AcknowledgeDeadLetters:output_type -> task.v1.AcknowledgeDeadLettersResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_task_v1_query_proto_init() }
@@ -383,13 +591,17 @@ func file_task_v1_query_proto_init() {
 		return
 	}
 	file_task_v1_predefined_string_rules_proto_init()
+	file_task_v1_query_proto_msgTypes[0].OneofWrappers = []any{
+		(*taskResult_Result)(nil),
+		(*taskResult_Failure)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_task_v1_query_proto_rawDesc), len(file_task_v1_query_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

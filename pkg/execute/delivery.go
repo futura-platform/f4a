@@ -6,26 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/futura-platform/futura/flog"
 	"github.com/futura-platform/futura/ftype"
-	"github.com/samber/mo"
+	"github.com/futura-platform/futura/ftype/seal"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"schneider.vip/problem"
 )
 
 type deliveryRequest struct {
 	completedAt time.Time
 	callbackUrl url.URL
-	result      string
-	failure     string
+	result      seal.Sealed[protoTaskResult]
 }
 
 // Result delivery retry policy: bounded attempts against a callback
@@ -61,28 +60,32 @@ func newDeliveryBackoff(completedAt time.Time) backoff.BackOff {
 
 // deliverResult delivers the terminal result to the callback endpoint.
 // It is designed to be a futura Step that never returns a delivery error.
-// It returns the delivery failure as a return value,
-// so that futura's retry mechanism is not invoked when the callback fails to deliver.
+// It returns true when the callback delivery budget is exhausted, so that
+// futura's retry mechanism is not invoked when the callback fails to deliver.
 // That should be handled by the dead letter queue.
 // The only error it can return is the context's error on cancellation.
-func deliverResult(ctx context.Context, r deliveryRequest) (mo.Option[string], error) {
+func deliverResult(ctx context.Context, r deliveryRequest) (bool, error) {
+	span := trace.SpanFromContext(ctx)
 	deliveryErr := backoff.RetryNotify(
 		func() error { return attemptDelivery(ctx, r) },
 		backoff.WithContext(newDeliveryBackoff(r.completedAt), ctx),
 		func(err error, next time.Duration) {
-			flog.FromContext(ctx).LogAttrs(ctx, slog.LevelWarn, "callback delivery attempt failed",
-				slog.String("error", err.Error()),
-				slog.Duration("retry_in", next),
+			span.AddEvent("callback delivery attempt failed",
+				trace.WithAttributes(
+					attribute.String("error", err.Error()),
+					attribute.String("retry_in", next.String()),
+				),
 			)
 		},
 	)
 	switch {
 	case ctx.Err() != nil:
-		return mo.None[string](), ctx.Err()
+		return false, ctx.Err()
 	case deliveryErr != nil:
-		return mo.Some(deliveryErr.Error()), nil
+		span.RecordError(deliveryErr)
+		return true, nil
 	default:
-		return mo.None[string](), nil
+		return false, nil
 	}
 }
 
@@ -92,30 +95,25 @@ var ErrNoDeadLetterParker = errors.New("no dead letter parker configured")
 // the task can still settle (and be deleted). Unlike the callback endpoint,
 // the dead letter queue is our own infrastructure: failures here are flow
 // errors, retried by the normal machinery.
-func (g *genericExecutable[A, R]) parkDeadLetter(ctx context.Context, deliveryFailure string) error {
+func (g *genericExecutable[A, R]) parkDeadLetter(ctx context.Context, result seal.Sealed[protoTaskResult]) error {
 	if g.deadLetters == nil {
 		// A callback was configured but no parker was provided. This is a
 		// permanent misconfiguration, so cancel the flow instead of letting
 		// the loop retry it forever; the task stays owed either way.
-		return fmt.Errorf("%w: %w: cannot park delivery failure: %s",
-			ftype.ErrCancelFlow, ErrNoDeadLetterParker, deliveryFailure)
+		return fmt.Errorf("%w: %w", ftype.ErrCancelFlow, ErrNoDeadLetterParker)
 	}
-	return g.deadLetters.Park(ctx, deliveryFailure)
+	return g.deadLetters.Park(ctx, result.V().TaskResult)
 }
 
 func attemptDelivery(ctx context.Context, r deliveryRequest) error {
-	l := flog.FromContext(ctx)
-	l.LogAttrs(ctx, slog.LevelDebug, "sending result to callback",
-		slog.String("callback_url", r.callbackUrl.String()),
-		slog.String("task_error", r.failure),
-	)
+	result := r.result.V()
 	var body io.Reader
 	var bodyCloser io.Closer
 	var contentType string
-	if r.failure != "" {
+	if result.HasFailure() {
 		p := problem.New(
 			problem.Title("Task failed"),
-			problem.Detail(r.failure),
+			problem.Detail(result.GetFailure()),
 			problem.Status(http.StatusInternalServerError),
 		)
 		pr, pw := io.Pipe()
@@ -131,7 +129,7 @@ func attemptDelivery(ctx context.Context, r deliveryRequest) error {
 		bodyCloser = pr
 		contentType = problem.ContentTypeJSON
 	} else {
-		body = strings.NewReader(r.result)
+		body = strings.NewReader(string(result.GetResult()))
 		contentType = "application/octet-stream"
 	}
 

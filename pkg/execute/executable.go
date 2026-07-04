@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/futura-platform/futura"
-	"github.com/futura-platform/futura/flog"
 	"github.com/futura-platform/futura/ftype"
+	"github.com/futura-platform/futura/ftype/seal"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Executable interface {
@@ -62,7 +63,7 @@ func (g *genericExecutable[A, R]) Settle(
 ) error {
 	output, flowErr := g.executeUserFlow(ctx, marshalledInput, opts...)
 	if flowErr != nil {
-		flog.FromContext(ctx).Error("failed to execute user flow", "error", flowErr)
+		trace.SpanFromContext(ctx).RecordError(flowErr)
 	}
 	if callbackUrl == nil {
 		// without a callback there is no discharge flow to absorb the failure,
@@ -87,20 +88,22 @@ func (g *genericExecutable[A, R]) Settle(
 				return struct{}{}, err
 			}
 
-			failure := ""
+			var terminalResult protoTaskResult
 			if flowErr != nil {
-				failure = flowErr.Error()
+				terminalResult = newTaskResultFailure(flowErr.Error())
+			} else {
+				terminalResult = newTaskResultSuccess(resultBytes)
 			}
-			deliveryFailure, err := futura.Step(b, deliverResult, deliveryRequest{
+			sealedResult := seal.Seal(terminalResult)
+			deliveryFailed, err := futura.Step(b, deliverResult, deliveryRequest{
 				completedAt: completedAt,
 				callbackUrl: *callbackUrl,
-				result:      string(resultBytes),
-				failure:     failure,
+				result:      sealedResult,
 			})
 			if err != nil {
 				return struct{}{}, err
-			} else if deliveryFailure.IsSome() {
-				return struct{}{}, futura.Effect(b, g.parkDeadLetter, deliveryFailure.MustGet())
+			} else if deliveryFailed {
+				return struct{}{}, futura.Effect(b, g.parkDeadLetter, sealedResult)
 			}
 
 			return struct{}{}, nil
