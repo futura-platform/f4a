@@ -130,32 +130,50 @@ func (s *Scheduler) assignPending(
 		assignmentPlan[runner.runnerId] = mapset.NewSet[taskWithResourceRequest]()
 	}
 
-	// load the tasks with their resource requests
+	// Load the tasks with their resource requests, batched: one read
+	// transaction per task turned a large backlog into an unbounded silent
+	// startup stall (observed: a promoted leader ground through an ~87k
+	// pending set for 13+ minutes with no output — the line looked dead).
+	// Chunking keeps each transaction well inside the 5s budget while
+	// cutting the transaction count by resourceRequestLoadBatchSize.
+	const resourceRequestLoadBatchSize = 256
+	pendingIdSlice := pendingIds.ToSlice()
 	taskResourceRequests := mapset.NewSet[taskWithResourceRequest]()
 	taskGroup, taskCtx := errgroup.WithContext(ctx)
 	taskGroup.SetLimit(s.batchTxParallelism())
-	for taskId := range pendingIds.Iter() {
+	for batchStart := 0; batchStart < len(pendingIdSlice); batchStart += resourceRequestLoadBatchSize {
+		batch := pendingIdSlice[batchStart:min(batchStart+resourceRequestLoadBatchSize, len(pendingIdSlice))]
 		taskGroup.Go(func() error {
-			_, err := s.db.ReadTransactContext(taskCtx, func(t fdb.ReadTransaction) (any, error) {
-				taskKey, err := s.taskDir.Open(t, task.Id(taskId))
-				if err != nil {
-					if errors.Is(err, directory.ErrDirNotExists) {
-						return nil, nil
+			// Collect inside the closure and merge after the commit: the
+			// closure re-runs on transaction retry, and mutating the shared
+			// set from inside it would duplicate entries.
+			loaded, err := s.db.ReadTransactContext(taskCtx, func(t fdb.ReadTransaction) (any, error) {
+				batchLoaded := make([]taskWithResourceRequest, 0, len(batch))
+				for _, taskId := range batch {
+					taskKey, err := s.taskDir.Open(t, task.Id(taskId))
+					if err != nil {
+						if errors.Is(err, directory.ErrDirNotExists) {
+							continue
+						}
+						return nil, fmt.Errorf("failed to open task %s: %w", taskId, err)
 					}
-					return nil, fmt.Errorf("failed to open task %s: %w", taskId, err)
-				}
 
-				taskResourceRequest, err := taskKey.ResourceRequest().Get(t).Get()
-				if err != nil {
-					return nil, fmt.Errorf("failed to get task resource request for task %s: %w", taskId, err)
+					taskResourceRequest, err := taskKey.ResourceRequest().Get(t).Get()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get task resource request for task %s: %w", taskId, err)
+					}
+					batchLoaded = append(batchLoaded, taskWithResourceRequest{
+						taskId:          task.Id(taskId),
+						resourceRequest: taskResourceRequest,
+					})
 				}
-				taskResourceRequests.Add(taskWithResourceRequest{
-					taskId:          task.Id(taskId),
-					resourceRequest: taskResourceRequest,
-				})
-				return nil, nil
+				return batchLoaded, nil
 			})
-			return err
+			if err != nil {
+				return err
+			}
+			taskResourceRequests.Append(loaded.([]taskWithResourceRequest)...)
+			return nil
 		})
 	}
 	if err := taskGroup.Wait(); err != nil {

@@ -69,6 +69,9 @@ const (
 )
 
 func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients) error {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	taskDir, err := task.CreateOrOpenTasksDirectory(db)
 	if err != nil {
 		return fmt.Errorf("failed to open task directory: %w", err)
@@ -238,10 +241,20 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to create assignment failure gauge: %w", err)
 	}
 
+	// The stages below can legitimately take minutes against a large
+	// backlog; each one logs so a slow startup is never mistaken for a
+	// wedged one (observed: a promoted leader that looked dead for 13+
+	// minutes with no output while grinding through an ~87k pending set).
+	s.logger.Info("scheduler startup: streaming pending set")
+	streamStart := time.Now()
 	initialValues, eventsCh, streamErrCh, err := s.taskPlacer.StreamPendingTasks(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}
+	s.logger.Info("scheduler startup: pending set streamed",
+		"pending", initialValues.Cardinality(),
+		"took", time.Since(streamStart).String(),
+	)
 
 	cancelReaper, err := reaper.SpawnReaperRoutine(
 		ctx,
@@ -255,11 +268,18 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	}
 	defer cancelReaper()
 
+	s.logger.Info("scheduler startup: assigning initial pending tasks", "pending", initialValues.Cardinality())
+	assignStart := time.Now()
 	lastAssignmentFailures, err := s.assignPending(ctx, initialValues)
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
 	}
 	lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
+	s.logger.Info("scheduler startup: initial assignment complete",
+		"pending", initialValues.Cardinality(),
+		"unassignable", lastAssignmentFailures.All().Cardinality(),
+		"took", time.Since(assignStart).String(),
+	)
 
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()
