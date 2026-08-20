@@ -130,7 +130,12 @@ func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error
 	}
 
 	usedBytes := compactionFixedOverheadBytes + estimateCursorAccountingBytes(index, time.Now())
-	processed := 0
+	type compactionEntry struct {
+		op          LogOperation
+		value       []byte
+		snapshotKey fdb.Key
+	}
+	toApply := make([]compactionEntry, 0, len(logEntries))
 	for _, logEntry := range logEntries {
 		var entry LogEntry
 		err := entry.UnmarshalBinary(logEntry.Value)
@@ -142,32 +147,69 @@ func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error
 		if err != nil {
 			return false, err
 		}
-		if processed > 0 && usedBytes+entryBytes > maxTxAffectedBytes {
+		if len(toApply) > 0 && usedBytes+entryBytes > maxTxAffectedBytes {
 			more = true
 			break
 		}
-		switch entry.Op {
-		case LogOperationAdd:
-			tx.Set(snapshotKey, entry.Value)
-		case LogOperationRemove:
-			tx.Clear(snapshotKey)
-		default:
-			return false, fmt.Errorf("invalid log operation: %d", entry.Op)
-		}
 		usedBytes += entryBytes
-		processed++
+		toApply = append(toApply, compactionEntry{op: entry.Op, value: entry.Value, snapshotKey: snapshotKey})
 	}
-	if processed == 0 {
+	if len(toApply) == 0 {
 		return false, fmt.Errorf("single compaction entry exceeds tx budget")
+	}
+
+	// Prefetch the pre-chunk membership of every touched snapshot key, then
+	// track membership while applying, so the cardinality counter stays exact
+	// under duplicate adds and removes of absent items. Snapshot reads are safe
+	// here (the compaction lock serializes all snapshot mutations) and add no
+	// conflict ranges to the transaction budget.
+	membershipFutures := make(map[string]fdb.FutureByteSlice, len(toApply))
+	for _, e := range toApply {
+		k := string(e.snapshotKey)
+		if _, ok := membershipFutures[k]; !ok {
+			membershipFutures[k] = tx.Snapshot().Get(e.snapshotKey)
+		}
+	}
+	membership := make(map[string]bool, len(membershipFutures))
+	for k, future := range membershipFutures {
+		value, err := future.Get()
+		if err != nil {
+			return false, err
+		}
+		membership[k] = value != nil
+	}
+
+	var cardinalityDelta int64
+	for _, e := range toApply {
+		k := string(e.snapshotKey)
+		switch e.op {
+		case LogOperationAdd:
+			if !membership[k] {
+				cardinalityDelta++
+				membership[k] = true
+			}
+			tx.Set(e.snapshotKey, e.value)
+		case LogOperationRemove:
+			if membership[k] {
+				cardinalityDelta--
+				membership[k] = false
+			}
+			tx.Clear(e.snapshotKey)
+		default:
+			return false, fmt.Errorf("invalid log operation: %d", e.op)
+		}
+	}
+	if cardinalityDelta != 0 {
+		dbutil.AtomicIncrement(tx, c.set.cardinalityKey, cardinalityDelta)
 	}
 
 	chunkRange := fdb.KeyRange{
 		Begin: logEntries[0].Key,
-		End:   dbutil.KeyAfter(logEntries[processed-1].Key),
+		End:   dbutil.KeyAfter(logEntries[len(toApply)-1].Key),
 	}
 	tx.ClearRange(chunkRange)
 	if !more {
-		more = readMore || processed < len(logEntries)
+		more = readMore || len(toApply) < len(logEntries)
 	}
 	return more, nil
 }

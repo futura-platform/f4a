@@ -289,7 +289,68 @@ func TestSetCompactLog(t *testing.T) {
 			require.NoError(t, err, "failed to compact log")
 
 			requireSetMatchesDB(t, db, set, expected)
+
+			// The cardinality counter must stay exact across chunked compaction.
+			_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+				count, cerr := set.Cardinality(tx)
+				if cerr != nil {
+					return nil, cerr
+				}
+				require.EqualValues(t, expected.Cardinality(), count)
+				return nil, nil
+			})
+			require.NoError(t, err)
 		})
+	})
+}
+
+func TestSetCardinality(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "cardinality")
+
+		readCardinality := func() int64 {
+			var count int64
+			_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+				var err error
+				count, err = set.Cardinality(tx)
+				return nil, err
+			})
+			require.NoError(t, err)
+			return count
+		}
+
+		require.EqualValues(t, 0, readCardinality())
+
+		// Duplicate adds count once; an added-then-removed item doesn't count.
+		addItem(t, db, set, []byte("a"))
+		addItem(t, db, set, []byte("b"))
+		addItem(t, db, set, []byte("b"))
+		addItem(t, db, set, []byte("c"))
+		removeItem(t, db, set, []byte("c"))
+
+		// Cardinality is as-of-last-compaction: nothing compacted yet.
+		require.EqualValues(t, 0, readCardinality())
+
+		require.NoError(t, set.compactor.compactLog(t.Context(), db))
+		require.EqualValues(t, 2, readCardinality())
+
+		// Removes of a present item and an absent item, plus a duplicate add.
+		removeItem(t, db, set, []byte("a"))
+		removeItem(t, db, set, []byte("missing"))
+		addItem(t, db, set, []byte("b"))
+		require.NoError(t, set.compactor.compactLog(t.Context(), db))
+		require.EqualValues(t, 1, readCardinality())
+
+		addItem(t, db, set, []byte("d"))
+		addItem(t, db, set, []byte("e"))
+		require.NoError(t, set.compactor.compactLog(t.Context(), db))
+		require.EqualValues(t, 3, readCardinality())
+
+		// Remove then re-add of a snapshot-present item nets zero within a chunk.
+		removeItem(t, db, set, []byte("b"))
+		addItem(t, db, set, []byte("b"))
+		require.NoError(t, set.compactor.compactLog(t.Context(), db))
+		require.EqualValues(t, 3, readCardinality())
 	})
 }
 

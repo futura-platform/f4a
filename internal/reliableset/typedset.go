@@ -42,6 +42,9 @@ func (s TSet[T]) Items(ctx context.Context, db fdb.Database) (items mapset.Set[T
 func (s TSet[T]) Remove(tx fdb.Transaction, value T) error {
 	return s.set.Remove(tx, s.parser.Marshal(value))
 }
+func (s TSet[T]) Cardinality(t fdb.ReadTransaction) (int64, error) {
+	return s.set.Cardinality(t)
+}
 func (s TSet[T]) RunCompactor() (cancel func()) {
 	return s.set.RunCompactor()
 }

@@ -2,6 +2,7 @@ package reliableset
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -21,6 +22,8 @@ type set struct {
 
 	// this key should be incremented for every new log entry
 	epochKey fdb.Key
+	// item count of the snapshot, maintained transactionally by compaction
+	cardinalityKey fdb.Key
 
 	setDirectories
 
@@ -78,6 +81,7 @@ func constructWith[T fdb.ReadTransactor](
 	s := &set{
 		db:             db,
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
+		cardinalityKey: dirs.metadataSubspace.Pack(tuple.Tuple{"cardinality"}),
 		setDirectories: dirs,
 		clearFunc:      clearFunc,
 	}
@@ -209,6 +213,23 @@ func (s *set) leasedItems(ctx context.Context, db fdb.Database) (
 		tail = l.key
 	}
 	return snapshot, tail, activeLease, nil
+}
+
+// Cardinality returns the number of items in the set as of the last completed
+// compaction. Log entries that have not been compacted yet are not reflected,
+// so the value is eventually consistent with Items.
+func (s *set) Cardinality(t fdb.ReadTransaction) (int64, error) {
+	raw, err := t.Get(s.cardinalityKey).Get()
+	if err != nil {
+		return 0, err
+	}
+	if raw == nil {
+		return 0, nil
+	}
+	if len(raw) != 8 {
+		return 0, fmt.Errorf("invalid cardinality value length: %d", len(raw))
+	}
+	return int64(binary.LittleEndian.Uint64(raw)), nil
 }
 
 // Clear stops background runtime and removes this set directory recursively.
