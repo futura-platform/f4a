@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -19,6 +20,9 @@ import (
 // It is gauranteed to be contention free on write operations
 type set struct {
 	db dbutil.DbRoot
+
+	// human-readable identity (the directory path) for error messages
+	name string
 
 	// this key should be incremented for every new log entry
 	epochKey fdb.Key
@@ -80,6 +84,7 @@ func constructWith[T fdb.ReadTransactor](
 	}
 	s := &set{
 		db:             db,
+		name:           strings.Join(path, "/"),
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
 		cardinalityKey: dirs.metadataSubspace.Pack(tuple.Tuple{"cardinality"}),
 		setDirectories: dirs,

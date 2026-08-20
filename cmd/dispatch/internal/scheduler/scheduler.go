@@ -185,7 +185,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			return nil, nil
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("collect task metrics: %w", err)
 		}
 		o.ObserveFloat64(requestedCpuGauge, float64(activeDemandCpuMillis)/1000, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
 		o.ObserveInt64(requestedMemoryBytesGauge, activeDemandMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
@@ -217,7 +217,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				return nil, err
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("collect task count for runner %s: %w", runnerID, err)
 			}
 			runningCount += runnerTaskCount
 		}

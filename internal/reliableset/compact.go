@@ -51,7 +51,7 @@ func (c *setCompactor) runCompactionLoop() error {
 		case <-ticker.C:
 			err := c.compactLog(c.runCtx, c.set.db)
 			if err != nil {
-				slog.Error("reliableset: failed to compact log", "error", err)
+				slog.Error("reliableset: failed to compact log", "set", c.set.name, "error", err)
 				continue
 			}
 		}
