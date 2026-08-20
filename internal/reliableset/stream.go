@@ -2,6 +2,7 @@ package reliableset
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -55,12 +56,58 @@ func (s *set) Stream(ctx context.Context) (
 					rawErrCh = nil
 					continue
 				}
+				if errors.Is(err, errCursorEvicted) {
+					currentState, rawEventsCh, rawErrCh, err = s.resyncStream(ctx, currentState, eventsCh)
+					if err == nil {
+						continue
+					}
+				}
 				sendStreamErr(_errCh, err)
 				return
 			}
 		}
 	}()
 	return initialValues, eventsCh, _errCh, nil
+}
+
+// resyncStream re-establishes the raw event stream after the compactor evicted
+// this stream's cursor for lagging too far (see evictCursors). It emits the net
+// difference between the consumer's state and the fresh snapshot, so consumers
+// absorb the gap as ordinary absolute changes. It mirrors streamEvents' return
+// shape: the fresh state and the new raw channels.
+func (s *set) resyncStream(
+	ctx context.Context,
+	currentState mapset.Set[string],
+	eventsCh chan<- []LogEntry,
+) (mapset.Set[string], <-chan []LogEntry, <-chan error, error) {
+	newInitial, rawEventsCh, rawErrCh, err := s.streamEvents(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if reconciliation := diffStates(currentState, newInitial); len(reconciliation) > 0 {
+		if err := sendStreamBatch(ctx, eventsCh, reconciliation); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return newInitial.Clone(), rawEventsCh, rawErrCh, nil
+}
+
+// diffStates returns the absolute operations that transform `from` into `to`.
+func diffStates(from, to mapset.Set[string]) []LogEntry {
+	entries := make([]LogEntry, 0)
+	from.Each(func(item string) bool {
+		if !to.ContainsOne(item) {
+			entries = append(entries, LogEntry{Op: LogOperationRemove, Value: []byte(item)})
+		}
+		return false
+	})
+	to.Each(func(item string) bool {
+		if !from.ContainsOne(item) {
+			entries = append(entries, LogEntry{Op: LogOperationAdd, Value: []byte(item)})
+		}
+		return false
+	})
+	return entries
 }
 
 // resolveAbsoluteBatch resolves the absolute batch of changes from the relative batch + the current state.

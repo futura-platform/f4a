@@ -64,6 +64,16 @@ func (s *set) streamEvents(ctx context.Context) (
 	_errCh := make(chan error, 1)
 	onEpochCh, onEpochErrCh := reliablewatch.WatchCh(streamCtx, s.db, s.epochKey, epochChunk{tailKey: initialTail}, initialEpochWatch,
 		func(tx fdb.ReadTransaction, _ fdb.KeyConvertible, l epochChunk) (epochChunk, error) {
+			// Check our cursor in the same transaction as the log read: if the
+			// compactor evicted us, the log may be compacted past our tail and
+			// reading from it would silently skip entries.
+			currentTail, err := tx.Get(cursor.key(cursorKeyTail)).Get()
+			if err != nil {
+				return epochChunk{}, err
+			}
+			if currentTail == nil {
+				return epochChunk{}, errCursorEvicted
+			}
 			logEntries, err := s.readLog(streamCtx, tx, l.tailKey)
 			if err != nil {
 				return epochChunk{}, err

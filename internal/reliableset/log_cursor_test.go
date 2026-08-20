@@ -40,6 +40,43 @@ func TestLogCursorMaintainsIndependentState(t *testing.T) {
 	})
 }
 
+func TestLogCursorAdvanceDetectsEviction(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "log_cursor_evicted_advance")
+		cursor := newLogCursor(set)
+
+		begin, _ := set.logSubspace.FDBRangeKeys()
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
+			cursor.register(tx, begin)
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		addItem(t, db, set, []byte("next"))
+		lastKey := readLastLogKey(t, db, set)
+
+		// Simulate the compactor evicting this cursor.
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			tx.Clear(cursor.key(cursorKeyTail))
+			tx.Clear(cursor.key(cursorKeyLease))
+			tx.Clear(cursor.key(cursorKeyHint))
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		err = cursor.advance(context.Background(), lastKey)
+		require.ErrorIs(t, err, errCursorEvicted)
+
+		// The advance must not blind-write the cursor back to life.
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			require.Nil(t, tx.Get(cursor.key(cursorKeyTail)).MustGet())
+			require.Nil(t, tx.Get(cursor.key(cursorKeyLease)).MustGet())
+			return nil, nil
+		})
+		require.NoError(t, err)
+	})
+}
+
 func TestLogCursorClearRemovesOnlyOwnKeys(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "log_cursor_clear")

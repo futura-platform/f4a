@@ -257,6 +257,56 @@ func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 	})
 }
 
+func TestStreamResyncsAfterCursorEviction(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_resync_eviction")
+		addBatch(t, db, set, [][]byte{[]byte("a"), []byte("b")})
+
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		initialValues, events, errCh, err := set.Stream(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, errCh)
+		require.True(t, stateSetsEqual(initialValues, mapset.NewSet[string]("a", "b")))
+		local := cloneSet(initialValues)
+
+		// Wedge the whole delivery pipeline so later writes are provably unread:
+		// wedge-1 blocks the Stream goroutine on its send to us, wedge-2 blocks
+		// the streamEvents goroutine on its send to Stream, and wedge-3 blocks
+		// the watch goroutine on its send to streamEvents — after which nothing
+		// reads the log until we resume consuming.
+		addItem(t, db, set, []byte("wedge-1"))
+		time.Sleep(300 * time.Millisecond)
+		addItem(t, db, set, []byte("wedge-2"))
+		time.Sleep(300 * time.Millisecond)
+		addItem(t, db, set, []byte("wedge-3"))
+		time.Sleep(300 * time.Millisecond)
+
+		// Behind the wedge: remove "a", evict the stream's cursor, and compact.
+		// The removal is folded into the snapshot and its log entry cleared, so
+		// the stream can never observe it from the log — only a re-sync from the
+		// snapshot can reveal it.
+		removeItem(t, db, set, []byte("a"))
+		cursorID := readSingleCursorID(t, db, set)
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			tx.Clear(set.cursorKey(cursorID, cursorKeyTail))
+			tx.Clear(set.cursorKey(cursorID, cursorKeyLease))
+			tx.Clear(set.cursorKey(cursorID, cursorKeyHint))
+			return nil, nil
+		})
+		require.NoError(t, err)
+		require.NoError(t, set.compactor.compactLog(t.Context(), db))
+
+		addItem(t, db, set, []byte("c"))
+
+		// The stream must detect the eviction, re-sync, and converge on the true
+		// state — including the removal of "a" it never saw in the log — without
+		// surfacing any error to us.
+		expected := mapset.NewSet[string]("b", "wedge-1", "wedge-2", "wedge-3", "c")
+		awaitSetState(t, ctx, events, errCh, &local, expected)
+		requireSetMatchesDB(t, db, set, expected)
+	})
+}
+
 func TestSetStreamHighActivity(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "stream_high_activity")

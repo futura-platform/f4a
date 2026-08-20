@@ -4,11 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 )
+
+// errCursorEvicted signals that this cursor's keys were cleared by the
+// compactor (see evictCursors); the consumer must re-sync from the snapshot.
+var errCursorEvicted = errors.New("reliableset: cursor evicted")
 
 type logCursor struct {
 	set  *set
@@ -64,6 +69,16 @@ func (c *logCursor) advance(ctx context.Context, tail fdb.KeyConvertible) error 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		// Reading our own tail (not just blind-writing it) both detects an
+		// eviction by the compactor and conflicts with one committing
+		// concurrently, so an evicted cursor can never be blind-written back.
+		current, err := tx.Get(c.key(cursorKeyTail)).Get()
+		if err != nil {
+			return nil, err
+		}
+		if current == nil {
+			return nil, errCursorEvicted
+		}
 		c.writeTail(tx, tail)
 		c.writeLease(tx, time.Now())
 		return nil, nil
@@ -83,10 +98,24 @@ func (c *logCursor) leaseLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			evicted := false
 			_, _ = c.set.db.Transact(func(tx fdb.Transaction) (any, error) {
+				// Never refresh the lease of an evicted cursor: a blind write
+				// here would resurrect it as a tail-less orphan.
+				current, err := tx.Get(c.key(cursorKeyTail)).Get()
+				if err != nil {
+					return nil, err
+				}
+				if current == nil {
+					evicted = true
+					return nil, nil
+				}
 				c.writeLease(tx, time.Now())
 				return nil, nil
 			})
+			if evicted {
+				return
+			}
 		}
 	}
 }
