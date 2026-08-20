@@ -3,10 +3,12 @@ package reliableset
 import (
 	"bytes"
 	"encoding/binary"
+	"log/slog"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
 // The cursor is used to communicate which log entries have yet to be processed by read consumers.
@@ -121,7 +123,15 @@ func minActiveTail(active map[string]cursorState) (fdb.Key, bool) {
 	return min, true
 }
 
-func cleanDeadCursors(tx fdb.Transaction, index cursorIndex, now time.Time) error {
+// evictCursors clears cursors that should no longer hold back compaction and
+// returns the surviving active cursors. It evicts in two phases:
+//  1. garbage collection: cursors whose lease has expired
+//  2. stalled cursors: live cursors pinning more than maxCursorLagBytes of
+//     uncompacted log (the consumer must then re-sync from the snapshot)
+func (s *set) evictCursors(tx fdb.Transaction, index cursorIndex) (map[string]cursorState, error) {
+	now := time.Now()
+
+	// evict cursors that need garbage collection
 	for id, keys := range index.keysByID {
 		lease, ok := index.leases[id]
 		if ok && lease.After(now) {
@@ -131,5 +141,23 @@ func cleanDeadCursors(tx fdb.Transaction, index cursorIndex, now time.Time) erro
 			tx.Clear(key)
 		}
 	}
-	return nil
+
+	// evict cursors that have likely stalled
+	active := activeCursors(index, now)
+	_, end := s.logSubspace.FDBRangeKeys()
+	for id, state := range active {
+		lagBytes, err := tx.GetEstimatedRangeSizeBytes(fdb.KeyRange{Begin: dbutil.KeyAfter(state.tail), End: end}).Get()
+		if err != nil {
+			return nil, err
+		}
+		if lagBytes <= maxCursorLagBytes {
+			continue
+		}
+		slog.Warn("reliableset: evicting stalled cursor pinning too much log", "cursor_id", id, "estimated_lag_bytes", lagBytes)
+		for _, key := range index.keysByID[id] {
+			tx.Clear(key)
+		}
+		delete(active, id)
+	}
+	return active, nil
 }

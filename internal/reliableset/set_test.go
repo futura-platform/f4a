@@ -343,24 +343,138 @@ func TestCompactionRespectsActiveCursor(t *testing.T) {
 	})
 }
 
-func TestCleanDeadCursors(t *testing.T) {
+func TestCompactionEvictsStalledCursor(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "evict_stalled_cursor")
+
+		// Build a log far past maxCursorLagBytes (~66MB), so the evict decision
+		// sits well outside the sampling noise of GetEstimatedRangeSizeBytes.
+		// midTail marks a point ~19MB from the end: clearly lagging, but clearly
+		// under the cap — again outside sampling noise in the other direction.
+		const perEntrySize = 1000
+		const buildChunks = 7
+		const midAfterChunk = 5
+		entriesPerChunk := (constants.MaxTransactionAffectedSizeBytes / (perEntrySize + 100 /*overhead*/)) - 1
+		var midTail fdb.Key
+		for i := range buildChunks {
+			_, err := db.TransactContext(t.Context(), func(tx fdb.Transaction) (any, error) {
+				for range entriesPerChunk {
+					randomFill := make([]byte, perEntrySize)
+					_, err := rand.Read(randomFill)
+					require.NoError(t, err)
+					if err := set.Add(tx, randomFill); err != nil {
+						return nil, err
+					}
+				}
+				return nil, nil
+			})
+			t.Logf("adding log chunk %d", i)
+			require.NoError(t, err)
+			if i+1 == midAfterChunk {
+				midTail = readLastLogKey(t, db, set)
+			}
+		}
+
+		var firstKey fdb.Key
+		_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			begin, end := set.logSubspace.FDBRangeKeys()
+			kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{Limit: 1}).GetSliceWithError()
+			if err != nil {
+				return nil, err
+			}
+			require.Len(t, kvs, 1)
+			firstKey = kvs[0].Key
+			return nil, nil
+		})
+		require.NoError(t, err)
+		lastKey := readLastLogKey(t, db, set)
+
+		// Three cursors: stalled-but-heartbeating at the head of the log (~66MB
+		// behind, must be evicted), lagging under the cap (~19MB behind, must
+		// survive and keep clamping compaction), and caught up (pins nothing).
+		stalledID := "stalled"
+		laggingID := "lagging"
+		caughtUpID := "caught_up"
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			tx.Set(set.cursorKey(stalledID, cursorKeyTail), firstKey)
+			tx.Set(set.cursorKey(stalledID, cursorKeyLease), encodeLease(time.Now().Add(time.Minute)))
+			tx.Set(set.cursorKey(stalledID, cursorKeyHint), []byte("stalled-host"))
+			tx.Set(set.cursorKey(laggingID, cursorKeyTail), midTail)
+			tx.Set(set.cursorKey(laggingID, cursorKeyLease), encodeLease(time.Now().Add(time.Minute)))
+			tx.Set(set.cursorKey(caughtUpID, cursorKeyTail), lastKey)
+			tx.Set(set.cursorKey(caughtUpID, cursorKeyLease), encodeLease(time.Now().Add(time.Minute)))
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		err = set.compactor.compactLog(t.Context(), db)
+		require.NoError(t, err)
+
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			// The stalled cursor pinned far more log than maxCursorLagBytes allows,
+			// so compaction must evict it (clear all of its keys).
+			require.Nil(t, tx.Get(set.cursorKey(stalledID, cursorKeyTail)).MustGet())
+			require.Nil(t, tx.Get(set.cursorKey(stalledID, cursorKeyLease)).MustGet())
+			require.Nil(t, tx.Get(set.cursorKey(stalledID, cursorKeyHint)).MustGet())
+			// The under-cap cursors must survive untouched.
+			require.NotNil(t, tx.Get(set.cursorKey(laggingID, cursorKeyTail)).MustGet())
+			require.NotNil(t, tx.Get(set.cursorKey(laggingID, cursorKeyLease)).MustGet())
+			require.NotNil(t, tx.Get(set.cursorKey(caughtUpID, cursorKeyTail)).MustGet())
+			require.NotNil(t, tx.Get(set.cursorKey(caughtUpID, cursorKeyLease)).MustGet())
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		// The surviving lagging cursor must still clamp compaction: everything up
+		// to its tail is compacted, everything after it is retained.
+		remaining := readLogEntries(t, db, set)
+		require.Len(t, remaining, (buildChunks-midAfterChunk)*entriesPerChunk)
+		require.Positive(t, bytes.Compare(remaining[0].key.FDBKey(), midTail))
+
+		// Once the lagging cursor leaves, nothing pins the log and a second pass
+		// must drain it completely.
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			tx.Clear(set.cursorKey(laggingID, cursorKeyTail))
+			tx.Clear(set.cursorKey(laggingID, cursorKeyLease))
+			return nil, nil
+		})
+		require.NoError(t, err)
+		err = set.compactor.compactLog(t.Context(), db)
+		require.NoError(t, err)
+		require.Empty(t, readLogEntries(t, db, set))
+	})
+}
+
+func TestEvictCursors(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		set := newSet(t, db, "cursor_gc")
+		addItem(t, db, set, []byte("a"))
+		logEntries := readLogEntries(t, db, set)
+		require.Len(t, logEntries, 1)
+		tail := logEntries[0].key.FDBKey()
+
 		expiredID := "expired"
 		activeID := "active"
 		now := time.Now()
 
+		var survivors map[string]cursorState
 		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
-			tx.Set(set.cursorKey(expiredID, cursorKeyTail), []byte("dead-tail"))
+			tx.Set(set.cursorKey(expiredID, cursorKeyTail), tail)
 			tx.Set(set.cursorKey(expiredID, cursorKeyLease), encodeLease(now.Add(-time.Minute)))
-			tx.Set(set.cursorKey(activeID, cursorKeyTail), []byte("live-tail"))
+			tx.Set(set.cursorKey(activeID, cursorKeyTail), tail)
 			tx.Set(set.cursorKey(activeID, cursorKeyLease), encodeLease(now.Add(time.Minute)))
 
 			index, err := set.makeCursorIndex(tx)
 			require.NoError(t, err)
-			return nil, cleanDeadCursors(tx, index, now)
+			survivors, err = set.evictCursors(tx, index)
+			return nil, err
 		})
 		require.NoError(t, err)
+
+		// The expired cursor is garbage collected, the live caught-up cursor
+		// survives both phases and is reported back as active.
+		require.NotContains(t, survivors, expiredID)
+		require.Contains(t, survivors, activeID)
 
 		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
 			require.Nil(t, tx.Get(set.cursorKey(expiredID, cursorKeyTail)).MustGet())

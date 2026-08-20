@@ -25,6 +25,20 @@ const (
 	compactionLogKeyEstimateBytes = 256
 	// Snapshot key packs the full value plus tuple/subspace metadata.
 	compactionSnapshotKeyOverheadBytes = 256
+
+	// maxCursorLagBytes caps how much uncompacted log a live cursor may pin
+	// before compaction evicts it (the consumer must then re-sync from the
+	// snapshot). Without a cap, a stalled-but-heartbeating consumer pins the
+	// log forever and it grows without bound. 32MB because the value must be:
+	// large enough that GetEstimatedRangeSizeBytes (a sampled estimate) is
+	// reliable, and larger than any healthy consumer's momentary lag (~100k+
+	// entries at the 1KB entry cap — a live consumer lags by at most one
+	// batch-handling cycle, far less than that); yet small enough that a
+	// full replay (snapshot + capped log) stays a few seconds, and only ~3-4
+	// compaction chunk transactions, so a single pass clears an evicted
+	// backlog. Both failure directions are soft: too low costs an occasional
+	// needless re-sync, too high just lengthens the bounded worst-case read.
+	maxCursorLagBytes = 32 << 20
 )
 
 func (c *setCompactor) runCompactionLoop() error {
@@ -76,15 +90,14 @@ func (c *setCompactor) compactLog(ctx context.Context, db dbutil.DbRoot) error {
 func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error) {
 	begin, end := c.set.logSubspace.FDBRangeKeys()
 	clearEnd := end
-	now := time.Now()
 	index, err := c.set.makeCursorIndex(tx)
 	if err != nil {
 		return false, err
 	}
-	if err := cleanDeadCursors(tx, index, now); err != nil {
+	active, err := c.set.evictCursors(tx, index)
+	if err != nil {
 		return false, err
 	}
-	active := activeCursors(index, now)
 
 	if minTail, ok := minActiveTail(active); ok {
 		if len(minTail) == 0 {
@@ -116,7 +129,7 @@ func (c *setCompactor) compactLogChunk(tx fdb.Transaction) (more bool, err error
 		logEntries = logEntries[:maxReadEntries]
 	}
 
-	usedBytes := compactionFixedOverheadBytes + estimateCursorAccountingBytes(index, now)
+	usedBytes := compactionFixedOverheadBytes + estimateCursorAccountingBytes(index, time.Now())
 	processed := 0
 	for _, logEntry := range logEntries {
 		var entry LogEntry
