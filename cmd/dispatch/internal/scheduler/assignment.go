@@ -100,24 +100,41 @@ func (s *Scheduler) assignPending(
 		runnerId  string
 		resources *remainingResources
 	}
-	remainingResourcesPerRunner := mapset.NewSet[*runnerWithResources]()
-	runnerGroup, _ := errgroup.WithContext(ctx)
-	runnerGroup.SetLimit(s.batchTxParallelism())
+	const runnerLoadBatchSize = 64
+	readyPods := make([]*corev1.Pod, 0, len(pods))
 	for _, pod := range pods {
-		if !podutils.IsPodReady(pod) {
-			continue
+		if podutils.IsPodReady(pod) {
+			readyPods = append(readyPods, pod)
 		}
+	}
+	remainingResourcesPerRunner := mapset.NewSet[*runnerWithResources]()
+	runnerGroup, runnerCtx := errgroup.WithContext(ctx)
+	runnerGroup.SetLimit(s.batchTxParallelism())
+	for batchStart := 0; batchStart < len(readyPods); batchStart += runnerLoadBatchSize {
+		batch := readyPods[batchStart:min(batchStart+runnerLoadBatchSize, len(readyPods))]
 		runnerGroup.Go(func() error {
-			resources, ok, err := remainingResourcesFromRunner(s.db, s.db, s.activeRunners, pod)
+			// Collect inside the closure and merge after the commit: the
+			// closure re-runs on transaction retry.
+			loaded, err := s.db.ReadTransactContext(runnerCtx, func(t fdb.ReadTransaction) (any, error) {
+				batchLoaded := make([]*runnerWithResources, 0, len(batch))
+				for _, pod := range batch {
+					resources, ok, err := remainingResourcesFromRunner(t, s.db, s.activeRunners, pod)
+					if err != nil {
+						return nil, err
+					} else if !ok {
+						continue
+					}
+					batchLoaded = append(batchLoaded, &runnerWithResources{
+						runnerId:  pod.Name,
+						resources: resources,
+					})
+				}
+				return batchLoaded, nil
+			})
 			if err != nil {
 				return err
-			} else if !ok {
-				return nil
 			}
-			remainingResourcesPerRunner.Add(&runnerWithResources{
-				runnerId:  pod.Name,
-				resources: resources,
-			})
+			remainingResourcesPerRunner.Append(loaded.([]*runnerWithResources)...)
 			return nil
 		})
 	}
@@ -323,7 +340,10 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 	return failures, nil
 }
 
-func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activeRunners pool.ActiveRunners, pod *corev1.Pod) (_ *remainingResources, isActive bool, err error) {
+// remainingResourcesFromRunner reads one runner's remaining capacity inside
+// the caller's read transaction, so callers can batch many runners per
+// transaction instead of opening one each.
+func remainingResourcesFromRunner(t fdb.ReadTransaction, db dbutil.DbRoot, activeRunners pool.ActiveRunners, pod *corev1.Pod) (_ *remainingResources, isActive bool, err error) {
 	var availableCpuMillis int64
 	var availableMemoryBytes int64
 	for _, container := range pod.Spec.Containers {
@@ -335,45 +355,34 @@ func remainingResourcesFromRunner(tr fdb.ReadTransactor, db dbutil.DbRoot, activ
 		}
 	}
 
-	var inUseCpuMillis int64
-	var inUseMemoryBytes int64
-	_, err = tr.ReadTransact(func(t fdb.ReadTransaction) (any, error) {
-		active, err := activeRunners.IsActive(t, pod.Name).Get()
-		if err != nil {
-			return nil, err
-		}
-		if !active {
-			isActive = false
-			return nil, nil
-		}
+	active, err := activeRunners.IsActive(t, pod.Name).Get()
+	if err != nil {
+		return nil, false, err
+	}
+	if !active {
+		return nil, false, nil
+	}
 
-		runnerSet, err := servicestate.OpenTaskSetForRunner(t, db, pod.Name)
-		if err != nil {
-			if errors.Is(err, directory.ErrDirNotExists) {
-				// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
-				isActive = false
-				return nil, nil
-			}
-			return nil, err
+	runnerSet, err := servicestate.OpenTaskSetForRunner(t, db, pod.Name)
+	if err != nil {
+		if errors.Is(err, directory.ErrDirNotExists) {
+			// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
+			return nil, false, nil
 		}
-		inUseCpuMillis, err = runnerSet.GetUtilization(t, servicestate.UtilizationDimensionCPU)
-		if err != nil {
-			return nil, err
-		}
-		inUseMemoryBytes, err = runnerSet.GetUtilization(t, servicestate.UtilizationDimensionMemory)
-		if err != nil {
-			return nil, err
-		}
-		isActive = true
-		return nil, nil
-	})
+		return nil, false, err
+	}
+	inUseCpuMillis, err := runnerSet.GetUtilization(t, servicestate.UtilizationDimensionCPU)
+	if err != nil {
+		return nil, false, err
+	}
+	inUseMemoryBytes, err := runnerSet.GetUtilization(t, servicestate.UtilizationDimensionMemory)
 	if err != nil {
 		return nil, false, err
 	}
 	return &remainingResources{
 		cpuMillis:   availableCpuMillis - inUseCpuMillis,
 		memoryBytes: availableMemoryBytes - inUseMemoryBytes,
-	}, isActive, nil
+	}, true, nil
 }
 
 func requestOrLimitMilli(container corev1.Container, name corev1.ResourceName) (int64, bool) {

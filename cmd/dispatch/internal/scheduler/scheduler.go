@@ -197,7 +197,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		o.ObserveInt64(taskCountGauge, pendingCount, metric.WithAttributes(attribute.String(stateAttribute, "pending")))
 		o.ObserveInt64(taskCountGauge, suspendedCount, metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
-		var runningCount int64
+		runnerSets := make([]*servicestate.RunnerSet, 0)
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
 			if err, ok := kvOrErr.Left(); ok {
 				return err
@@ -214,15 +214,29 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				}
 				return err
 			}
-			var runnerTaskCount int64
-			_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (_ any, err error) {
-				runnerTaskCount, err = runnerSet.Cardinality(t)
-				return nil, err
+			runnerSets = append(runnerSets, runnerSet)
+		}
+		const cardinalityReadBatchSize = 64
+		var runningCount int64
+		for batchStart := 0; batchStart < len(runnerSets); batchStart += cardinalityReadBatchSize {
+			batch := runnerSets[batchStart:min(batchStart+cardinalityReadBatchSize, len(runnerSets))]
+			// Sum inside the closure and add after: the closure re-runs on
+			// transaction retry.
+			batchCount, err := s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
+				var count int64
+				for _, runnerSet := range batch {
+					runnerTaskCount, err := runnerSet.Cardinality(t)
+					if err != nil {
+						return nil, err
+					}
+					count += runnerTaskCount
+				}
+				return count, nil
 			})
 			if err != nil {
-				return fmt.Errorf("collect task count for runner %s: %w", runnerID, err)
+				return fmt.Errorf("collect task counts for runners: %w", err)
 			}
-			runningCount += runnerTaskCount
+			runningCount += batchCount.(int64)
 		}
 		o.ObserveInt64(taskCountGauge, runningCount, metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil
