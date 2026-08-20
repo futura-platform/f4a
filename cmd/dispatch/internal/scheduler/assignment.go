@@ -1,9 +1,14 @@
 package scheduler
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -160,6 +165,13 @@ func (s *Scheduler) assignPending(
 	// fill out the assignment plan
 	failures = newAssignmentFailures()
 	remainingResourcesPerRunnerSlice := remainingResourcesPerRunner.ToSlice()
+	// Fill the lowest StatefulSet ordinals first: scale-down always removes
+	// the highest ordinals, so keeping them empty makes scale-down
+	// reschedule-free and lets the fleet consolidate. (The set's ToSlice is
+	// hash-ordered; without sorting, the placement policy is arbitrary.)
+	slices.SortFunc(remainingResourcesPerRunnerSlice, func(a, b *runnerWithResources) int {
+		return compareRunnersByOrdinal(a.runnerId, b.runnerId)
+	})
 	for _, t := range taskResourceRequests.ToSlice() {
 		// select the first runner with enough resources
 		var selectedRunner *runnerWithResources
@@ -364,6 +376,30 @@ func requestOrLimitBytes(container corev1.Container, name corev1.ResourceName) (
 		return q.Value(), true
 	}
 	return 0, false
+}
+
+// compareRunnersByOrdinal orders runner ids by ascending StatefulSet ordinal,
+// falling back to the full name so ties (foreign name shapes, duplicate
+// ordinals across sets) still order deterministically.
+func compareRunnersByOrdinal(a, b string) int {
+	if c := cmp.Compare(runnerOrdinal(a), runnerOrdinal(b)); c != 0 {
+		return c
+	}
+	return cmp.Compare(a, b)
+}
+
+// runnerOrdinal extracts the StatefulSet ordinal from a pod name
+// ("<name>-<ordinal>"). Names without one sort last.
+func runnerOrdinal(podName string) int {
+	idx := strings.LastIndexByte(podName, '-')
+	if idx < 0 {
+		return math.MaxInt
+	}
+	ordinal, err := strconv.Atoi(podName[idx+1:])
+	if err != nil || ordinal < 0 {
+		return math.MaxInt
+	}
+	return ordinal
 }
 
 var (

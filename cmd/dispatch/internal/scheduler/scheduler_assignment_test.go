@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -157,6 +158,170 @@ func TestAssignPendingFailsInvariantViolation(t *testing.T) {
 	})
 }
 
+// TestAssignPendingFillsLowestOrdinalsFirst locks in the placement policy:
+// runners are filled in ascending StatefulSet-ordinal order (numeric, not
+// lexicographic), so KEDA scale-down — which always removes the highest
+// ordinals — hits empty runners and forces no reschedules.
+func TestAssignPendingFillsLowestOrdinalsFirst(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		// Runner names use the production shape (multi-dash StatefulSet pod
+		// names), so ordinal parsing is exercised as deployed.
+		const runnerCount = 12
+		// Each worker holds 8 tasks (memory-bound: 1Gi / 128Mi); 26 tasks must
+		// fill f4a-worker-0..2 with 8 each and spill 2 onto f4a-worker-3.
+		// Lexicographic ordering would instead fill f4a-worker-10 in third
+		// position and spill onto f4a-worker-11.
+		const taskCount = 26
+
+		tasksDir, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
+		require.NoError(t, err)
+		activeRunners, err := pool.CreateOrOpenActiveRunners(db)
+		require.NoError(t, err)
+
+		runnerIDs := make([]string, 0, runnerCount)
+		runnerSets := make(map[string]*servicestate.RunnerSet, runnerCount)
+		for i := range runnerCount {
+			runnerID := fmt.Sprintf("f4a-worker-%d", i)
+			runnerIDs = append(runnerIDs, runnerID)
+			set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+			require.NoError(t, err)
+			runnerSets[runnerID] = set
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				activeRunners.SetActive(tx, runnerID, true)
+				return nil, nil
+			})
+			require.NoError(t, err)
+		}
+
+		s := &Scheduler{
+			cfg: Config{
+				BatchTxParallelism: 1,
+				Logger:             slog.Default(),
+			},
+			db:               db,
+			taskDir:          tasksDir,
+			taskPlacer:       taskPlacer,
+			activeRunners:    activeRunners,
+			logger:           slog.Default(),
+			activeRunnerSets: newMockedRunnerSetCache(db, runnerSets),
+			runnerPodLister:  podListerForRunners(runnerIDs...),
+		}
+
+		taskIDs := make([]task.Id, 0, taskCount)
+		for i := range taskCount {
+			id := task.Id(fmt.Sprintf("ordinal-task-%02d", i))
+			taskIDs = append(taskIDs, id)
+			seedPendingTask(t, db, tasksDir, taskPlacer, id)
+		}
+
+		assignmentFailures, err := s.assignPending(t.Context(), taskIDSet(taskIDs...))
+		require.NoError(t, err)
+		requireAssignmentFailures(t, assignmentFailures, nil, nil)
+
+		placements := make(map[string]int, runnerCount)
+		for _, id := range taskIDs {
+			status, runnerID := readTaskState(t, db, tasksDir, id)
+			require.Equal(t, task.LifecycleStatusRunning, status)
+			require.NotNil(t, runnerID)
+			placements[*runnerID]++
+		}
+		require.Equal(t, map[string]int{
+			"f4a-worker-0": 8,
+			"f4a-worker-1": 8,
+			"f4a-worker-2": 8,
+			"f4a-worker-3": 2,
+		}, placements)
+	})
+}
+
+// TestAssignPendingCpuBoundPlacement mirrors the ordinal test with tasks whose
+// CPU claim binds before memory (300m vs 64Mi: 3 fit per 1000m worker, memory
+// would allow 16), so the CPU fit check and decrement are load-bearing.
+func TestAssignPendingCpuBoundPlacement(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		const runnerCount = 4
+		const taskCount = 8
+
+		tasksDir, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		taskPlacer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
+		require.NoError(t, err)
+		activeRunners, err := pool.CreateOrOpenActiveRunners(db)
+		require.NoError(t, err)
+
+		runnerIDs := make([]string, 0, runnerCount)
+		runnerSets := make(map[string]*servicestate.RunnerSet, runnerCount)
+		for i := range runnerCount {
+			runnerID := fmt.Sprintf("f4a-worker-%d", i)
+			runnerIDs = append(runnerIDs, runnerID)
+			set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+			require.NoError(t, err)
+			runnerSets[runnerID] = set
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				activeRunners.SetActive(tx, runnerID, true)
+				return nil, nil
+			})
+			require.NoError(t, err)
+		}
+
+		s := &Scheduler{
+			cfg: Config{
+				BatchTxParallelism: 1,
+				Logger:             slog.Default(),
+			},
+			db:               db,
+			taskDir:          tasksDir,
+			taskPlacer:       taskPlacer,
+			activeRunners:    activeRunners,
+			logger:           slog.Default(),
+			activeRunnerSets: newMockedRunnerSetCache(db, runnerSets),
+			runnerPodLister:  podListerForRunners(runnerIDs...),
+		}
+
+		taskIDs := make([]task.Id, 0, taskCount)
+		for i := range taskCount {
+			id := task.Id(fmt.Sprintf("cpu-task-%02d", i))
+			taskIDs = append(taskIDs, id)
+			seedPendingTaskWithResources(t, db, tasksDir, taskPlacer, id, 300, 64*1024*1024)
+		}
+
+		assignmentFailures, err := s.assignPending(t.Context(), taskIDSet(taskIDs...))
+		require.NoError(t, err)
+		requireAssignmentFailures(t, assignmentFailures, nil, nil)
+
+		placements := make(map[string]int, runnerCount)
+		for _, id := range taskIDs {
+			status, runnerID := readTaskState(t, db, tasksDir, id)
+			require.Equal(t, task.LifecycleStatusRunning, status)
+			require.NotNil(t, runnerID)
+			placements[*runnerID]++
+		}
+		require.Equal(t, map[string]int{
+			"f4a-worker-0": 3,
+			"f4a-worker-1": 3,
+			"f4a-worker-2": 2,
+		}, placements)
+	})
+}
+
+func TestCompareRunnersByOrdinal(t *testing.T) {
+	require.Equal(t, 12, runnerOrdinal("f4a-worker-12"))
+	require.Equal(t, 3, runnerOrdinal("worker-3"))
+	require.Equal(t, 0, runnerOrdinal("f4a-worker-0"))
+	require.Equal(t, math.MaxInt, runnerOrdinal("nodash"))
+	require.Equal(t, math.MaxInt, runnerOrdinal("f4a-worker-abc"))
+	require.Equal(t, math.MaxInt, runnerOrdinal("trailing-"))
+
+	// numeric ordering beats lexicographic
+	require.Negative(t, compareRunnersByOrdinal("f4a-worker-2", "f4a-worker-10"))
+	// equal ordinals fall back to the name, and unparseable names (which all
+	// tie at the sort-last bucket) still order deterministically
+	require.Negative(t, compareRunnersByOrdinal("a-set-7", "b-set-7"))
+	require.Negative(t, compareRunnersByOrdinal("alpha", "beta"))
+}
+
 func taskIDSet(ids ...task.Id) mapset.Set[task.Id] {
 	return mapset.NewSet(ids...)
 }
@@ -278,14 +443,27 @@ func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*servicestate.Runn
 
 func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, taskPlacer *servicestate.TaskPlacer, id task.Id) {
 	t.Helper()
+	seedPendingTaskWithResources(t, db, tasksDir, taskPlacer, id, 100, 128*1024*1024)
+}
+
+func seedPendingTaskWithResources(
+	t *testing.T,
+	db dbutil.DbRoot,
+	tasksDir task.TasksDirectory,
+	taskPlacer *servicestate.TaskPlacer,
+	id task.Id,
+	cpuMillis uint32,
+	memoryBytes uint64,
+) {
+	t.Helper()
 
 	taskKey, err := tasksDir.Create(db, id)
 	require.NoError(t, err)
 
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		taskKey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
-			CpuMillis:   proto.Uint32(100),
-			MemoryBytes: proto.Uint64(128 * 1024 * 1024),
+			CpuMillis:   proto.Uint32(cpuMillis),
+			MemoryBytes: proto.Uint64(memoryBytes),
 		}.Build())
 		if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
 			return nil, err

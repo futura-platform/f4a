@@ -78,6 +78,10 @@ dispatch:
       value: service.name=f4a-dispatch,service.namespace=f4a
 ```
 
+## Worker Autoscaling
+
+Dispatch only assigns a task to a worker whose remaining declared CPU/memory can fit it; tasks that fit on no current worker wait in the pending set and are retried periodically. When configuring a KEDA scaler for the worker StatefulSet, include a trigger on the `pending_unschedulable_tasks` gauge (`> 0` means some task fits on no current worker) in addition to any utilization-based trigger: aggregate demand can sit below aggregate capacity while free resources are fragmented across workers, and only a fresh (empty) replica can host such a task. Scale-down removes the highest ordinals; dispatch deliberately fills the lowest ordinals first so that the pods being removed are empty and scale-down forces no task reschedules.
+
 ## Waiting For An Async Cluster File Secret
 
 By default, the chart assumes `fdb.clusterFile.secret.name` already exists before pods start. If another controller or job creates that Secret later, enable `fdb.clusterFile.writable.wait.enabled` to make the init container poll the mounted source file until it exists and is non-empty.
