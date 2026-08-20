@@ -79,6 +79,18 @@ func (p TaskPlacer) PendingTasks(ctx context.Context) (taskIds mapset.Set[task.I
 	return p.pendingSet.Items(ctx, p.db.Database)
 }
 
+// PendingTaskCount returns the pending set's cardinality as of its last
+// compaction (eventually consistent with PendingTasks), as a single-key read.
+func (p TaskPlacer) PendingTaskCount(t fdb.ReadTransaction) (int64, error) {
+	return p.pendingSet.Cardinality(t)
+}
+
+// SuspendedTaskCount returns the suspended set's cardinality as of its last
+// compaction (eventually consistent with SuspendedTasks), as a single-key read.
+func (p TaskPlacer) SuspendedTaskCount(t fdb.ReadTransaction) (int64, error) {
+	return p.suspendedSet.Cardinality(t)
+}
+
 func (p TaskPlacer) SuspendedTasks(ctx context.Context) (taskIds mapset.Set[task.Id], tail fdb.KeyConvertible, err error) {
 	return p.suspendedSet.Items(ctx, p.db.Database)
 }

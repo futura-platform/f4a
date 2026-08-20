@@ -151,8 +151,12 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			stateAttribute          = "state"
 			placementClassAttribute = "placement_class"
 		)
-		// record the utilization metrics FIRST, since they are critical for scaling decisions
+		// record the utilization metrics FIRST, since they are critical for scaling decisions.
+		// All reads below are single-key aggregate/cardinality lookups, so
+		// collection stays O(runners) regardless of how many tasks the sets
+		// hold; counts are as-of-last-compaction (eventually consistent).
 		var activeDemandCpuMillis, activeDemandMemoryBytes, suspendedCpuMillis, suspendedMemoryBytes int64
+		var pendingCount, suspendedCount int64
 		_, err := s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (_ any, err error) {
 			activeDemandCpuMillis, err = s.taskPlacer.GetActiveDemandUtilization(t, servicestate.UtilizationDimensionCPU)
 			if err != nil {
@@ -170,6 +174,14 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			if err != nil {
 				return nil, err
 			}
+			pendingCount, err = s.taskPlacer.PendingTaskCount(t)
+			if err != nil {
+				return nil, err
+			}
+			suspendedCount, err = s.taskPlacer.SuspendedTaskCount(t)
+			if err != nil {
+				return nil, err
+			}
 			return nil, nil
 		})
 		if err != nil {
@@ -179,18 +191,8 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		o.ObserveInt64(requestedMemoryBytesGauge, activeDemandMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "active_demand")))
 		o.ObserveFloat64(requestedCpuGauge, float64(suspendedCpuMillis)/1000, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
 		o.ObserveInt64(requestedMemoryBytesGauge, suspendedMemoryBytes, metric.WithAttributes(attribute.String(placementClassAttribute, "suspended")))
-
-		pendingTaskIds, _, err := s.taskPlacer.PendingTasks(ctx)
-		if err != nil {
-			return err
-		}
-		o.ObserveInt64(taskCountGauge, int64(pendingTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "pending")))
-
-		suspendedTaskIds, _, err := s.taskPlacer.SuspendedTasks(ctx)
-		if err != nil {
-			return err
-		}
-		o.ObserveInt64(taskCountGauge, int64(suspendedTaskIds.Cardinality()), metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
+		o.ObserveInt64(taskCountGauge, pendingCount, metric.WithAttributes(attribute.String(stateAttribute, "pending")))
+		o.ObserveInt64(taskCountGauge, suspendedCount, metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
 		var runningCount int64
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
@@ -209,11 +211,15 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 				}
 				return err
 			}
-			runningSetItems, _, err := runnerSet.Items(ctx, s.db.Database)
+			var runnerTaskCount int64
+			_, err = s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (_ any, err error) {
+				runnerTaskCount, err = runnerSet.Cardinality(t)
+				return nil, err
+			})
 			if err != nil {
 				return err
 			}
-			runningCount += int64(runningSetItems.Cardinality())
+			runningCount += runnerTaskCount
 		}
 		o.ObserveInt64(taskCountGauge, runningCount, metric.WithAttributes(attribute.String(stateAttribute, "running")))
 		return nil

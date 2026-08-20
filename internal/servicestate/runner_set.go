@@ -121,6 +121,12 @@ func (r *RunnerSet) Items(ctx context.Context, db fdb.Database) (mapset.Set[task
 	return r.set.Items(ctx, db)
 }
 
+// Cardinality returns the set's item count as of its last compaction
+// (eventually consistent with Items), as a single-key read.
+func (r *RunnerSet) Cardinality(t fdb.ReadTransaction) (int64, error) {
+	return r.set.Cardinality(t)
+}
+
 func (r *RunnerSet) Stream(ctx context.Context) (
 	initialValues mapset.Set[task.Id],
 	events <-chan []reliableset.TLogEntry[task.Id],
