@@ -14,6 +14,7 @@ import (
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -22,6 +23,7 @@ import (
 
 var (
 	tracer = otel.Tracer("f4a.dispatch.reaper")
+	meter  = otel.Meter("f4a.dispatch.reaper")
 )
 
 // SpawnReaperRoutine spins off a goroutine that runs a loop that scans for orphaned task sets and re queues all the tasks in them to be scheduled.
@@ -52,6 +54,15 @@ func SpawnReaperRoutine(
 		return nil, fmt.Errorf("failed to create or open task directory: %w", err)
 	}
 
+	lookupFailures, err := meter.Int64Counter(
+		"pod_lookup_failures",
+		metric.WithUnit("{lookup}"),
+		metric.WithDescription("Runner pod liveness lookups that failed (excluding not-found), each skipping that runner for one reap cycle."),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pod lookup failure counter: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer cancel()
@@ -63,7 +74,10 @@ func SpawnReaperRoutine(
 				return
 			case <-ticker.C:
 				ctx, span := tracer.Start(ctx, "reapAll")
-				err := reapAll(ctx, db, placer, cachedPods, livePods, activeRunners, taskDirectory)
+				failedLookups, err := reapAll(ctx, db, placer, cachedPods, livePods, activeRunners, taskDirectory)
+				if failedLookups > 0 {
+					lookupFailures.Add(ctx, failedLookups)
+				}
 				if err != nil {
 					slog.Error("reaper: failed to reap", "error", err)
 				}
@@ -75,6 +89,9 @@ func SpawnReaperRoutine(
 	return cancel, nil
 }
 
+// reapAll drains the task sets of all provably dead runners. It returns how
+// many runners were skipped because their liveness lookup failed; the caller
+// is expected to surface that count in a metric.
 func reapAll(
 	ctx context.Context,
 	db dbutil.DbRoot,
@@ -83,23 +100,31 @@ func reapAll(
 	livePods corev1client.PodInterface,
 	activeRunners pool.ActiveRunners,
 	taskDirectory task.TasksDirectory,
-) error {
+) (failedLookups int64, err error) {
 	var runnerIds []string
-	_, err := db.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (_ any, err error) {
+	_, err = db.ReadTransactContext(ctx, func(tx fdb.ReadTransaction) (_ any, err error) {
 		runnerIds, err = servicestate.ListTaskSets(tx, db)
 		return nil, err
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	reapErrs := make([]error, 0, len(runnerIds))
+	var firstLookupErr error
 	for _, runnerId := range runnerIds {
-		// check if the runner is dead (in cache, fast eventually consistent path)
-		if _, err := cachedPods.Get(runnerId); !apierrors.IsNotFound(err) {
+		dead, err := runnerIsDead(ctx, cachedPods, livePods, runnerId)
+		if err != nil {
+			if ctx.Err() != nil {
+				// shutting down mid-cycle; not a lookup incident
+				return 0, nil
+			}
+			failedLookups++
+			if firstLookupErr == nil {
+				firstLookupErr = err
+			}
 			continue
 		}
-		// check if the runner is dead (from api server, slow consistent path)
-		if _, err := livePods.Get(ctx, runnerId, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		if !dead {
 			continue
 		}
 
@@ -108,10 +133,45 @@ func reapAll(
 			reapErrs = append(reapErrs, err)
 		}
 	}
-	if len(reapErrs) > 0 {
-		return fmt.Errorf("failed to reap some task sets: %w", errors.Join(reapErrs...))
+	if failedLookups > 0 {
+		slog.Error("reaper: pod lookups failed, skipping runners this cycle",
+			"skipped_runners", failedLookups, "first_error", firstLookupErr)
 	}
-	return nil
+	if len(reapErrs) > 0 {
+		return failedLookups, fmt.Errorf("failed to reap some task sets: %w", errors.Join(reapErrs...))
+	}
+	return failedLookups, nil
+}
+
+// runnerIsDead reports whether the runner's pod is provably gone.
+// A pod found by either lookup means alive. Only a not-found answer from the
+// api server (the consistent source) proves death; the cache alone can lag.
+// Any other outcome is an error: the runner's liveness is unknown, and the
+// caller must not conflate that with "alive".
+func runnerIsDead(
+	ctx context.Context,
+	cachedPods corev1.PodNamespaceLister,
+	livePods corev1client.PodInterface,
+	runnerId string,
+) (bool, error) {
+	// fast, eventually consistent path
+	if _, err := cachedPods.Get(runnerId); err == nil {
+		return false, nil
+	} else if !apierrors.IsNotFound(err) {
+		// the cache is only an optimization; fall through to the
+		// authoritative lookup instead of skipping the runner
+		slog.Warn("reaper: cached pod lookup failed, falling back to api server", "runner_id", runnerId, "error", err)
+	}
+
+	// slow, consistent path
+	_, err := livePods.Get(ctx, runnerId, metav1.GetOptions{})
+	if err == nil {
+		return false, nil
+	}
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	return false, fmt.Errorf("failed to look up runner pod %q: %w", runnerId, err)
 }
 
 func reapForRunner(
