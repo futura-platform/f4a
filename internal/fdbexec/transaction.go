@@ -75,6 +75,25 @@ func (t *executionTransaction) SetCallOrderAt(index int, identity moment.Identit
 	t.Set(callOrderIndexKey(t.callOrder, index), buf.Bytes())
 }
 
+// TruncateCallOrderAt removes every call order entry after index, clamped to the call order's length.
+func (t *executionTransaction) TruncateCallOrderAt(index int) {
+	length := t.CallOrderLength()
+	newLength := index + 1
+	if newLength >= length {
+		return
+	}
+	if newLength < 0 {
+		panic(ErrOutOfBounds)
+	}
+	t.ClearRange(fdb.KeyRange{
+		Begin: callOrderIndexKey(t.callOrder, newLength),
+		End:   callOrderIndexKey(t.callOrder, length),
+	})
+	b := make([]byte, 8)
+	byteOrder.PutUint64(b, uint64(newLength))
+	t.Set(callOrderLengthKey(t.callOrder), b)
+}
+
 func momentTableKey(momentTable directory.DirectorySubspace, identity moment.Identity) fdb.Key {
 	buf := bytes.NewBuffer(make([]byte, 0, unsafe.Sizeof(identity)))
 	enc := privateencoding.NewEncoder[moment.Identity](buf)

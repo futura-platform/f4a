@@ -55,7 +55,7 @@ func TestExecutionContainer(t *testing.T) {
 		})
 	}
 
-	testIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 1}}))
+	testIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 1}}), moment.Callsite{File: "fn.go", Line: 1})
 	t.Run("Transact", func(t *testing.T) {
 		t.Run("Error rolls back transaction", func(t *testing.T) {
 			testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
@@ -64,12 +64,7 @@ func TestExecutionContainer(t *testing.T) {
 
 				err := container.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
 					privateencoding.Register[struct{}]()
-					testMoment := moment.NewMoment(
-						moment.NewFn[struct{}, struct{}](func(ctx context.Context, args struct{}) (struct{}, error) {
-							return struct{}{}, nil
-						}),
-						struct{}{},
-					)
+					testMoment := moment.NewMoment(struct{}{})
 					tx.SetMoment(testIdentity, *testMoment)
 					return errSentinel
 				})
@@ -122,7 +117,7 @@ func TestExecutionContainer(t *testing.T) {
 				})
 				t.Run("Can set call order at index", func(t *testing.T) {
 					ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
-						notTestIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 2}}))
+						notTestIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 2}}), moment.Callsite{File: "fn.go", Line: 2})
 						tx.AppendCallOrder(notTestIdentity)
 						tx.SetCallOrderAt(0, testIdentity)
 						return nil
@@ -132,9 +127,9 @@ func TestExecutionContainer(t *testing.T) {
 					})
 				})
 				t.Run("Does not change length or other indices", func(t *testing.T) {
-					firstIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 4}}))
-					secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 5}}))
-					updatedIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 6}}))
+					firstIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 4}}), moment.Callsite{File: "fn.go", Line: 4})
+					secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 5}}), moment.Callsite{File: "fn.go", Line: 5})
+					updatedIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 6}}), moment.Callsite{File: "fn.go", Line: 6})
 					ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 						tx.AppendCallOrder(firstIdentity)
 						tx.AppendCallOrder(secondIdentity)
@@ -149,9 +144,9 @@ func TestExecutionContainer(t *testing.T) {
 				})
 			})
 			t.Run("Append preserves order within transaction", func(t *testing.T) {
-				firstIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 7}}))
-				secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 8}}))
-				thirdIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 9}}))
+				firstIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 7}}), moment.Callsite{File: "fn.go", Line: 7})
+				secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 8}}), moment.Callsite{File: "fn.go", Line: 8})
+				thirdIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 9}}), moment.Callsite{File: "fn.go", Line: 9})
 				ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 					tx.AppendCallOrder(firstIdentity)
 					tx.AppendCallOrder(secondIdentity)
@@ -165,13 +160,65 @@ func TestExecutionContainer(t *testing.T) {
 					return nil
 				})
 			})
+			t.Run("Truncate", func(t *testing.T) {
+				identities := make([]moment.Identity, 3)
+				for i := range identities {
+					identities[i] = moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 20 + i}}), moment.Callsite{File: "fn.go", Line: 20 + i})
+				}
+				appendAll := func(ctx context.Context, tx executiontype.Container) error {
+					for _, identity := range identities {
+						tx.AppendCallOrder(identity)
+					}
+					return nil
+				}
+				t.Run("keeps the entries up to index", func(t *testing.T) {
+					ephemeralTransactTest(t, appendAll, func(ctx context.Context, tx executiontype.Container) error {
+						tx.TruncateCallOrderAt(1)
+						return nil
+					}, func(ctx context.Context, tx executiontype.Container) error {
+						assert.Equal(t, 2, tx.CallOrderLength())
+						assert.Equal(t, identities[0], tx.CallOrderAt(0))
+						assert.Equal(t, identities[1], tx.CallOrderAt(1))
+						assert.PanicsWithValue(t, fdbexec.ErrOutOfBounds, func() { tx.CallOrderAt(2) })
+						return nil
+					})
+				})
+				t.Run("an append after a truncate lands at the new end", func(t *testing.T) {
+					ephemeralTransactTest(t, appendAll, func(ctx context.Context, tx executiontype.Container) error {
+						tx.TruncateCallOrderAt(0)
+						tx.AppendCallOrder(identities[2])
+						return nil
+					}, func(ctx context.Context, tx executiontype.Container) error {
+						assert.Equal(t, 2, tx.CallOrderLength())
+						assert.Equal(t, identities[0], tx.CallOrderAt(0))
+						assert.Equal(t, identities[2], tx.CallOrderAt(1))
+						return nil
+					})
+				})
+				t.Run("index -1 empties the call order", func(t *testing.T) {
+					ephemeralTransactTest(t, appendAll, func(ctx context.Context, tx executiontype.Container) error {
+						tx.TruncateCallOrderAt(-1)
+						return nil
+					}, func(ctx context.Context, tx executiontype.Container) error {
+						assert.Equal(t, 0, tx.CallOrderLength())
+						assert.PanicsWithValue(t, fdbexec.ErrOutOfBounds, func() { tx.CallOrderAt(0) })
+						return nil
+					})
+				})
+				t.Run("an index at or past the end changes nothing", func(t *testing.T) {
+					ephemeralTransactTest(t, appendAll, func(ctx context.Context, tx executiontype.Container) error {
+						tx.TruncateCallOrderAt(2)
+						tx.TruncateCallOrderAt(7)
+						return nil
+					}, func(ctx context.Context, tx executiontype.Container) error {
+						assert.Equal(t, 3, tx.CallOrderLength())
+						assert.Equal(t, identities[2], tx.CallOrderAt(2))
+						return nil
+					})
+				})
+			})
 		})
-		testMoment := moment.NewMoment(
-			moment.NewFn[struct{}, struct{}](func(ctx context.Context, args struct{}) (struct{}, error) {
-				return struct{}{}, nil
-			}),
-			struct{}{},
-		)
+		testMoment := moment.NewMoment(struct{}{})
 		t.Run("Memo Table", func(t *testing.T) {
 			ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 				assert.False(t, tx.HasMoment(testIdentity))
@@ -196,7 +243,7 @@ func TestExecutionContainer(t *testing.T) {
 				return nil
 			})
 			t.Run("HasMoment for other identity is false", func(t *testing.T) {
-				otherIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 10}}))
+				otherIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 10}}), moment.Callsite{File: "fn.go", Line: 10})
 				ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 					tx.SetMoment(testIdentity, *testMoment)
 					return nil
@@ -206,7 +253,7 @@ func TestExecutionContainer(t *testing.T) {
 				})
 			})
 			t.Run("Delete is idempotent", func(t *testing.T) {
-				otherIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 11}}))
+				otherIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 11}}), moment.Callsite{File: "fn.go", Line: 11})
 				ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 					tx.SetMoment(testIdentity, *testMoment)
 					tx.DeleteMoment(otherIdentity)
@@ -221,7 +268,7 @@ func TestExecutionContainer(t *testing.T) {
 		})
 		t.Run("KnownMoments", func(t *testing.T) {
 			t.Run("normal usage", func(t *testing.T) {
-				secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 3}}))
+				secondIdentity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 3}}), moment.Callsite{File: "fn.go", Line: 3})
 				ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 					// Initially empty
 					count := 0
@@ -275,7 +322,7 @@ func TestExecutionContainer(t *testing.T) {
 				t.Run("with many moments", func(t *testing.T) {
 					srcMoments := mapset.NewSet[moment.Identity]()
 					for i := range 10 {
-						srcMoments.Add(moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: i}})))
+						srcMoments.Add(moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: i}}), moment.Callsite{File: "fn.go", Line: i}))
 					}
 					ephemeralTransactTest(t, func(ctx context.Context, tx executiontype.Container) error {
 						for m := range srcMoments.Iter() {
