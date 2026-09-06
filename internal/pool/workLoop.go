@@ -97,9 +97,11 @@ func RunWorkLoop(
 			// transient failures are retried briefly; a persistent failure
 			// escalates like a run failure — the restarted loop re-runs the
 			// task, settlement replays from its durable state (no re-delivery),
-			// and the delete is retried.
-			err := util.WithBestEffort(runCtx, func() error {
-				return deleteTask(runCtx, taskManager, id)
+			// and the delete is retried. The delete's own removal event cancels
+			// the run, so it runs detached from the run's context.
+			retireCtx := context.WithoutCancel(runCtx)
+			err := util.WithBestEffort(retireCtx, func() error {
+				return deleteTask(retireCtx, taskManager, id)
 			}, backoff.WithMaxElapsedTime(time.Minute))
 			if err != nil {
 				reportRunError(id, fmt.Errorf("failed to delete settled task: %w", err))

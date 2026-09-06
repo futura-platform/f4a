@@ -15,7 +15,6 @@ import (
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
 	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 
@@ -284,6 +283,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 
 	s.logger.Info("scheduler startup: assigning initial pending tasks", "pending", initialValues.Cardinality())
 	assignStart := time.Now()
+	pending := newPendingMirror(initialValues)
 	lastAssignmentFailures, err := s.assignPending(ctx, initialValues)
 	if err != nil {
 		return fmt.Errorf("failed to assign initial pending tasks: %w", err)
@@ -298,46 +298,47 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()
 
-	for eventsCh != nil || streamErrCh != nil {
+	// The mirror consumes the stream on its own goroutine so it stays current
+	// while a pass runs (see pendingMirror). streamClosed reports the stream
+	// ending; its error, if any, arrives on streamErrCh.
+	streamClosed := make(chan struct{})
+	go func() {
+		defer close(streamClosed)
+		for batch := range eventsCh {
+			pending.apply(batch)
+		}
+	}()
+
+	// Every pass attempts the whole mirror, not just the last failures: see
+	// pendingMirror for why a task can be pending without the stream having
+	// said so. assignTask skips anything no longer pending.
+	pass := func() error {
+		span.AddEvent("assignment_pass")
+		lastAssignmentFailures, err = s.assignPending(ctx, pending.snapshot())
+		if err != nil {
+			return fmt.Errorf("failed to assign pending tasks: %w", err)
+		}
+		lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
+		return nil
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case batch, ok := <-eventsCh:
-			if !ok {
-				eventsCh = nil
-				continue
-			}
-
-			span.AddEvent("event_batch_received")
-			backlog := lastAssignmentFailures.All()
-			for _, entry := range batch {
-				switch entry.Op {
-				case reliableset.LogOperationAdd:
-					backlog.Add(entry.Value)
-				case reliableset.LogOperationRemove:
-					backlog.Remove(entry.Value)
-				}
-			}
-			lastAssignmentFailures, err = s.assignPending(ctx, backlog)
-			if err != nil {
-				return fmt.Errorf("failed to assign pending tasks: %w", err)
-			}
-			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
-		case err, ok := <-streamErrCh:
-			if !ok {
-				streamErrCh = nil
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("pending set stream failed: %w", err)
+		case <-pending.dirty:
+			if err := pass(); err != nil {
+				return err
 			}
 		case <-ticker.C:
-			lastAssignmentFailures, err = s.assignPending(ctx, lastAssignmentFailures.All())
-			if err != nil {
-				return fmt.Errorf("failed to assign pending backlog: %w", err)
+			if err := pass(); err != nil {
+				return err
 			}
-			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
+		case err, ok := <-streamErrCh:
+			if ok && err != nil {
+				return fmt.Errorf("pending set stream failed: %w", err)
+			}
+			<-streamClosed
+			return nil
 		}
 	}
-	return nil
 }

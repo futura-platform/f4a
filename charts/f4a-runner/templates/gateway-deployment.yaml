@@ -60,6 +60,11 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            # readyz is a FoundationDB write transaction; during a recovery
+            # it takes seconds, and the kubelet's 1 s default marked every
+            # gateway NotReady at once (edge 503s) exactly while the cluster
+            # was scaling for a burst.
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
           volumeMounts:

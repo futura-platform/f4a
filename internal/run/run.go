@@ -22,9 +22,16 @@ import (
 
 var (
 	errInputChanged = errors.New("input changed")
+	// errInputMissing reports that the task's input key is gone. The input is written before
+	// a task is ever placed and only leaves with the task's directory, so a missing input under
+	// a run means the task was deleted.
+	errInputMissing = errors.New("input missing")
 	// this error will cause the run to return the error instead of just calling the callback with the error.
 	// This is for testing purposes ONLY.
 	ErrRunFatal = errors.New("run encountered fatal error")
+	// ErrLeaseLost reports that the task's runnable lease ended under the run: the task was deleted
+	// (its lock cleared with it) or another holder took it. The task is no longer this run's to settle.
+	ErrLeaseLost = errors.New("runnable lease lost")
 )
 
 var (
@@ -42,7 +49,8 @@ var (
 // canceled (aborting in-flight settlement) or the input watch failed.
 // A nil callbackUrl is valid: the task settles on the user flow's outcome
 // alone, with no discharge flow.
-func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) error {
+func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) (err error) {
+	parentCtx := ctx
 	lock, err := r.taskKey.RunnableLock(r.db)
 	if err != nil {
 		return fmt.Errorf("failed to get lock: %w", err)
@@ -60,6 +68,14 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 
 	// bind ctx to the lease so that operations only happen while the lease is valid
 	ctx = activeLease
+	// runs before the release above: a run that ended because its lease ended, while the caller
+	// never cancelled it, did not fail. The task is owned elsewhere or gone, so report that
+	// instead of the settlement's cancellation.
+	defer func() {
+		if err != nil && ctx.Err() != nil && parentCtx.Err() == nil {
+			err = fmt.Errorf("%w: %w", ErrLeaseLost, err)
+		}
+	}()
 
 	executable := r.executor.ExecuteFrom(r.SettlementContainers)
 
@@ -73,6 +89,13 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 		nil,
 		nil,
 		func(t fdb.ReadTransaction, _ fdb.KeyConvertible, _ []byte) ([]byte, error) {
+			raw, err := t.Get(inputKey.Key()).Get()
+			if err != nil {
+				return nil, err
+			}
+			if raw == nil {
+				return nil, errInputMissing
+			}
 			return inputKey.Get(t).Get()
 		},
 	)
@@ -160,6 +183,14 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 				// the watch error here is just the cancellation we triggered
 				// after taking the outcome
 				return runErr
+			}
+			if errors.Is(err, errInputMissing) {
+				// The task was deleted under the run. Its removal from this runner's set follows in
+				// the same transaction that cleared it, and the lease dies with the directory; the
+				// input watch merely noticed first. Report it the way a lost lease is reported so
+				// the runner treats it as a cancellation, not a failed run (three workers exited on
+				// this during a mass delete in the 2026-09-06 pressure test).
+				return fmt.Errorf("%w: %w", ErrLeaseLost, err)
 			}
 			return err
 		}
