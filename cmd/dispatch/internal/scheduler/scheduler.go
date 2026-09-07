@@ -122,6 +122,9 @@ var (
 func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ctx, span := tracer.Start(ctx, "commandRunners")
 	defer func() { otelutil.End(span, err) }()
+	// the pending stream outlives every early return unless this is cancelled
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	taskCountGauge, err := meter.Int64ObservableGauge(
 		"task_count",
