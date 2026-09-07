@@ -36,7 +36,7 @@ func (s TSet[T]) Items(ctx context.Context, db fdb.Database) (items mapset.Set[T
 		return nil, nil, err
 	}
 
-	items, err = s.convertToTypedSet(rawItems)
+	items, err = convertSet(rawItems, s.parser)
 	return items, tail, err
 }
 func (s TSet[T]) Remove(tx fdb.Transaction, value T) error {
@@ -48,70 +48,6 @@ func (s TSet[T]) Cardinality(t fdb.ReadTransaction) (int64, error) {
 func (s TSet[T]) RunCompactor() (cancel func()) {
 	return s.set.RunCompactor()
 }
-func (s TSet[T]) Stream(ctx context.Context) (initialValues mapset.Set[T], events <-chan []TLogEntry[T], errCh <-chan error, err error) {
-	streamCtx, streamCancel := context.WithCancel(ctx)
-	ivs, rawEvents, rawErrCh, err := s.set.Stream(streamCtx)
-	if err != nil {
-		streamCancel()
-		return nil, nil, nil, err
-	}
-
-	items, err := s.convertToTypedSet(ivs)
-	if err != nil {
-		streamCancel()
-		return nil, nil, nil, err
-	}
-
-	eventsCh := make(chan []TLogEntry[T])
-	wrappedErrCh := make(chan error, 1)
-	go func() {
-		defer streamCancel()
-		defer close(eventsCh)
-		defer close(wrappedErrCh)
-
-		for rawEvents != nil || rawErrCh != nil {
-			select {
-			case rawEventBatch, ok := <-rawEvents:
-				if !ok {
-					rawEvents = nil
-					continue
-				}
-				eventBatch := make([]TLogEntry[T], len(rawEventBatch))
-				for i, rawEvent := range rawEventBatch {
-					value, err := s.parser.Unmarshal(rawEvent.Value)
-					if err != nil {
-						sendStreamErr(wrappedErrCh, err)
-						return
-					}
-					eventBatch[i] = TLogEntry[T]{Op: rawEvent.Op, Value: value}
-				}
-				select {
-				case eventsCh <- eventBatch:
-				case <-streamCtx.Done():
-					sendStreamErr(wrappedErrCh, context.Cause(streamCtx))
-					return
-				}
-			case err, ok := <-rawErrCh:
-				if !ok {
-					rawErrCh = nil
-					continue
-				}
-				sendStreamErr(wrappedErrCh, err)
-				return
-			}
-		}
-	}()
-	return items, eventsCh, wrappedErrCh, nil
-}
-
-func (s TSet[T]) convertToTypedSet(ivs mapset.Set[string]) (mapset.Set[T], error) {
-	items := mapset.NewSetWithSize[T](ivs.Cardinality())
-	for item := range ivs.Iter() {
-		value, err := s.parser.Unmarshal([]byte(item))
-		if err != nil {
-			return nil, err
-		}
-		items.Add(value)
-	}
-	return items, nil
+func (s TSet[T]) Stream(ctx context.Context) (*Stream[T], error) {
+	return streamWith(ctx, s.set, s.parser)
 }

@@ -4,51 +4,103 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
+	dbutil "github.com/futura-platform/f4a/internal/util/db"
 )
 
-// Stream establishes the necessary things for the consumer to construct the
-// list of queued items and have it update in realtime.
-//
-// Unlike streamEvents, the emitted batches only include the absolute net state
-// changes per incoming raw batch.
-func (s *set) Stream(ctx context.Context) (
-	initialValues mapset.Set[string],
-	events <-chan []LogEntry,
-	errCh <-chan error,
-	err error,
-) {
-	initialValues, rawEventsCh, rawErrCh, err := s.streamEvents(ctx)
+// Stream is a live view of a set: its current membership (Snapshot) and the
+// raw log of changes that produced it (Events). A batch is folded into the
+// membership before it is sent, and Events is unbuffered.
+type Stream[T comparable] struct {
+	mu      sync.Mutex
+	members mapset.Set[T]
+
+	events chan []TLogEntry[T]
+	errCh  chan error
+}
+
+// Snapshot returns a copy of the current membership.
+func (s *Stream[T]) Snapshot() mapset.Set[T] {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.members.Clone()
+}
+
+// Events yields the log as written, in order, and closes when the stream ends.
+func (s *Stream[T]) Events() <-chan []TLogEntry[T] {
+	return s.events
+}
+
+// Err yields why the stream ended, if it ended with an error, and closes after Events.
+func (s *Stream[T]) Err() <-chan error {
+	return s.errCh
+}
+
+func (s *Stream[T]) fold(batch []TLogEntry[T]) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return foldInto(s.members, batch)
+}
+
+// reconcile replaces the membership and returns the entries that get there from the old one.
+func (s *Stream[T]) reconcile(fresh mapset.Set[T]) []TLogEntry[T] {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries := diffStates(s.members, fresh)
+	s.members = fresh
+	return entries
+}
+
+func (s *set) Stream(ctx context.Context) (*Stream[string], error) {
+	return streamWith(ctx, s, rawSerializer{})
+}
+
+func streamWith[T comparable](ctx context.Context, s *set, parser dbutil.Serializer[T]) (stream *Stream[T], err error) {
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer func() {
+		if err != nil {
+			streamCancel()
+		}
+	}()
+
+	initialValues, rawEventsCh, rawErrCh, err := s.streamEvents(streamCtx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
+	}
+	members, err := convertSet(initialValues, parser)
+	if err != nil {
+		return nil, err
 	}
 
-	eventsCh := make(chan []LogEntry)
-	_errCh := make(chan error, 1)
+	stream = &Stream[T]{
+		members: members,
+		events:  make(chan []TLogEntry[T]),
+		errCh:   make(chan error, 1),
+	}
 
 	go func() {
-		defer close(eventsCh)
-		defer close(_errCh)
+		defer streamCancel()
+		defer close(stream.errCh)
+		defer close(stream.events)
 
-		currentState := initialValues.Clone()
 		for rawEventsCh != nil || rawErrCh != nil {
 			select {
-			case batch, ok := <-rawEventsCh:
+			case rawBatch, ok := <-rawEventsCh:
 				if !ok {
 					rawEventsCh = nil
 					continue
 				}
-
-				absoluteBatch, err := resolveAbsoluteBatch(currentState, batch)
-				if err != nil {
-					sendStreamErr(_errCh, err)
-					return
-				} else if len(absoluteBatch) == 0 {
-					continue
+				batch, err := convertBatch(rawBatch, parser)
+				if err == nil {
+					err = stream.fold(batch)
 				}
-				if err := sendStreamBatch(ctx, eventsCh, absoluteBatch); err != nil {
-					sendStreamErr(_errCh, err)
+				if err == nil {
+					err = sendStreamBatch(streamCtx, stream.events, batch)
+				}
+				if err != nil {
+					sendStreamErr(stream.errCh, err)
 					return
 				}
 			case err, ok := <-rawErrCh:
@@ -57,95 +109,100 @@ func (s *set) Stream(ctx context.Context) (
 					continue
 				}
 				if errors.Is(err, errCursorEvicted) {
-					currentState, rawEventsCh, rawErrCh, err = s.resyncStream(ctx, currentState, eventsCh)
+					rawEventsCh, rawErrCh, err = resyncStream(streamCtx, s, parser, stream)
 					if err == nil {
 						continue
 					}
 				}
-				sendStreamErr(_errCh, err)
+				sendStreamErr(stream.errCh, err)
 				return
 			}
 		}
 	}()
-	return initialValues, eventsCh, _errCh, nil
+	return stream, nil
 }
 
-// resyncStream re-establishes the raw event stream after the compactor evicted
-// this stream's cursor for lagging too far (see evictCursors). It emits the net
-// difference between the consumer's state and the fresh snapshot, so consumers
-// absorb the gap as ordinary absolute changes. It mirrors streamEvents' return
-// shape: the fresh state and the new raw channels.
-func (s *set) resyncStream(
+// resyncStream re-establishes the raw stream after a cursor eviction (see
+// evictCursors) and delivers the membership difference as ordinary entries.
+func resyncStream[T comparable](
 	ctx context.Context,
-	currentState mapset.Set[string],
-	eventsCh chan<- []LogEntry,
-) (mapset.Set[string], <-chan []LogEntry, <-chan error, error) {
-	newInitial, rawEventsCh, rawErrCh, err := s.streamEvents(ctx)
+	s *set,
+	parser dbutil.Serializer[T],
+	stream *Stream[T],
+) (<-chan []LogEntry, <-chan error, error) {
+	freshValues, rawEventsCh, rawErrCh, err := s.streamEvents(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	if reconciliation := diffStates(currentState, newInitial); len(reconciliation) > 0 {
-		if err := sendStreamBatch(ctx, eventsCh, reconciliation); err != nil {
-			return nil, nil, nil, err
+	fresh, err := convertSet(freshValues, parser)
+	if err != nil {
+		return nil, nil, err
+	}
+	if reconciliation := stream.reconcile(fresh); len(reconciliation) > 0 {
+		if err := sendStreamBatch(ctx, stream.events, reconciliation); err != nil {
+			return nil, nil, err
 		}
 	}
-	return newInitial.Clone(), rawEventsCh, rawErrCh, nil
+	return rawEventsCh, rawErrCh, nil
 }
 
-// diffStates returns the absolute operations that transform `from` into `to`.
-func diffStates(from, to mapset.Set[string]) []LogEntry {
-	entries := make([]LogEntry, 0)
-	from.Each(func(item string) bool {
+// diffStates returns the operations that transform `from` into `to`.
+func diffStates[T comparable](from, to mapset.Set[T]) []TLogEntry[T] {
+	entries := make([]TLogEntry[T], 0)
+	from.Each(func(item T) bool {
 		if !to.ContainsOne(item) {
-			entries = append(entries, LogEntry{Op: LogOperationRemove, Value: []byte(item)})
+			entries = append(entries, TLogEntry[T]{Op: LogOperationRemove, Value: item})
 		}
 		return false
 	})
-	to.Each(func(item string) bool {
+	to.Each(func(item T) bool {
 		if !from.ContainsOne(item) {
-			entries = append(entries, LogEntry{Op: LogOperationAdd, Value: []byte(item)})
+			entries = append(entries, TLogEntry[T]{Op: LogOperationAdd, Value: item})
 		}
 		return false
 	})
 	return entries
 }
 
-// resolveAbsoluteBatch resolves the absolute batch of changes from the relative batch + the current state.
-// Redundant changes are collapsed. This has a runtime complexity of O(2b) where b is the number of items in the batch.
-func resolveAbsoluteBatch(currentState mapset.Set[string], batch []LogEntry) ([]LogEntry, error) {
-	touchedOrder := make([]string, 0, len(batch))
-	beforeMembership := make(map[string]bool, len(batch))
-
+func foldInto[T comparable](members mapset.Set[T], batch []TLogEntry[T]) error {
 	for _, entry := range batch {
-		item := string(entry.Value)
-		if _, seen := beforeMembership[item]; !seen {
-			beforeMembership[item] = currentState.ContainsOne(item)
-			touchedOrder = append(touchedOrder, item)
-		}
-
 		switch entry.Op {
 		case LogOperationAdd:
-			currentState.Add(item)
+			members.Add(entry.Value)
 		case LogOperationRemove:
-			currentState.Remove(item)
+			members.Remove(entry.Value)
 		default:
-			return nil, fmt.Errorf("unknown stream operation: %d", entry.Op)
+			return fmt.Errorf("unknown stream operation: %d", entry.Op)
 		}
 	}
-
-	absolute := make([]LogEntry, 0, len(touchedOrder))
-	for _, item := range touchedOrder {
-		afterMembership := currentState.ContainsOne(item)
-		if beforeMembership[item] == afterMembership {
-			// no change case
-			continue
-		}
-		relevantValue := []byte(item)
-		op := LogOperationAdd
-		if !afterMembership {
-			op = LogOperationRemove
-		}
-		absolute = append(absolute, LogEntry{Op: op, Value: relevantValue})
-	}
-	return absolute, nil
+	return nil
 }
+
+func convertBatch[T comparable](raw []LogEntry, parser dbutil.Serializer[T]) ([]TLogEntry[T], error) {
+	batch := make([]TLogEntry[T], len(raw))
+	for i, entry := range raw {
+		value, err := parser.Unmarshal(entry.Value)
+		if err != nil {
+			return nil, err
+		}
+		batch[i] = TLogEntry[T]{Op: entry.Op, Value: value}
+	}
+	return batch, nil
+}
+
+func convertSet[T comparable](raw mapset.Set[string], parser dbutil.Serializer[T]) (mapset.Set[T], error) {
+	items := mapset.NewSetWithSize[T](raw.Cardinality())
+	for item := range mapset.Elements(raw) {
+		value, err := parser.Unmarshal([]byte(item))
+		if err != nil {
+			return nil, err
+		}
+		items.Add(value)
+	}
+	return items, nil
+}
+
+type rawSerializer struct{}
+
+func (rawSerializer) Marshal(v string) []byte            { return []byte(v) }
+func (rawSerializer) Unmarshal(b []byte) (string, error) { return string(b), nil }

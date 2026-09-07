@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"golang.org/x/sync/errgroup"
 )
 
 func NewController(
@@ -86,17 +87,67 @@ func (c *controller) DeleteTask(ctx context.Context, req *taskv1.ControlServiceD
 }
 
 // BatchTaskOperations implements taskv1connect.ControlServiceHandler.
+// batchOperationParallelism bounds how many of a batch's operations run at
+// once. Operations on the same task still happen serially though.
+const batchOperationParallelism = 32
+
 func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchTaskOperationsRequest) (*taskv1.BatchTaskOperationsResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("missing batch task operations request")
 	}
 
-	results := make([]*taskv1.BatchTaskOperationResult, 0, len(req.GetOperations()))
-	for _, op := range req.GetOperations() {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	ops := req.GetOperations()
+	results := make([]*taskv1.BatchTaskOperationResult, len(ops))
+	// one lane per task: a lane applies its operations in request order, lanes run concurrently
+	lanes := map[string][]int{}
+	var order []string
+	for i, op := range ops {
+		id := batchOperationTaskId(op)
+		if _, seen := lanes[id]; !seen {
+			order = append(order, id)
 		}
+		lanes[id] = append(lanes[id], i)
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(batchOperationParallelism)
+	for _, id := range order {
+		lane := lanes[id]
+		group.Go(func() error {
+			for _, i := range lane {
+				if err := groupCtx.Err(); err != nil {
+					return err
+				}
+				results[i] = c.applyBatchOperation(groupCtx, ops[i])
+			}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return taskv1.BatchTaskOperationsResponse_builder{Results: results}.Build(), nil
+}
 
+// batchOperationTaskId is the task an operation addresses, or "" for a malformed operation.
+func batchOperationTaskId(op *taskv1.BatchTaskOperation) string {
+	switch op.WhichOperation() {
+	case taskv1.BatchTaskOperation_CreateTask_case:
+		return op.GetCreateTask().GetRequest().GetTaskId()
+	case taskv1.BatchTaskOperation_UpdateTask_case:
+		return op.GetUpdateTask().GetRequest().GetTaskId()
+	case taskv1.BatchTaskOperation_ActivateTask_case:
+		return op.GetActivateTask().GetRequest().GetTaskId()
+	case taskv1.BatchTaskOperation_SuspendTask_case:
+		return op.GetSuspendTask().GetRequest().GetTaskId()
+	case taskv1.BatchTaskOperation_DeleteTask_case:
+		return op.GetDeleteTask().GetRequest().GetTaskId()
+	}
+	return ""
+}
+
+// applyBatchOperation applies one operation of a batch and classifies its outcome.
+func (c *controller) applyBatchOperation(ctx context.Context, op *taskv1.BatchTaskOperation) *taskv1.BatchTaskOperationResult {
+	{
 		result := &taskv1.BatchTaskOperationResult{}
 
 		switch op.WhichOperation() {
@@ -145,10 +196,8 @@ func (c *controller) BatchTaskOperations(ctx context.Context, req *taskv1.BatchT
 			result.SetErrorMessage("missing operation payload")
 		}
 
-		results = append(results, result)
+		return result
 	}
-
-	return taskv1.BatchTaskOperationsResponse_builder{Results: results}.Build(), nil
 }
 
 var (

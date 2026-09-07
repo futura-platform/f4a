@@ -124,7 +124,7 @@ func (s *set) streamEvents(ctx context.Context) (
 	return initialValues, eventsCh, _errCh, nil
 }
 
-func sendStreamBatch(ctx context.Context, ch chan<- []LogEntry, batch []LogEntry) error {
+func sendStreamBatch[B any](ctx context.Context, ch chan<- B, batch B) error {
 	select {
 	case ch <- batch:
 		return nil

@@ -71,7 +71,7 @@ func (p TaskPlacer) GetSuspendedUtilization(tx fdb.ReadTransaction, dimension Ut
 	return p.suspendedUtilization.get(tx, dimension)
 }
 
-func (p TaskPlacer) StreamPendingTasks(ctx context.Context) (initialValues mapset.Set[task.Id], events <-chan []reliableset.TLogEntry[task.Id], errCh <-chan error, err error) {
+func (p TaskPlacer) StreamPendingTasks(ctx context.Context) (*reliableset.Stream[task.Id], error) {
 	return p.pendingSet.Stream(ctx)
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 
@@ -552,6 +553,43 @@ func TestCreateTaskProtovalidateRejectsZeroResourceRequest(t *testing.T) {
 
 		_, exists := readTaskState(t, db, taskID)
 		require.False(t, exists)
+	})
+}
+
+func TestControllerBatchTaskOperations_ConcurrentResultsKeepOrder(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		c := newTestController(t, db)
+		// more operations than the parallelism bound, on distinct tasks, so they overlap
+		const n = 3 * batchOperationParallelism
+		operations := make([]*taskv1.BatchTaskOperation, 0, n)
+		for i := range n {
+			operations = append(operations, taskv1.BatchTaskOperation_builder{
+				CreateTask: taskv1.ControlServiceCreateTaskRequest_builder{
+					Revision: proto.Uint64(1),
+					Request: taskv1.CreateTaskRequest_builder{
+						TaskId:          proto.String(fmt.Sprintf("concurrent-task-%03d", i)),
+						ExecutorId:      proto.String("executor"),
+						CallbackUrl:     proto.String("https://example.com/cb"),
+						Parameters:      taskv1.TaskParameters_builder{Input: []byte("v1")}.Build(),
+						ResourceRequest: testResourceRequest(),
+					}.Build(),
+				}.Build(),
+			}.Build())
+		}
+		// the same batch again: every operation is a duplicate, in the same positions
+		operations = append(operations, operations...)
+		resp, err := c.BatchTaskOperations(context.Background(), taskv1.BatchTaskOperationsRequest_builder{
+			Operations: operations,
+		}.Build())
+		require.NoError(t, err)
+		require.Len(t, resp.GetResults(), 2*n)
+		for i, result := range resp.GetResults() {
+			want := taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_APPLIED
+			if i >= n {
+				want = taskv1.BatchTaskOperationStatus_BATCH_TASK_OPERATION_STATUS_DUPLICATE
+			}
+			require.Equal(t, want, result.GetStatus(), "operation %d", i)
+		}
 	})
 }
 
