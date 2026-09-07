@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	"github.com/futura-platform/f4a/internal/reliablelock"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
@@ -703,5 +705,55 @@ func TestRun(t *testing.T) {
 			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
 			assert.ErrorIs(t, err, ErrRunFatal)
 		})
+	})
+}
+
+func TestRun_LeaseLostDuringSettlement(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		id := task.NewId()
+		tkey, err := tasksDirectory.Create(db, id)
+		require.NoError(t, err)
+		setInput(t, db, tkey, []byte("input"))
+
+		started := make(chan struct{}, 1)
+		release := make(chan struct{})
+		executor := &testutil.MockExecutor{
+			Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+				started <- struct{}{}
+				<-release
+				return nil
+			},
+		}
+		runnable := Runnable{db: db.Database, taskKey: tkey, executor: executor}
+		done := make(chan error, 1)
+		go func() { done <- runnable.Run(t.Context(), t.Name(), testCallbackUrl(t)) }()
+		<-started
+
+		// another holder takes the lock while the settlement is still running
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			taskDir, err := db.Root.Open(tx, []string{"tasks", string(id)}, nil)
+			if err != nil {
+				return nil, err
+			}
+			lockDir, err := taskDir.Open(tx, []string{"runnable_lock"}, nil)
+			if err != nil {
+				return nil, err
+			}
+			tx.Set(lockDir.Pack(tuple.Tuple{"holder", "identity"}), []byte("another holder"))
+			return nil, nil
+		})
+		require.NoError(t, err)
+		// the renewal loop notices the theft on its next renewal
+		time.Sleep(reliablelock.DefaultLeaseOptions().ExpirationDuration)
+		close(release)
+
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, ErrLeaseLost)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timeout waiting for Run to return")
+		}
 	})
 }

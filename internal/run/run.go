@@ -33,6 +33,19 @@ var (
 	ErrLeaseLost = errors.New("runnable lease lost")
 )
 
+// leaseLost reports cause as a lost lease. A nil cause is the lease alone, and a cause that
+// already is one is returned as is.
+func leaseLost(cause error) error {
+	switch {
+	case cause == nil:
+		return ErrLeaseLost
+	case errors.Is(cause, ErrLeaseLost):
+		return cause
+	default:
+		return fmt.Errorf("%w: %w", ErrLeaseLost, cause)
+	}
+}
+
 var (
 	tracer = otel.Tracer("f4a.runner.run")
 )
@@ -67,11 +80,11 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 
 	// bind ctx to the lease so that operations only happen while the lease is valid
 	ctx = activeLease
-	// a run that ended because its lease ended, not because the caller cancelled it, did not
-	// fail: report the lost lease instead of the settlement's cancellation
+	// a run whose lease ended, while the caller never cancelled it, no longer owns the task
 	defer func() {
-		if err != nil && ctx.Err() != nil && parentCtx.Err() == nil {
-			err = fmt.Errorf("%w: %w", ErrLeaseLost, err)
+		leaseEnded := ctx.Err() != nil && parentCtx.Err() == nil
+		if leaseEnded {
+			err = leaseLost(err)
 		}
 	}()
 
@@ -185,7 +198,7 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 			if errors.Is(err, errInputMissing) {
 				// deleted under the run: the lease died with the directory and the input watch
 				// noticed first, so report it as a lost lease, not a failed run
-				return fmt.Errorf("%w: %w", ErrLeaseLost, err)
+				return leaseLost(err)
 			}
 			return err
 		}

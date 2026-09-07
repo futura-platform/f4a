@@ -192,7 +192,7 @@ func convertBatch[T comparable](raw []LogEntry, parser dbutil.Serializer[T]) ([]
 
 func convertSet[T comparable](raw mapset.Set[string], parser dbutil.Serializer[T]) (mapset.Set[T], error) {
 	items := mapset.NewSetWithSize[T](raw.Cardinality())
-	for item := range raw.Iter() {
+	for item := range mapset.Elements(raw) {
 		value, err := parser.Unmarshal([]byte(item))
 		if err != nil {
 			return nil, err
