@@ -15,7 +15,6 @@ import (
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
 	"github.com/futura-platform/f4a/cmd/dispatch/reaper"
 	"github.com/futura-platform/f4a/internal/pool"
-	"github.com/futura-platform/f4a/internal/reliableset"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 
@@ -118,9 +117,8 @@ var (
 	meter  = otel.Meter("f4a.dispatch.scheduler")
 )
 
-// commandRunners is the main loop of the scheduler. It is expected to commandRunners as a singleton scoped to the whole cluster.
-// It assigns tasks to the fittest workers exactly once per pending task.
-// It also periodically retries tasks that were left in the pending backlog.
+// commandRunners is the main loop of the scheduler. It is expected to run as a singleton scoped to the whole cluster.
+// Every pass plans the whole pending set; assignTask skips a task that is no longer pending.
 func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ctx, span := tracer.Start(ctx, "commandRunners")
 	defer func() { otelutil.End(span, err) }()
@@ -261,10 +259,11 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	// minutes with no output while grinding through an ~87k pending set).
 	s.logger.Info("scheduler startup: streaming pending set")
 	streamStart := time.Now()
-	initialValues, eventsCh, streamErrCh, err := s.taskPlacer.StreamPendingTasks(ctx)
+	pending, err := s.taskPlacer.StreamPendingTasks(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to stream pending set: %w", err)
 	}
+	initialValues := pending.Snapshot()
 	s.logger.Info("scheduler startup: pending set streamed",
 		"pending", initialValues.Cardinality(),
 		"took", time.Since(streamStart).String(),
@@ -298,46 +297,44 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 	ticker := time.NewTicker(s.cfg.MetricsInterval)
 	defer ticker.Stop()
 
-	for eventsCh != nil || streamErrCh != nil {
+	changeSignal := make(chan struct{}, 1)
+	streamClosed := make(chan struct{})
+	go func() {
+		defer close(streamClosed)
+		for range pending.Events() {
+			select {
+			case changeSignal <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	assignCurrentPending := func() error {
+		span.AddEvent("assignment_pass")
+		lastAssignmentFailures, err = s.assignPending(ctx, pending.Snapshot())
+		if err != nil {
+			return fmt.Errorf("failed to assign pending tasks: %w", err)
+		}
+		lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
+		return nil
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case batch, ok := <-eventsCh:
-			if !ok {
-				eventsCh = nil
-				continue
-			}
-
-			span.AddEvent("event_batch_received")
-			backlog := lastAssignmentFailures.All()
-			for _, entry := range batch {
-				switch entry.Op {
-				case reliableset.LogOperationAdd:
-					backlog.Add(entry.Value)
-				case reliableset.LogOperationRemove:
-					backlog.Remove(entry.Value)
-				}
-			}
-			lastAssignmentFailures, err = s.assignPending(ctx, backlog)
-			if err != nil {
-				return fmt.Errorf("failed to assign pending tasks: %w", err)
-			}
-			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
-		case err, ok := <-streamErrCh:
-			if !ok {
-				streamErrCh = nil
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("pending set stream failed: %w", err)
+		case <-changeSignal:
+			if err := assignCurrentPending(); err != nil {
+				return err
 			}
 		case <-ticker.C:
-			lastAssignmentFailures, err = s.assignPending(ctx, lastAssignmentFailures.All())
-			if err != nil {
-				return fmt.Errorf("failed to assign pending backlog: %w", err)
+			if err := assignCurrentPending(); err != nil {
+				return err
 			}
-			lastAssignmentFailures.Record(ctx, assignmentFailureGauge)
+		case <-streamClosed:
+			if err := <-pending.Err(); err != nil {
+				return fmt.Errorf("pending set stream failed: %w", err)
+			}
+			return nil
 		}
 	}
-	return nil
 }

@@ -91,6 +91,12 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callbackUrl *url.URL) 
 		err := r.Run(runCtx, m.runnerId, callbackUrl)
 		if err != nil && runCtx.Err() == nil {
 			span.RecordError(err)
+			if errors.Is(err, run.ErrLeaseLost) {
+				flog.FromContext(runCtx).LogAttrs(runCtx, slog.LevelWarn, "run ended with its lease",
+					slog.String("task_id", string(r.Id())), slog.String("error", err.Error()))
+				span.SetAttributes(attribute.Bool("canceled", true))
+				return
+			}
 			m.onRunError(r.Id(), err)
 		}
 		if runCtx.Err() != nil {

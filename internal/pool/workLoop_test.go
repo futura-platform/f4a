@@ -364,6 +364,119 @@ func TestWorkLoop(t *testing.T) {
 			}
 		})
 	})
+	t.Run("a run cancelled by a removal is not a run failure", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
+			runWorkLoopErr := make(chan error, 1)
+			runnerId := "test-runner"
+			taskSet := openTaskSet(t, db, runnerId)
+			settling := make(chan struct{})
+			executor := &testutil.MockExecutor{
+				Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+					close(settling)
+					<-ctx.Done()
+					// the run reports its cancellation the way a real settlement does
+					return fmt.Errorf("failed to discharge result: %w", ctx.Err())
+				},
+			}
+			executorId := execute.ExecutorId("test-executor")
+			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() {
+				runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
+			}()
+
+			id := task.NewId()
+			require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback", runnerId))
+			addTasks(t, db, taskSet, []task.Id{id})
+			select {
+			case <-settling:
+			case <-time.After(waitTimeout):
+				t.Fatal("timeout waiting for the run to start")
+			}
+			removeTasks(t, db, taskSet, []task.Id{id})
+
+			select {
+			case err := <-runWorkLoopErr:
+				t.Fatalf("the work loop exited on a cancelled run: %v", err)
+			case <-time.After(500 * time.Millisecond):
+			}
+			cancel()
+			select {
+			case err := <-runWorkLoopErr:
+				assert.ErrorIs(t, err, context.Canceled)
+				assert.NotErrorIs(t, err, ErrRunFailed)
+			case <-time.After(waitTimeout):
+				t.Fatal("timeout waiting for RunWorkLoop to return")
+			}
+		})
+	})
+	t.Run("a run whose task is deleted under it is not a run failure", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			assert.NoError(t, db.Options().SetTransactionRetryLimit(10))
+
+			runWorkLoopErr := make(chan error, 1)
+			runnerId := "test-runner"
+			taskSet := openTaskSet(t, db, runnerId)
+			settling := make(chan struct{})
+			executor := &testutil.MockExecutor{
+				Settle: func(_ execute.SettlementContainers, ctx context.Context, marshalledInput []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+					close(settling)
+					<-ctx.Done()
+					return fmt.Errorf("failed to discharge result: %w", ctx.Err())
+				},
+			}
+			executorId := execute.ExecutorId("test-executor")
+			router := execute.NewRouter(execute.Route{Id: executorId, Executor: executor})
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() {
+				runWorkLoopErr <- RunWorkLoop(ctx, runnerId, db, taskSet, router)
+			}()
+
+			id := task.NewId()
+			require.NoError(t, seedTask(t, db, id, executorId, "http://example.com/callback", runnerId))
+			addTasks(t, db, taskSet, []task.Id{id})
+			select {
+			case <-settling:
+			case <-time.After(waitTimeout):
+				t.Fatal("timeout waiting for the run to start")
+			}
+			// a delete clears the input in the same transaction that removes the
+			// task from the runner's set, so the input watch fires first
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			require.NoError(t, err)
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+				taskKey, err := tasksDirectory.Open(tx, id)
+				if err != nil {
+					return nil, err
+				}
+				if err := taskSet.Remove(tx, taskKey); err != nil {
+					return nil, err
+				}
+				return nil, taskKey.Clear(tx)
+			})
+			require.NoError(t, err)
+
+			select {
+			case err := <-runWorkLoopErr:
+				t.Fatalf("the work loop exited on a deleted task: %v", err)
+			case <-time.After(500 * time.Millisecond):
+			}
+			cancel()
+			select {
+			case err := <-runWorkLoopErr:
+				assert.ErrorIs(t, err, context.Canceled)
+				assert.NotErrorIs(t, err, ErrRunFailed)
+			case <-time.After(waitTimeout):
+				t.Fatal("timeout waiting for RunWorkLoop to return")
+			}
+		})
+	})
 	t.Run("returns run failed error when a run fails", func(t *testing.T) {
 		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 			assert.NoError(t, db.Options().SetTransactionRetryLimit(10))

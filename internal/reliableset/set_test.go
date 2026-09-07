@@ -359,8 +359,9 @@ func TestCursorRegistrationAndAdvance(t *testing.T) {
 		set := newSet(t, db, "cursor_registration")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		_, events, errCh, err := set.streamEvents(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		begin, _ := set.logSubspace.FDBRangeKeys()

@@ -136,9 +136,10 @@ func TestRunWithLeaderElection(t *testing.T) {
 				schedulerErr <- runWithLeaderElection(t.Context(), testCfg, "test-leader-election", db, clients)
 			}()
 
-			initial, changes, errCh, err := mockedRunnerTaskSet.Stream(t.Context())
+			stream, err := mockedRunnerTaskSet.Stream(t.Context())
 			require.NoError(t, err)
-			assert.Zero(t, initial.Cardinality())
+			assert.Zero(t, stream.Snapshot().Cardinality())
+			changes, errCh := stream.Events(), stream.Err()
 
 			const testTaskId = "test-task-id"
 			taskKey, err := tasksDir.Create(db, task.Id(testTaskId))

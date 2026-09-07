@@ -127,12 +127,7 @@ func (r *RunnerSet) Cardinality(t fdb.ReadTransaction) (int64, error) {
 	return r.set.Cardinality(t)
 }
 
-func (r *RunnerSet) Stream(ctx context.Context) (
-	initialValues mapset.Set[task.Id],
-	events <-chan []reliableset.TLogEntry[task.Id],
-	errCh <-chan error,
-	err error,
-) {
+func (r *RunnerSet) Stream(ctx context.Context) (*reliableset.Stream[task.Id], error) {
 	return r.set.Stream(ctx)
 }
 

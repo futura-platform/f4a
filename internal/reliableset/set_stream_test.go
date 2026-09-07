@@ -27,8 +27,9 @@ func TestSetStreamInitialSnapshotAndSequence(t *testing.T) {
 		addBatch(t, db, set, initialItems)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		initialValues, events, errCh := stream.Snapshot(), stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		require.True(t, stateSetsEqual(initialValues, mapset.NewSet[string]("first", "second", "third")))
@@ -59,8 +60,9 @@ func TestSetStreamEmptyTransitions(t *testing.T) {
 		set := newSet(t, db, "stream_empty")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		initialValues, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		initialValues, events, errCh := stream.Snapshot(), stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		require.True(t, initialValues.Cardinality() == 0)
@@ -85,8 +87,9 @@ func TestSetStreamCancelWhileBlockedOnSendReturnsContextError(t *testing.T) {
 		set := newSet(t, db, "stream_cancel_blocked_send")
 
 		ctx, cancel := context.WithCancel(t.Context())
-		_, _, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		errCh := stream.Err()
 
 		addItem(t, db, set, []byte("blocked"))
 
@@ -108,8 +111,9 @@ func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 		set := newSet(t, db, "stream_add_batch")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		const batchSize = 12
@@ -124,72 +128,41 @@ func TestSetStreamAddBatchSingleEvent(t *testing.T) {
 		require.Len(t, batch, batchSize)
 		for i, entry := range batch {
 			require.Equal(t, LogOperationAdd, entry.Op)
-			require.Equal(t, items[i], entry.Value)
+			require.Equal(t, string(items[i]), entry.Value)
 		}
 
 		assertNoExtraBatch(t, ctx, events, errCh)
 	})
 }
 
-func TestSetStreamEventsRawDuplicateAdds(t *testing.T) {
+func TestSetStreamDuplicateOperationsDeliveredAsWritten(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		set := newSet(t, db, "stream_events_raw_duplicate_adds")
+		set := newSet(t, db, "stream_duplicate_operations")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.streamEvents(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		payload := []byte("dup")
 		addBatch(t, db, set, [][]byte{payload, payload})
 
 		batch := readNextBatch(t, ctx, events, errCh)
-		require.Len(t, batch, 2)
-		require.Equal(t, LogOperationAdd, batch[0].Op)
-		require.Equal(t, payload, batch[0].Value)
-		require.Equal(t, LogOperationAdd, batch[1].Op)
-		require.Equal(t, payload, batch[1].Value)
-	})
-}
-
-func TestSetStreamDuplicateAddsCollapsed(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		set := newSet(t, db, "stream_duplicate_adds_collapsed")
-
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.Stream(ctx)
-		require.NoError(t, err)
-		defer drainStream(t, cancel, errCh)
-
-		payload := []byte("dup")
-		addBatch(t, db, set, [][]byte{payload, payload})
-
-		batch := readNextBatch(t, ctx, events, errCh)
-		require.Len(t, batch, 1)
-		require.Equal(t, LogOperationAdd, batch[0].Op)
-		require.Equal(t, payload, batch[0].Value)
-
-		assertNoExtraBatch(t, ctx, events, errCh)
-	})
-}
-
-func TestSetStreamDuplicateRemovesCollapsed(t *testing.T) {
-	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		set := newSet(t, db, "stream_duplicate_removes_collapsed")
-		payload := []byte("dup")
-		addItem(t, db, set, payload)
-
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.Stream(ctx)
-		require.NoError(t, err)
-		defer drainStream(t, cancel, errCh)
+		require.Equal(t, []TLogEntry[string]{
+			{Op: LogOperationAdd, Value: "dup"},
+			{Op: LogOperationAdd, Value: "dup"},
+		}, batch)
+		require.True(t, stateSetsEqual(stream.Snapshot(), mapset.NewSet[string]("dup")))
 
 		removeBatch(t, db, set, [][]byte{payload, payload})
 
-		batch := readNextBatch(t, ctx, events, errCh)
-		require.Len(t, batch, 1)
-		require.Equal(t, LogOperationRemove, batch[0].Op)
-		require.Equal(t, payload, batch[0].Value)
+		batch = readNextBatch(t, ctx, events, errCh)
+		require.Equal(t, []TLogEntry[string]{
+			{Op: LogOperationRemove, Value: "dup"},
+			{Op: LogOperationRemove, Value: "dup"},
+		}, batch)
+		require.True(t, stream.Snapshot().IsEmpty())
 
 		assertNoExtraBatch(t, ctx, events, errCh)
 	})
@@ -200,30 +173,141 @@ func TestSetStreamOpposingOperationsWithinSingleBatch(t *testing.T) {
 		set := newSet(t, db, "stream_opposing_operations")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		payload := []byte("value")
 
-		// add then remove in the same transaction has no net effect.
+		// add then remove in one transaction: both entries are delivered, in
+		// order, and the membership is unchanged.
 		applyLogBatch(t, db, set, []LogEntry{
 			{Op: LogOperationAdd, Value: payload},
 			{Op: LogOperationRemove, Value: payload},
-		})
-		assertNoExtraBatch(t, ctx, events, errCh)
-		requireSetMatchesDB(t, db, set, mapset.NewSet[string]())
-
-		// remove then add in the same transaction yields a net add on empty state.
-		applyLogBatch(t, db, set, []LogEntry{
-			{Op: LogOperationRemove, Value: payload},
-			{Op: LogOperationAdd, Value: payload},
 		})
 		batch := readNextBatch(t, ctx, events, errCh)
-		require.Len(t, batch, 1)
-		require.Equal(t, LogOperationAdd, batch[0].Op)
-		require.Equal(t, payload, batch[0].Value)
+		require.Equal(t, []TLogEntry[string]{
+			{Op: LogOperationAdd, Value: "value"},
+			{Op: LogOperationRemove, Value: "value"},
+		}, batch)
+		require.True(t, stream.Snapshot().IsEmpty())
+		requireSetMatchesDB(t, db, set, mapset.NewSet[string]())
+
+		// remove then add in one transaction: a consumer folding the batch
+		// sees a net add, and the membership holds the item.
+		applyLogBatch(t, db, set, []LogEntry{
+			{Op: LogOperationRemove, Value: payload},
+			{Op: LogOperationAdd, Value: payload},
+		})
+		batch = readNextBatch(t, ctx, events, errCh)
+		require.Equal(t, []TLogEntry[string]{
+			{Op: LogOperationRemove, Value: "value"},
+			{Op: LogOperationAdd, Value: "value"},
+		}, batch)
+		require.True(t, stateSetsEqual(stream.Snapshot(), mapset.NewSet[string]("value")))
 		requireSetMatchesDB(t, db, set, mapset.NewSet[string](string(payload)))
+
+		assertNoExtraBatch(t, ctx, events, errCh)
+	})
+}
+
+func TestSetStreamSnapshotHoldsItemRemovedAndReAddedAcrossBatches(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_snapshot_remove_readd")
+		addItem(t, db, set, []byte("x"))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		stream, err := set.Stream(ctx)
+		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
+		defer drainStream(t, cancel, errCh)
+		require.True(t, stateSetsEqual(stream.Snapshot(), mapset.NewSet[string]("x")))
+
+		// Two commits the consumer never reads between: the stream may read
+		// them as one chunk or two, and either way the membership is right.
+		removeItem(t, db, set, []byte("x"))
+		addItem(t, db, set, []byte("x"))
+
+		var seen []TLogEntry[string]
+		for len(seen) < 2 {
+			seen = append(seen, readNextBatch(t, ctx, events, errCh)...)
+		}
+		require.Equal(t, []TLogEntry[string]{
+			{Op: LogOperationRemove, Value: "x"},
+			{Op: LogOperationAdd, Value: "x"},
+		}, seen)
+		expected := mapset.NewSet[string]("x")
+		require.True(t, stateSetsEqual(stream.Snapshot(), expected))
+		requireSetMatchesDB(t, db, set, expected)
+		assertNoExtraBatch(t, ctx, events, errCh)
+	})
+}
+
+func TestSetStreamSnapshotIsFoldedBeforeTheBatchIsSent(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_snapshot_before_send")
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		stream, err := set.Stream(ctx)
+		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
+		defer drainStream(t, cancel, errCh)
+
+		addBatch(t, db, set, [][]byte{[]byte("a"), []byte("b")})
+		// Events is unbuffered, so the membership can only reach {a, b} while
+		// the batch is still unreceived if the fold precedes the send.
+		expected := mapset.NewSet[string]("a", "b")
+		require.Eventually(t, func() bool {
+			return stateSetsEqual(stream.Snapshot(), expected)
+		}, 10*time.Second, 5*time.Millisecond)
+		batch := readNextBatch(t, ctx, events, errCh)
+		require.Len(t, batch, 2)
+	})
+}
+
+func TestSetStreamSnapshotIsACopy(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_snapshot_copy")
+		addItem(t, db, set, []byte("a"))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		stream, err := set.Stream(ctx)
+		require.NoError(t, err)
+		defer drainStream(t, cancel, stream.Err())
+
+		snapshot := stream.Snapshot()
+		snapshot.Add("z")
+		snapshot.Remove("a")
+		require.True(t, stateSetsEqual(stream.Snapshot(), mapset.NewSet[string]("a")))
+	})
+}
+
+func TestSetStreamEndsWithClosedChannels(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		set := newSet(t, db, "stream_ends_closed")
+
+		ctx, cancel := context.WithCancel(t.Context())
+		stream, err := set.Stream(ctx)
+		require.NoError(t, err)
+		cancel()
+
+		select {
+		case _, ok := <-stream.Events():
+			require.False(t, ok, "expected Events to close, got a batch")
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for Events to close")
+		}
+		select {
+		case err, ok := <-stream.Err():
+			if ok {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for Err")
+		}
+		_, ok := <-stream.Err()
+		require.False(t, ok, "expected Err to close after Events")
 	})
 }
 
@@ -239,8 +323,9 @@ func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 		addBatch(t, db, set, items)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		_, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		events, errCh := stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		toRemove := items[:6]
@@ -250,7 +335,7 @@ func TestSetStreamRemoveBatchSingleEvent(t *testing.T) {
 		require.Len(t, batch, len(toRemove))
 		for i, entry := range batch {
 			require.Equal(t, LogOperationRemove, entry.Op)
-			require.Equal(t, toRemove[i], entry.Value)
+			require.Equal(t, string(toRemove[i]), entry.Value)
 		}
 
 		assertNoExtraBatch(t, ctx, events, errCh)
@@ -263,8 +348,9 @@ func TestStreamResyncsAfterCursorEviction(t *testing.T) {
 		addBatch(t, db, set, [][]byte{[]byte("a"), []byte("b")})
 
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-		initialValues, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		initialValues, events, errCh := stream.Snapshot(), stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 		require.True(t, stateSetsEqual(initialValues, mapset.NewSet[string]("a", "b")))
 		local := cloneSet(initialValues)
@@ -303,6 +389,7 @@ func TestStreamResyncsAfterCursorEviction(t *testing.T) {
 		// surfacing any error to us.
 		expected := mapset.NewSet[string]("b", "wedge-1", "wedge-2", "wedge-3", "c")
 		awaitSetState(t, ctx, events, errCh, &local, expected)
+		require.True(t, stateSetsEqual(stream.Snapshot(), expected))
 		requireSetMatchesDB(t, db, set, expected)
 	})
 }
@@ -312,8 +399,9 @@ func TestSetStreamHighActivity(t *testing.T) {
 		set := newSet(t, db, "stream_high_activity")
 
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-		initialValues, events, errCh, err := set.Stream(ctx)
+		stream, err := set.Stream(ctx)
 		require.NoError(t, err)
+		initialValues, events, errCh := stream.Snapshot(), stream.Events(), stream.Err()
 		defer drainStream(t, cancel, errCh)
 
 		local := cloneSet(initialValues)
@@ -389,7 +477,8 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 			type readerState struct {
 				mu     sync.Mutex
 				local  mapset.Set[string]
-				events <-chan []LogEntry
+				stream *Stream[string]
+				events <-chan []TLogEntry[string]
 				errCh  <-chan error
 			}
 
@@ -462,13 +551,14 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 
 				readerSet, err := Open(db, db, setPath(db, "stream_fuzz_concurrent"))
 				require.NoError(t, err)
-				initialValues, events, streamErrCh, err := readerSet.Stream(streamCtx)
+				stream, err := readerSet.Stream(streamCtx)
 				require.NoError(t, err)
 
 				reader := &readerState{
-					local:  cloneSet(initialValues),
-					events: events,
-					errCh:  streamErrCh,
+					local:  stream.Snapshot(),
+					stream: stream,
+					events: stream.Events(),
+					errCh:  stream.Err(),
 				}
 				readers = append(readers, reader)
 
@@ -630,7 +720,7 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 
 				allMatch := true
 				for _, reader := range readers {
-					if !stateSetsEqual(snapshot(reader), expected) {
+					if !stateSetsEqual(snapshot(reader), expected) || !stateSetsEqual(reader.stream.Snapshot(), expected) {
 						allMatch = false
 						break
 					}
@@ -658,21 +748,11 @@ func FuzzSetStreamConcurrentReadersWriters(f *testing.F) {
 	})
 }
 
-func applyStreamBatch(current mapset.Set[string], batch []LogEntry) (mapset.Set[string], error) {
+func applyStreamBatch(current mapset.Set[string], batch []TLogEntry[string]) (mapset.Set[string], error) {
 	if current == nil {
 		current = mapset.NewSet[string]()
 	}
-	for _, entry := range batch {
-		switch entry.Op {
-		case LogOperationAdd:
-			current.Add(string(entry.Value))
-		case LogOperationRemove:
-			current.Remove(string(entry.Value))
-		default:
-			return current, fmt.Errorf("unknown stream operation: %d", entry.Op)
-		}
-	}
-	return current, nil
+	return current, foldInto(current, batch)
 }
 
 func applyLogBatch(t testing.TB, db dbutil.DbRoot, set *set, batch []LogEntry) {
@@ -700,7 +780,7 @@ func applyLogBatch(t testing.TB, db dbutil.DbRoot, set *set, batch []LogEntry) {
 func awaitSetState(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan []LogEntry,
+	events <-chan []TLogEntry[string],
 	errCh <-chan error,
 	local *mapset.Set[string],
 	expected mapset.Set[string],
@@ -757,9 +837,9 @@ func awaitSetState(
 func readNextBatch(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan []LogEntry,
+	events <-chan []TLogEntry[string],
 	errCh <-chan error,
-) []LogEntry {
+) []TLogEntry[string] {
 	t.Helper()
 	select {
 	case batch, ok := <-events:
@@ -781,7 +861,7 @@ func readNextBatch(
 func assertNoExtraBatch(
 	t *testing.T,
 	ctx context.Context,
-	events <-chan []LogEntry,
+	events <-chan []TLogEntry[string],
 	errCh <-chan error,
 ) {
 	t.Helper()

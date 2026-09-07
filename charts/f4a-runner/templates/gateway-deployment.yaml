@@ -60,6 +60,8 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            # make the probe's timeout match up with FDB's standard timeout
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
           volumeMounts:
