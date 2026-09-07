@@ -2,11 +2,15 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
@@ -73,13 +77,13 @@ func TestPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
 	})
 }
 
-func TestLoopTickerPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
+func TestLoopPassPlansFromTheSnapshot(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		const runnerID = "worker-0"
-		s, tasksDir, taskPlacer, activeRunnerSets := newSchedulerFixture(t, db, runnerID)
-		s.cfg.MetricsInterval = 500 * time.Millisecond
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, runnerID)
+		s.cfg.MetricsInterval = time.Hour
 		s.clients = &k8s.Clients{Core: fake.NewClientset()}
-		taskID := task.Id("requeued-in-chunk-loop")
+		taskID := task.Id("requeued-running-task")
 		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		ctx, cancel := context.WithCancel(t.Context())
@@ -87,28 +91,15 @@ func TestLoopTickerPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
 		loopErr := make(chan error, 1)
 		go func() { loopErr <- s.commandRunners(ctx) }()
 
-		// the initial pass assigns the seeded task
 		require.Eventually(t, func() bool {
 			status, _ := readTaskState(t, db, tasksDir, taskID)
 			return status == task.LifecycleStatusRunning
 		}, 10*time.Second, 20*time.Millisecond)
 
-		// re-queue it in one transaction: the stream's chunk is a net no-op for
-		// membership, so only a pass over the snapshot can pick it up again
-		runnerSet, err := activeRunnerSets.open(runnerID)
-		require.NoError(t, err)
-		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-			taskKey, err := tasksDir.Open(tx, taskID)
-			if err != nil {
-				return nil, err
-			}
-			if err := taskPlacer.PlaceTaskIn(tx, servicestate.PlacementLocationPending, taskKey); err != nil {
-				return nil, err
-			}
-			return nil, taskPlacer.PlaceTaskOnRunner(tx, runnerID, runnerSet, taskKey)
-		})
-		require.NoError(t, err)
-		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+		// re-queue the running task: the event wakes the loop, and the task was
+		// never a recorded failure, so only a pass planned from the snapshot
+		// assigns it again
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 			taskKey, err := tasksDir.Open(tx, taskID)
 			if err != nil {
 				return nil, err
@@ -117,18 +108,89 @@ func TestLoopTickerPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.Eventually(t, func() bool {
-			status, runnerIDOnTask := readTaskState(t, db, tasksDir, taskID)
-			return status == task.LifecycleStatusRunning && runnerIDOnTask != nil && *runnerIDOnTask == runnerID
-		}, 10*time.Second, 20*time.Millisecond)
+		requireEventuallyRunningOn(t, db, tasksDir, taskID, runnerID)
 		requirePendingNotContainsTask(t, taskPlacer, taskID)
 
 		cancel()
-		select {
-		case err := <-loopErr:
-			require.ErrorIs(t, err, context.Canceled)
-		case <-time.After(10 * time.Second):
-			t.Fatal("timeout waiting for the loop to stop")
-		}
+		requireLoopStops(t, loopErr)
 	})
+}
+
+func TestLoopTickerPassRetriesTaskNoReadyRunnerCouldTake(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		const runnerID = "worker-0"
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, runnerID)
+		s.cfg.MetricsInterval = 500 * time.Millisecond
+		s.clients = &k8s.Clients{Core: fake.NewClientset()}
+		lister := &readinessPodLister{pod: podListerForRunners(runnerID).pods[0]}
+		s.runnerPodLister = lister
+		taskID := task.Id("unplaceable-until-ready")
+		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		loopErr := make(chan error, 1)
+		go func() { loopErr <- s.commandRunners(ctx) }()
+
+		// the initial pass finds no ready runner and records the task as a failure
+		require.Eventually(t, func() bool { return lister.lists.Load() >= 1 }, 10*time.Second, 20*time.Millisecond)
+		status, _ := readTaskState(t, db, tasksDir, taskID)
+		require.Equal(t, task.LifecycleStatusPending, status)
+
+		// readiness is not a pending-set change, so nothing wakes the loop but
+		// the ticker
+		lister.ready.Store(true)
+		requireEventuallyRunningOn(t, db, tasksDir, taskID, runnerID)
+		requirePendingNotContainsTask(t, taskPlacer, taskID)
+
+		cancel()
+		requireLoopStops(t, loopErr)
+	})
+}
+
+// readinessPodLister serves one runner pod whose readiness the test controls.
+type readinessPodLister struct {
+	pod   *corev1.Pod
+	ready atomic.Bool
+	lists atomic.Int32
+}
+
+func (l *readinessPodLister) current() *corev1.Pod {
+	pod := l.pod.DeepCopy()
+	status := corev1.ConditionFalse
+	if l.ready.Load() {
+		status = corev1.ConditionTrue
+	}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}
+	return pod
+}
+
+func (l *readinessPodLister) List(labels.Selector) ([]*corev1.Pod, error) {
+	l.lists.Add(1)
+	return []*corev1.Pod{l.current()}, nil
+}
+
+func (l *readinessPodLister) Get(name string) (*corev1.Pod, error) {
+	if name != l.pod.Name {
+		return nil, fmt.Errorf("pod %q not found", name)
+	}
+	return l.current(), nil
+}
+
+func requireEventuallyRunningOn(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, id task.Id, runnerID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		status, runnerIDOnTask := readTaskState(t, db, tasksDir, id)
+		return status == task.LifecycleStatusRunning && runnerIDOnTask != nil && *runnerIDOnTask == runnerID
+	}, 10*time.Second, 20*time.Millisecond)
+}
+
+func requireLoopStops(t *testing.T, loopErr <-chan error) {
+	t.Helper()
+	select {
+	case err := <-loopErr:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for the loop to stop")
+	}
 }

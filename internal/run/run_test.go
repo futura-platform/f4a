@@ -718,11 +718,11 @@ func TestRun_LeaseLostDuringSettlement(t *testing.T) {
 		setInput(t, db, tkey, []byte("input"))
 
 		started := make(chan struct{}, 1)
-		release := make(chan struct{})
 		executor := &testutil.MockExecutor{
-			Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+			// the settlement succeeds, but only once the lease's loss has cancelled it
+			Settle: func(_ execute.SettlementContainers, ctx context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
 				started <- struct{}{}
-				<-release
+				<-ctx.Done()
 				return nil
 			},
 		}
@@ -745,14 +745,12 @@ func TestRun_LeaseLostDuringSettlement(t *testing.T) {
 			return nil, nil
 		})
 		require.NoError(t, err)
-		// the renewal loop notices the theft on its next renewal
-		time.Sleep(reliablelock.DefaultLeaseOptions().ExpirationDuration)
-		close(release)
 
+		// the renewal loop notices the theft on its next renewal
 		select {
 		case err := <-done:
 			require.ErrorIs(t, err, ErrLeaseLost)
-		case <-time.After(10 * time.Second):
+		case <-time.After(2 * reliablelock.DefaultLeaseOptions().ExpirationDuration):
 			t.Fatal("timeout waiting for Run to return")
 		}
 	})
