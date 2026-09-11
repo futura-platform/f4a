@@ -43,6 +43,11 @@ type setDirectories struct {
 	compactionLockSubspace directory.DirectorySubspace
 }
 
+const (
+	metadataDirectory = "metadata"
+	cardinalityField  = "cardinality"
+)
+
 func newSetDirectories[T fdb.ReadTransactor](
 	tr T,
 	path []string,
@@ -60,7 +65,7 @@ func newSetDirectories[T fdb.ReadTransactor](
 	if err != nil {
 		return d, fmt.Errorf("failed to create cursor subspace: %w", err)
 	}
-	d.metadataSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), "metadata"))
+	d.metadataSubspace, err = directoryConstructor(tr, append(append([]string{}, path...), metadataDirectory))
 	if err != nil {
 		return d, fmt.Errorf("failed to create metadata subspace: %w", err)
 	}
@@ -86,7 +91,7 @@ func constructWith[T fdb.ReadTransactor](
 		db:             db,
 		name:           strings.Join(path, "/"),
 		epochKey:       dirs.metadataSubspace.Pack(tuple.Tuple{"epoch"}),
-		cardinalityKey: dirs.metadataSubspace.Pack(tuple.Tuple{"cardinality"}),
+		cardinalityKey: dirs.metadataSubspace.Pack(tuple.Tuple{cardinalityField}),
 		setDirectories: dirs,
 		clearFunc:      clearFunc,
 	}
@@ -224,7 +229,20 @@ func (s *set) leasedItems(ctx context.Context, db fdb.Database) (
 // compaction. Log entries that have not been compacted yet are not reflected,
 // so the value is eventually consistent with Items.
 func (s *set) Cardinality(t fdb.ReadTransaction) (int64, error) {
-	raw, err := t.Get(s.cardinalityKey).Get()
+	return readCardinality(t, s.cardinalityKey)
+}
+
+// ReadCardinality resolves the current metadata directory without opening the rest of the set.
+func ReadCardinality(t fdb.ReadTransaction, db dbutil.DbRoot, path []string) (int64, error) {
+	metadata, err := db.Root.Open(t, append(append([]string{}, path...), metadataDirectory), nil)
+	if err != nil {
+		return 0, err
+	}
+	return readCardinality(t, metadata.Pack(tuple.Tuple{cardinalityField}))
+}
+
+func readCardinality(t fdb.ReadTransaction, key fdb.Key) (int64, error) {
+	raw, err := t.Get(key).Get()
 	if err != nil {
 		return 0, err
 	}

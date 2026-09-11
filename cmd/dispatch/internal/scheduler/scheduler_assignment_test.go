@@ -14,7 +14,6 @@ import (
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
-	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -25,12 +24,11 @@ import (
 
 func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
-		s, tasksDir, taskPlacer, activeRunnerSets := newSchedulerFixture(t, db, "worker-0")
+		s, tasksDir, taskPlacer, _ := newSchedulerFixture(t, db, "worker-0")
 		taskID := task.Id("pending-task-retry")
 		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
 		s.runnerPodLister = podListerForRunners()
-		s.activeRunnerSets = newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{})
 		assignmentFailures, err := s.assignPending(t.Context(), taskIDSet(taskID))
 		require.NoError(t, err)
 		requireAssignmentFailures(t, assignmentFailures, []task.Id{taskID}, nil)
@@ -41,7 +39,6 @@ func TestAssignPendingRetriesWhenResourcesAppear(t *testing.T) {
 		requirePendingContainsTask(t, taskPlacer, taskID)
 
 		s.runnerPodLister = podListerForRunners("worker-0")
-		s.activeRunnerSets = activeRunnerSets
 		assignmentFailures, err = s.assignPending(t.Context(), assignmentFailures.All())
 		require.NoError(t, err)
 		requireAssignmentFailures(t, assignmentFailures, nil, nil)
@@ -181,13 +178,11 @@ func TestAssignPendingFillsLowestOrdinalsFirst(t *testing.T) {
 		require.NoError(t, err)
 
 		runnerIDs := make([]string, 0, runnerCount)
-		runnerSets := make(map[string]*servicestate.RunnerSet, runnerCount)
 		for i := range runnerCount {
 			runnerID := fmt.Sprintf("f4a-worker-%d", i)
 			runnerIDs = append(runnerIDs, runnerID)
-			set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+			_, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 			require.NoError(t, err)
-			runnerSets[runnerID] = set
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				activeRunners.SetActive(tx, runnerID, true)
 				return nil, nil
@@ -200,13 +195,12 @@ func TestAssignPendingFillsLowestOrdinalsFirst(t *testing.T) {
 				BatchTxParallelism: 1,
 				Logger:             slog.Default(),
 			},
-			db:               db,
-			taskDir:          tasksDir,
-			taskPlacer:       taskPlacer,
-			activeRunners:    activeRunners,
-			logger:           slog.Default(),
-			activeRunnerSets: newMockedRunnerSetCache(db, runnerSets),
-			runnerPodLister:  podListerForRunners(runnerIDs...),
+			db:              db,
+			taskDir:         tasksDir,
+			taskPlacer:      taskPlacer,
+			activeRunners:   activeRunners,
+			logger:          slog.Default(),
+			runnerPodLister: podListerForRunners(runnerIDs...),
 		}
 
 		taskIDs := make([]task.Id, 0, taskCount)
@@ -252,13 +246,11 @@ func TestAssignPendingCpuBoundPlacement(t *testing.T) {
 		require.NoError(t, err)
 
 		runnerIDs := make([]string, 0, runnerCount)
-		runnerSets := make(map[string]*servicestate.RunnerSet, runnerCount)
 		for i := range runnerCount {
 			runnerID := fmt.Sprintf("f4a-worker-%d", i)
 			runnerIDs = append(runnerIDs, runnerID)
-			set, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
+			_, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerID)
 			require.NoError(t, err)
-			runnerSets[runnerID] = set
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				activeRunners.SetActive(tx, runnerID, true)
 				return nil, nil
@@ -271,13 +263,12 @@ func TestAssignPendingCpuBoundPlacement(t *testing.T) {
 				BatchTxParallelism: 1,
 				Logger:             slog.Default(),
 			},
-			db:               db,
-			taskDir:          tasksDir,
-			taskPlacer:       taskPlacer,
-			activeRunners:    activeRunners,
-			logger:           slog.Default(),
-			activeRunnerSets: newMockedRunnerSetCache(db, runnerSets),
-			runnerPodLister:  podListerForRunners(runnerIDs...),
+			db:              db,
+			taskDir:         tasksDir,
+			taskPlacer:      taskPlacer,
+			activeRunners:   activeRunners,
+			logger:          slog.Default(),
+			runnerPodLister: podListerForRunners(runnerIDs...),
 		}
 
 		taskIDs := make([]task.Id, 0, taskCount)
@@ -346,7 +337,7 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 	*Scheduler,
 	task.TasksDirectory,
 	*servicestate.TaskPlacer,
-	*runnerSetCache,
+	*servicestate.RunnerSet,
 ) {
 	t.Helper()
 	tasksDir, err := task.CreateOrOpenTasksDirectory(db)
@@ -377,10 +368,8 @@ func newSchedulerFixture(t *testing.T, db dbutil.DbRoot, workerID string) (
 		activeRunners: activeRunners,
 		logger:        slog.Default(),
 	}
-	activeRunnerSets := newMockedRunnerSetCache(db, map[string]*servicestate.RunnerSet{workerID: workerSet})
-	s.activeRunnerSets = activeRunnerSets
 	s.runnerPodLister = podListerForRunners(workerID)
-	return s, tasksDir, taskPlacer, activeRunnerSets
+	return s, tasksDir, taskPlacer, workerSet
 }
 
 type staticPodNamespaceLister struct {
@@ -428,17 +417,6 @@ func (l staticPodNamespaceLister) Get(name string) (*corev1.Pod, error) {
 		}
 	}
 	return nil, fmt.Errorf("pod %q not found", name)
-}
-
-func newMockedRunnerSetCache(db dbutil.DbRoot, src map[string]*servicestate.RunnerSet) *runnerSetCache {
-	cache := &runnerSetCache{
-		db:         db,
-		activeSets: xsync.NewMap[string, *servicestate.RunnerSet](xsync.WithPresize(len(src))),
-	}
-	for k, v := range src {
-		cache.activeSets.Store(k, v)
-	}
-	return cache
 }
 
 func seedPendingTask(t *testing.T, db dbutil.DbRoot, tasksDir task.TasksDirectory, taskPlacer *servicestate.TaskPlacer, id task.Id) {
