@@ -38,6 +38,8 @@ type taskWithResourceRequest struct {
 	resourceRequest *taskv1.TaskResourceRequest
 }
 
+const assignmentItemParallelism = 16
+
 func (s *Scheduler) batchTxParallelism() int {
 	if s.cfg.BatchTxParallelism < 1 {
 		return DefaultBatchParallelism
@@ -113,23 +115,24 @@ func (s *Scheduler) assignPending(
 	for batchStart := 0; batchStart < len(readyPods); batchStart += runnerLoadBatchSize {
 		batch := readyPods[batchStart:min(batchStart+runnerLoadBatchSize, len(readyPods))]
 		runnerGroup.Go(func() error {
-			// Collect inside the closure and merge after the commit: the
-			// closure re-runs on transaction retry.
 			loaded, err := s.db.ReadTransactContext(runnerCtx, func(t fdb.ReadTransaction) (any, error) {
-				batchLoaded := make([]*runnerWithResources, 0, len(batch))
-				for _, pod := range batch {
-					resources, ok, err := remainingResourcesFromRunner(t, s.db, s.activeRunners, pod)
-					if err != nil {
-						return nil, err
-					} else if !ok {
-						continue
-					}
-					batchLoaded = append(batchLoaded, &runnerWithResources{
-						runnerId:  pod.Name,
-						resources: resources,
+				batchLoaded := make([]*runnerWithResources, len(batch))
+				var reads errgroup.Group
+				reads.SetLimit(assignmentItemParallelism)
+				for i, pod := range batch {
+					reads.Go(func() error {
+						resources, ok, err := remainingResourcesFromRunner(t, s.db, s.activeRunners, pod)
+						if err != nil || !ok {
+							return err
+						}
+						batchLoaded[i] = &runnerWithResources{runnerId: pod.Name, resources: resources}
+						return nil
 					})
 				}
-				return batchLoaded, nil
+				if err := reads.Wait(); err != nil {
+					return nil, err
+				}
+				return slices.DeleteFunc(batchLoaded, func(r *runnerWithResources) bool { return r == nil }), nil
 			})
 			if err != nil {
 				return err
@@ -147,12 +150,6 @@ func (s *Scheduler) assignPending(
 		assignmentPlan[runner.runnerId] = mapset.NewSet[taskWithResourceRequest]()
 	}
 
-	// Load the tasks with their resource requests, batched: one read
-	// transaction per task turned a large backlog into an unbounded silent
-	// startup stall (observed: a promoted leader ground through an ~87k
-	// pending set for 13+ minutes with no output — the line looked dead).
-	// Chunking keeps each transaction well inside the 5s budget while
-	// cutting the transaction count by resourceRequestLoadBatchSize.
 	const resourceRequestLoadBatchSize = 256
 	pendingIdSlice := pendingIds.ToSlice()
 	taskResourceRequests := mapset.NewSet[taskWithResourceRequest]()
@@ -161,35 +158,39 @@ func (s *Scheduler) assignPending(
 	for batchStart := 0; batchStart < len(pendingIdSlice); batchStart += resourceRequestLoadBatchSize {
 		batch := pendingIdSlice[batchStart:min(batchStart+resourceRequestLoadBatchSize, len(pendingIdSlice))]
 		taskGroup.Go(func() error {
-			// Collect inside the closure and merge after the commit: the
-			// closure re-runs on transaction retry, and mutating the shared
-			// set from inside it would duplicate entries.
 			loaded, err := s.db.ReadTransactContext(taskCtx, func(t fdb.ReadTransaction) (any, error) {
-				batchLoaded := make([]taskWithResourceRequest, 0, len(batch))
-				for _, taskId := range batch {
-					taskKey, err := s.taskDir.Open(t, task.Id(taskId))
-					if err != nil {
-						if errors.Is(err, directory.ErrDirNotExists) {
-							continue
+				batchLoaded := make([]*taskWithResourceRequest, len(batch))
+				var reads errgroup.Group
+				reads.SetLimit(assignmentItemParallelism)
+				for i, taskId := range batch {
+					reads.Go(func() error {
+						taskKey, err := s.taskDir.Open(t, taskId)
+						if err != nil {
+							if errors.Is(err, directory.ErrDirNotExists) {
+								return nil
+							}
+							return fmt.Errorf("failed to open task %s: %w", taskId, err)
 						}
-						return nil, fmt.Errorf("failed to open task %s: %w", taskId, err)
-					}
 
-					taskResourceRequest, err := taskKey.ResourceRequest().Get(t).Get()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get task resource request for task %s: %w", taskId, err)
-					}
-					batchLoaded = append(batchLoaded, taskWithResourceRequest{
-						taskId:          task.Id(taskId),
-						resourceRequest: taskResourceRequest,
+						taskResourceRequest, err := taskKey.ResourceRequest().Get(t).Get()
+						if err != nil {
+							return fmt.Errorf("failed to get task resource request for task %s: %w", taskId, err)
+						}
+						batchLoaded[i] = &taskWithResourceRequest{taskId: taskId, resourceRequest: taskResourceRequest}
+						return nil
 					})
 				}
-				return batchLoaded, nil
+				if err := reads.Wait(); err != nil {
+					return nil, err
+				}
+				return slices.DeleteFunc(batchLoaded, func(t *taskWithResourceRequest) bool { return t == nil }), nil
 			})
 			if err != nil {
 				return err
 			}
-			taskResourceRequests.Append(loaded.([]taskWithResourceRequest)...)
+			for _, task := range loaded.([]*taskWithResourceRequest) {
+				taskResourceRequests.Add(*task)
+			}
 			return nil
 		})
 	}
@@ -269,50 +270,54 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 				)
 				defer func() { otelutil.End(span, err) }()
 
-				// Collected inside the transaction closure and reset on each
-				// attempt so FDB retries don't produce duplicates. Marker spans
-				// are emitted only after the transaction commits.
-				assignedInBatch := make([]task.Id, 0, len(batchForWorker))
-				_, err = s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
-					assignedInBatch = assignedInBatch[:0]
+				result, err := s.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 					active, err := s.activeRunners.IsActive(tx, runnerId).Get()
 					if err != nil {
 						return nil, err
 					}
 					if !active {
 						span.AddEvent("runner is no longer active")
-						for _, t := range batchForWorker {
-							failures.runnerInactive.Add(t.taskId)
-						}
 						return nil, nil
 					}
 
-					runnerSet, err := s.activeRunnerSets.open(runnerId)
+					runnerSet, err := servicestate.OpenTaskSetForRunner(tx, s.db, runnerId)
 					if err != nil {
 						if errors.Is(err, directory.ErrDirNotExists) {
 							// The runner set is no longer active. the tasks in the plan cannot be assigned to this runner.
 							span.AddEvent("runner set is no longer active")
-							for _, t := range batchForWorker {
-								failures.runnerInactive.Add(t.taskId)
-							}
 							return nil, nil
 						}
 						return nil, err
 					}
 
+					assigned := mapset.NewSet[task.Id]()
+					var assignments errgroup.Group
+					assignments.SetLimit(assignmentItemParallelism)
 					for _, t := range batchForWorker {
-						if err := s.assignTask(tx, t.taskId, runnerId, runnerSet); err != nil {
-							if errors.Is(err, ErrTaskNotInAssignableState) {
-								continue
+						assignments.Go(func() error {
+							if err := s.assignTask(tx, t.taskId, runnerId, runnerSet); err != nil {
+								if errors.Is(err, ErrTaskNotInAssignableState) {
+									return nil
+								}
+								return err
 							}
-							return nil, err
-						}
-						assignedInBatch = append(assignedInBatch, t.taskId)
+							assigned.Add(t.taskId)
+							return nil
+						})
 					}
-					return nil, nil
+					if err := assignments.Wait(); err != nil {
+						return nil, err
+					}
+					return assigned, nil
 				})
 				if err != nil {
 					return err
+				}
+				if result == nil {
+					for _, t := range batchForWorker {
+						failures.runnerInactive.Add(t.taskId)
+					}
+					return nil
 				}
 				// Emit a marker span per assigned task so the full task
 				// lifecycle can be queried by task_id across traces.
@@ -320,7 +325,7 @@ func (s *Scheduler) executeAssignmentPlan(ctx context.Context, assignmentPlan ma
 				// pattern, mirroring messaging semconv "create" spans (one per
 				// message in a batch publish):
 				// https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/#batch-publishing-with-create-spans
-				for _, taskId := range assignedInBatch {
+				for _, taskId := range result.(mapset.Set[task.Id]).ToSlice() {
 					_, taskSpan := tracer.Start(ctx, "assignTask",
 						trace.WithAttributes(
 							attribute.String("task_id", string(taskId)),
