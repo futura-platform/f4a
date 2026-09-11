@@ -24,7 +24,7 @@ import (
 func TestPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
 	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
 		const runnerID = "worker-0"
-		s, tasksDir, taskPlacer, activeRunnerSets := newSchedulerFixture(t, db, runnerID)
+		s, tasksDir, taskPlacer, runnerSet := newSchedulerFixture(t, db, runnerID)
 		taskID := task.Id("requeued-in-chunk")
 		seedPendingTask(t, db, tasksDir, taskPlacer, taskID)
 
@@ -36,8 +36,6 @@ func TestPassAssignsTaskRequeuedWithinOneChunk(t *testing.T) {
 
 		// assign then re-queue in one transaction, so the chunk holds a Remove
 		// and an Add for the same id and its net effect on membership is nothing
-		runnerSet, err := activeRunnerSets.open(runnerID)
-		require.NoError(t, err)
 		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 			taskKey, err := tasksDir.Open(tx, taskID)
 			if err != nil {

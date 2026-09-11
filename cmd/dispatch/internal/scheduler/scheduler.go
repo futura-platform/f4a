@@ -2,14 +2,12 @@ package scheduler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	v1 "k8s.io/client-go/listers/core/v1"
 
 	"github.com/futura-platform/f4a/cmd/dispatch/internal/k8s"
@@ -51,14 +49,13 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg              Config
-	db               dbutil.DbRoot
-	activeRunners    pool.ActiveRunners
-	taskDir          task.TasksDirectory
-	taskPlacer       *servicestate.TaskPlacer
-	activeRunnerSets *runnerSetCache
-	runnerPodLister  v1.PodNamespaceLister
-	clients          *k8s.Clients
+	cfg             Config
+	db              dbutil.DbRoot
+	activeRunners   pool.ActiveRunners
+	taskDir         task.TasksDirectory
+	taskPlacer      *servicestate.TaskPlacer
+	runnerPodLister v1.PodNamespaceLister
+	clients         *k8s.Clients
 
 	logger *slog.Logger
 }
@@ -99,15 +96,14 @@ func Run(ctx context.Context, cfg Config, db dbutil.DbRoot, clients *k8s.Clients
 	defer cancel()
 
 	s := &Scheduler{
-		cfg:              cfg,
-		db:               db,
-		activeRunners:    activeRunners,
-		taskDir:          taskDir,
-		taskPlacer:       taskPlacer,
-		clients:          clients,
-		logger:           cfg.Logger,
-		activeRunnerSets: newRunnerSetCache(db, runnerPodInformer.Informer()),
-		runnerPodLister:  runnerPodInformer.Lister().Pods(cfg.Namespace),
+		cfg:             cfg,
+		db:              db,
+		activeRunners:   activeRunners,
+		taskDir:         taskDir,
+		taskPlacer:      taskPlacer,
+		clients:         clients,
+		logger:          cfg.Logger,
+		runnerPodLister: runnerPodInformer.Lister().Pods(cfg.Namespace),
 	}
 	return s.commandRunners(ctx)
 }
@@ -156,9 +152,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			placementClassAttribute = "placement_class"
 		)
 		// record the utilization metrics FIRST, since they are critical for scaling decisions.
-		// All reads below are single-key aggregate/cardinality lookups, so
-		// collection stays O(runners) regardless of how many tasks the sets
-		// hold; counts are as-of-last-compaction (eventually consistent).
+		// Counts use current queue directories and compacted cardinalities, with O(runners) reads.
 		var activeDemandCpuMillis, activeDemandMemoryBytes, suspendedCpuMillis, suspendedMemoryBytes int64
 		var pendingCount, suspendedCount int64
 		_, err := s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (_ any, err error) {
@@ -198,7 +192,7 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 		o.ObserveInt64(taskCountGauge, pendingCount, metric.WithAttributes(attribute.String(stateAttribute, "pending")))
 		o.ObserveInt64(taskCountGauge, suspendedCount, metric.WithAttributes(attribute.String(stateAttribute, "suspended")))
 
-		runnerSets := make([]*servicestate.RunnerSet, 0)
+		runnerIDs := make([]string, 0)
 		for kvOrErr := range s.activeRunners.Iterate(ctx, s.db) {
 			if err, ok := kvOrErr.Left(); ok {
 				return err
@@ -208,31 +202,16 @@ func (s *Scheduler) commandRunners(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			runnerSet, err := s.activeRunnerSets.open(runnerID)
-			if err != nil {
-				if errors.Is(err, directory.ErrDirNotExists) {
-					continue
-				}
-				return err
-			}
-			runnerSets = append(runnerSets, runnerSet)
+			runnerIDs = append(runnerIDs, runnerID)
 		}
 		const cardinalityReadBatchSize = 64
 		var runningCount int64
-		for batchStart := 0; batchStart < len(runnerSets); batchStart += cardinalityReadBatchSize {
-			batch := runnerSets[batchStart:min(batchStart+cardinalityReadBatchSize, len(runnerSets))]
+		for batchStart := 0; batchStart < len(runnerIDs); batchStart += cardinalityReadBatchSize {
+			batch := runnerIDs[batchStart:min(batchStart+cardinalityReadBatchSize, len(runnerIDs))]
 			// Sum inside the closure and add after: the closure re-runs on
 			// transaction retry.
 			batchCount, err := s.db.ReadTransactContext(ctx, func(t fdb.ReadTransaction) (any, error) {
-				var count int64
-				for _, runnerSet := range batch {
-					runnerTaskCount, err := runnerSet.Cardinality(t)
-					if err != nil {
-						return nil, err
-					}
-					count += runnerTaskCount
-				}
-				return count, nil
+				return servicestate.CountTasksForRunners(t, s.db, batch)
 			})
 			if err != nil {
 				return fmt.Errorf("collect task counts for runners: %w", err)
