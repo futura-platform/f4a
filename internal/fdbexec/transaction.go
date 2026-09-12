@@ -18,10 +18,15 @@ import (
 
 var byteOrder = binary.LittleEndian
 
+// executionTransaction is a transaction over the database.
+//
+// The key layout is as follows:
+//
+//	call_order/("length")         -> uint64 little endian
+//	call_order/(index)            -> encoded moment.Identity
+//	memo_table/(encoded identity) -> encoded moment.Moment
+//	durable/(key)                 -> value
 type executionTransaction struct {
-	// TODO: consider using an in memory fast path for reads (if fdb turns out to bottleneck us)
-	// executiontype.InMemoryContainer
-
 	fdb.Transaction
 	executionReadTransaction
 }
@@ -33,8 +38,10 @@ type executionReadTransaction struct {
 	durableObjects directory.DirectorySubspace
 }
 
+const callOrderLengthElement = "length"
+
 func callOrderLengthKey(callOrder directory.DirectorySubspace) fdb.Key {
-	return callOrder.Pack(tuple.Tuple{"length"})
+	return callOrder.Pack(tuple.Tuple{callOrderLengthElement})
 }
 
 func callOrderIndexKey(callOrder directory.DirectorySubspace, index int) fdb.Key {
@@ -108,14 +115,8 @@ func (t *executionTransaction) DeleteMoment(identity moment.Identity) {
 	t.Clear(momentTableKey(t.memoTable, identity))
 }
 
-func (t *executionTransaction) SetMoment(identity moment.Identity, m moment.Moment) {
-	buf := bytes.NewBuffer(make([]byte, 0, unsafe.Sizeof(m)))
-	enc := privateencoding.NewEncoder[moment.Moment](buf)
-	err := enc.Encode(m)
-	if err != nil {
-		panic(err)
-	}
-	t.Set(momentTableKey(t.memoTable, identity), buf.Bytes())
+func (t *executionTransaction) SetMoment(identity moment.Identity, encodedMoment []byte) {
+	t.Set(momentTableKey(t.memoTable, identity), encodedMoment)
 }
 
 func (t *executionTransaction) StoreDurable(key string, value []byte) (err error) {
@@ -157,19 +158,9 @@ func (t *executionReadTransaction) CallOrderLength() int {
 	return int(length)
 }
 
-func (t *executionReadTransaction) GetMoment(identity moment.Identity) (moment.Moment, bool) {
+func (t *executionReadTransaction) GetMoment(identity moment.Identity) ([]byte, bool) {
 	b := t.Get(momentTableKey(t.memoTable, identity)).MustGet()
-	if b == nil {
-		return moment.Moment{}, false
-	}
-	dec := privateencoding.NewDecoder[moment.Moment](
-		bytes.NewReader(b),
-	)
-	m, err := dec.Decode()
-	if err != nil {
-		panic(err)
-	}
-	return m, true
+	return b, b != nil
 }
 
 func (t *executionReadTransaction) HasMoment(identity moment.Identity) bool {
