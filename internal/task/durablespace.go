@@ -1,10 +1,7 @@
 package task
 
-import (
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-)
+import "github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 
-func (k TaskKey) DurableObjectSpace(db fdb.Transactor, namespace string) (directory.DirectorySubspace, error) {
-	return k.d.CreateOrOpen(db, []string{namespace, "durable"}, nil)
+func (k TaskKey) DurableObjectSpace(namespace string) subspace.Subspace {
+	return k.keyspace().Sub(namespace, "durable")
 }

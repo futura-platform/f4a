@@ -1,14 +1,11 @@
 package task
 
-import (
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-)
+import "github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 
-func (k TaskKey) MemoTable(db fdb.Transactor, namespace string) (directory.DirectorySubspace, error) {
-	return k.d.CreateOrOpen(db, []string{namespace, "memo_table"}, nil)
+func (k TaskKey) MemoTable(namespace string) subspace.Subspace {
+	return k.keyspace().Sub(namespace, "memo_table")
 }
 
-func (k TaskKey) CallOrder(db fdb.Transactor, namespace string) (directory.DirectorySubspace, error) {
-	return k.d.CreateOrOpen(db, []string{namespace, "call_order"}, nil)
+func (k TaskKey) CallOrder(namespace string) subspace.Subspace {
+	return k.keyspace().Sub(namespace, "call_order")
 }

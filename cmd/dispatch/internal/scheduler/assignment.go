@@ -166,7 +166,7 @@ func (s *Scheduler) assignPending(
 					reads.Go(func() error {
 						taskKey, err := s.taskDir.Open(t, taskId)
 						if err != nil {
-							if errors.Is(err, directory.ErrDirNotExists) {
+							if errors.Is(err, task.ErrNotFound) {
 								return nil
 							}
 							return fmt.Errorf("failed to open task %s: %w", taskId, err)
@@ -441,7 +441,7 @@ var (
 func (s *Scheduler) assignTask(tx fdb.Transaction, id task.Id, runnerId string, runnerSet *servicestate.RunnerSet) error {
 	taskKey, err := s.taskDir.Open(tx, id)
 	if err != nil {
-		if errors.Is(err, directory.ErrDirNotExists) {
+		if errors.Is(err, task.ErrNotFound) {
 			return ErrTaskNotInAssignableState
 		}
 		return fmt.Errorf("failed to open task %s: %w", id, err)

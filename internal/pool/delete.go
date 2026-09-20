@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/run"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
@@ -32,7 +31,7 @@ func (m *taskManager) deleteTask(ctx context.Context, id task.Id) error {
 	_, err := m.db.TransactContext(ctx, func(tx fdb.Transaction) (any, error) {
 		taskKey, err := m.taskDirectory.Open(tx, id)
 		if err != nil {
-			if errors.Is(err, directory.ErrDirNotExists) {
+			if errors.Is(err, task.ErrNotFound) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to open task: %w", err)

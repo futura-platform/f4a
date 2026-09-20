@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
@@ -177,7 +176,7 @@ func readTaskAssignments(
 		for _, id := range ids {
 			tkey, err := taskDir.Open(tx, id)
 			if err != nil {
-				if errors.Is(err, directory.ErrDirNotExists) {
+				if errors.Is(err, task.ErrNotFound) {
 					snapshots[id] = taskAssignmentSnapshot{Exists: false}
 					continue
 				}
@@ -406,7 +405,7 @@ func TestDrainTaskRunner_ConcurrentMutationsFuzzStyle(t *testing.T) {
 						changedAny, err := db.Transact(func(tx fdb.Transaction) (any, error) {
 							tkey, err := taskDir.Open(tx, id)
 							if err != nil {
-								if errors.Is(err, directory.ErrDirNotExists) {
+								if errors.Is(err, task.ErrNotFound) {
 									return false, nil
 								}
 								return false, err

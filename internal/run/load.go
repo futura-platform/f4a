@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/f4a/pkg/execute"
@@ -78,7 +77,7 @@ func LoadTasks(ctx context.Context, db dbutil.DbRoot, router execute.Router, ids
 				return nil, nil
 			})
 			if err != nil {
-				if errors.Is(err, directory.ErrDirNotExists) {
+				if errors.Is(err, task.ErrNotFound) {
 					// Task assignment snapshots can briefly lag a concurrent delete.
 					// Skip missing tasks so stale queue entries do not crash the worker.
 					return

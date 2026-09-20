@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
@@ -67,7 +66,7 @@ func DrainTaskRunner(
 			for taskID := range currentBatch.Iter() {
 				tkey, err := taskDir.Open(tx, task.Id(taskID))
 				if err != nil {
-					if errors.Is(err, directory.ErrDirNotExists) {
+					if errors.Is(err, task.ErrNotFound) {
 						// Task already completed/deleted while draining; skip idempotently.
 						continue
 					}

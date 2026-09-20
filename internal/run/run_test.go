@@ -733,15 +733,11 @@ func TestRun_LeaseLostDuringSettlement(t *testing.T) {
 
 		// another holder takes the lock while the settlement is still running
 		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
-			taskDir, err := db.Root.Open(tx, []string{"tasks", string(id)}, nil)
+			tasks, err := db.Root.Open(tx, []string{"tasks"}, nil)
 			if err != nil {
 				return nil, err
 			}
-			lockDir, err := taskDir.Open(tx, []string{"runnable_lock"}, nil)
-			if err != nil {
-				return nil, err
-			}
-			tx.Set(lockDir.Pack(tuple.Tuple{"holder", "identity"}), []byte("another holder"))
+			tx.Set(tasks.Sub(string(id), "runnable_lock").Pack(tuple.Tuple{"holder", "identity"}), []byte("another holder"))
 			return nil, nil
 		})
 		require.NoError(t, err)

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/futura-platform/f4a/internal/fdbexec"
@@ -381,13 +381,7 @@ func rawKeys(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey, namespace string
 	t.Helper()
 	out := make(map[string][]byte)
 	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
-		memo, err := tkey.MemoTable(db, namespace)
-		require.NoError(t, err)
-		order, err := tkey.CallOrder(db, namespace)
-		require.NoError(t, err)
-		durable, err := tkey.DurableObjectSpace(db, namespace)
-		require.NoError(t, err)
-		for _, sub := range []directory.DirectorySubspace{memo, order, durable} {
+		for _, sub := range []subspace.Subspace{tkey.MemoTable(namespace), tkey.CallOrder(namespace), tkey.DurableObjectSpace(namespace)} {
 			begin, end := sub.FDBRangeKeys()
 			for _, kv := range tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceOrPanic() {
 				out[string(kv.Key)] = kv.Value
@@ -464,10 +458,8 @@ func TestExecutionContainerCache(t *testing.T) {
 			require.NoError(t, err)
 			tkey, err := tasks.Open(db, id)
 			require.NoError(t, err)
-			durable, err := tkey.DurableObjectSpace(db, "user")
-			require.NoError(t, err)
-			order, err := tkey.CallOrder(db, "user")
-			require.NoError(t, err)
+			durable := tkey.DurableObjectSpace("user")
+			order := tkey.CallOrder("user")
 			_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 				tx.Set(durable.Pack(tuple.Tuple{"k"}), []byte("stale"))
 				begin, end := order.FDBRangeKeys()
@@ -734,12 +726,9 @@ func TestExecutionContainerLoadsLegacyLayout(t *testing.T) {
 		require.NoError(t, err)
 		tkey, err := tasks.Open(db, id)
 		require.NoError(t, err)
-		memo, err := tkey.MemoTable(db, "user")
-		require.NoError(t, err)
-		order, err := tkey.CallOrder(db, "user")
-		require.NoError(t, err)
-		durable, err := tkey.DurableObjectSpace(db, "user")
-		require.NoError(t, err)
+		memo := tkey.MemoTable("user")
+		order := tkey.CallOrder("user")
+		durable := tkey.DurableObjectSpace("user")
 
 		one := make([]byte, 8)
 		binary.LittleEndian.PutUint64(one, 1)

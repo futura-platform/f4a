@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -227,7 +226,7 @@ func (c *controller) createTaskRevisioned(
 		func(t fdb.Transaction) error {
 			tkey, err := c.taskDir.Create(t, task.Id(inner.GetTaskId()))
 			if err != nil {
-				if errors.Is(err, directory.ErrDirAlreadyExists) {
+				if errors.Is(err, task.ErrAlreadyExists) {
 					return nil
 				}
 				return fmt.Errorf("failed to create task: %w", err)
@@ -394,7 +393,7 @@ func (c *controller) deleteTaskRevisioned(
 		func(t fdb.Transaction) error {
 			tkey, err := openTask(t, c.taskDir, inner)
 			if err != nil {
-				if errors.Is(err, directory.ErrDirNotExists) {
+				if errors.Is(err, task.ErrNotFound) {
 					return nil
 				}
 				return fmt.Errorf("failed to open task: %w", err)
@@ -486,7 +485,7 @@ func classifyBatchResult(decision task.RevisionDecision, err error) (taskv1.Batc
 	if errors.Is(err, task.ErrInvalidRevision) ||
 		errors.Is(err, task.ErrCreateRevisionMustBeOne) ||
 		errors.Is(err, task.ErrRevisionGap) ||
-		errors.Is(err, directory.ErrDirNotExists) ||
+		errors.Is(err, task.ErrNotFound) ||
 		errors.Is(err, ErrMissingInnerRequest) ||
 		errors.Is(err, ErrMissingParameters) ||
 		errors.Is(err, ErrMissingResourceRequest) {

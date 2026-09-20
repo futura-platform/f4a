@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 	"connectrpc.com/validate"
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/gen/task/v1/taskv1connect"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -126,7 +125,7 @@ func readTaskState(t *testing.T, db dbutil.DbRoot, taskID string) (taskState, bo
 	_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 		tkey, err := taskDir.Open(tx, task.Id(taskID))
 		if err != nil {
-			if errors.Is(err, directory.ErrDirNotExists) {
+			if errors.Is(err, task.ErrNotFound) {
 				return nil, nil
 			}
 			return nil, err

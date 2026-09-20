@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/futura-platform/futura/moment"
@@ -69,7 +69,7 @@ func (c *ExecutionContainer) load(ctx context.Context) (*executiontype.InMemoryC
 func iterate[E int64 | string | []byte](
 	ctx context.Context,
 	db fdb.Database,
-	sub directory.DirectorySubspace,
+	sub subspace.Subspace,
 	keys fdb.KeyRange,
 	fn func(elem E, value []byte) error,
 ) error {

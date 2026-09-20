@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	mapset "github.com/deckarep/golang-set/v2"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -147,7 +146,7 @@ func TestConcurrentAssignmentPlanSkipsSuspendedAndDeletedTasks(t *testing.T) {
 			id := task.Id(fmt.Sprintf("stale-plan-%02d", i))
 			if i%4 == 0 {
 				_, err := tasksDir.Open(db, id)
-				require.ErrorIs(t, err, directory.ErrDirNotExists)
+				require.ErrorIs(t, err, task.ErrNotFound)
 				continue
 			}
 			status, owner := readTaskState(t, db, tasksDir, id)

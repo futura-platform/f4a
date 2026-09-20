@@ -1,14 +1,7 @@
 package task
 
-import (
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/futura-platform/f4a/internal/reliablelock"
-)
+import "github.com/futura-platform/f4a/internal/reliablelock"
 
-func (k TaskKey) RunnableLock(db fdb.Transactor) (*reliablelock.Lock, error) {
-	lockDir, err := k.d.CreateOrOpen(db, []string{"runnable_lock"}, nil)
-	if err != nil {
-		return nil, err
-	}
-	return reliablelock.NewLock(lockDir), nil
+func (k TaskKey) RunnableLock() *reliablelock.Lock {
+	return reliablelock.NewLock(k.keyspace().Sub("runnable_lock"))
 }

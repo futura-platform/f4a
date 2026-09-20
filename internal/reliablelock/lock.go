@@ -6,25 +6,25 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
 )
 
 type Lock struct {
-	dir directory.DirectorySubspace
+	space subspace.Subspace
 }
 
 func (l *Lock) holderExpirationKey() fdb.KeyConvertible {
-	return l.dir.Pack(tuple.Tuple{"holder", "expiration"})
+	return l.space.Pack(tuple.Tuple{"holder", "expiration"})
 }
 
 func (l *Lock) holderIdentityKey() fdb.KeyConvertible {
-	return l.dir.Pack(tuple.Tuple{"holder", "identity"})
+	return l.space.Pack(tuple.Tuple{"holder", "identity"})
 }
 
-func NewLock(dir directory.DirectorySubspace) *Lock {
-	return &Lock{dir: dir}
+func NewLock(space subspace.Subspace) *Lock {
+	return &Lock{space: space}
 }
 
 func DefaultLeaseOptions() LeaseOptions {

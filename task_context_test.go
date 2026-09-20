@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/servicestate"
@@ -126,7 +125,7 @@ func waitForTaskDeletion(t testing.TB, db dbutil.DbRoot, id task.Id) {
 		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
 			_, err := tasksDirectory.Open(tx, id)
 			if err != nil {
-				if errors.Is(err, directory.ErrDirNotExists) {
+				if errors.Is(err, task.ErrNotFound) {
 					return nil, nil
 				}
 				return nil, err

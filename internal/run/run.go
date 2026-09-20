@@ -63,11 +63,7 @@ var (
 // alone, with no discharge flow.
 func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL) (err error) {
 	parentCtx := ctx
-	lock, err := r.taskKey.RunnableLock(r.db)
-	if err != nil {
-		return fmt.Errorf("failed to get lock: %w", err)
-	}
-	lease, err := lock.Acquire(ctx, r.db, reliablelock.DefaultLeaseOptions())
+	lease, err := r.taskKey.RunnableLock().Acquire(ctx, r.db, reliablelock.DefaultLeaseOptions())
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}

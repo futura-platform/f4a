@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -20,7 +19,7 @@ type LeaseOptions struct {
 // TryAcquire tries to acquire the lock. It will return the holder expiration time if the lock is already held by another holder.
 // db will be used to spawn the renewal goroutine + release. tr will be used to do the initial lock acquisition.
 func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transactor, opts LeaseOptions) (*Lease, time.Time, error) {
-	slog.Info("reliablelock: TryAcquire", "path", strings.Join(l.dir.GetPath(), "/"))
+	slog.Info("reliablelock: TryAcquire", "lock", fdb.Printable(l.space.Bytes()))
 
 	errLockAlreadyHeld := errors.New("lock held by another holder")
 	id := make([]byte, 16)

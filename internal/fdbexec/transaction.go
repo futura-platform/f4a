@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/futura-platform/futura/ftype/executiontype"
 	"github.com/futura-platform/futura/moment"
@@ -33,18 +33,18 @@ type executionTransaction struct {
 
 type executionReadTransaction struct {
 	fdb.ReadTransaction
-	memoTable      directory.DirectorySubspace
-	callOrder      directory.DirectorySubspace
-	durableObjects directory.DirectorySubspace
+	memoTable      subspace.Subspace
+	callOrder      subspace.Subspace
+	durableObjects subspace.Subspace
 }
 
 const callOrderLengthElement = "length"
 
-func callOrderLengthKey(callOrder directory.DirectorySubspace) fdb.Key {
+func callOrderLengthKey(callOrder subspace.Subspace) fdb.Key {
 	return callOrder.Pack(tuple.Tuple{callOrderLengthElement})
 }
 
-func callOrderIndexKey(callOrder directory.DirectorySubspace, index int) fdb.Key {
+func callOrderIndexKey(callOrder subspace.Subspace, index int) fdb.Key {
 	return callOrder.Pack(tuple.Tuple{index})
 }
 
@@ -101,7 +101,7 @@ func (t *executionTransaction) TruncateCallOrderAt(index int) {
 	t.Set(callOrderLengthKey(t.callOrder), b)
 }
 
-func momentTableKey(momentTable directory.DirectorySubspace, identity moment.Identity) fdb.Key {
+func momentTableKey(momentTable subspace.Subspace, identity moment.Identity) fdb.Key {
 	buf := bytes.NewBuffer(make([]byte, 0, unsafe.Sizeof(identity)))
 	enc := privateencoding.NewEncoder[moment.Identity](buf)
 	err := enc.Encode(identity)

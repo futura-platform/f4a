@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	"github.com/futura-platform/futura/ftype/executiontype"
@@ -17,9 +17,9 @@ import (
 // FoundationDB and served from memory.
 type ExecutionContainer struct {
 	db             fdb.Database
-	memoTable      directory.DirectorySubspace
-	callOrder      directory.DirectorySubspace
-	durableObjects directory.DirectorySubspace
+	memoTable      subspace.Subspace
+	callOrder      subspace.Subspace
+	durableObjects subspace.Subspace
 
 	// mu serializes write transactions with each other and with read
 	// transactions, which run concurrently with one another.
@@ -37,23 +37,11 @@ func OpenTaskContainer(
 	tkey task.TaskKey,
 	namespace string,
 ) *ExecutionContainer {
-	memoTable, err := tkey.MemoTable(db, namespace)
-	if err != nil {
-		panic(err)
-	}
-	callOrder, err := tkey.CallOrder(db, namespace)
-	if err != nil {
-		panic(err)
-	}
-	durableObjects, err := tkey.DurableObjectSpace(db, namespace)
-	if err != nil {
-		panic(err)
-	}
 	return &ExecutionContainer{
 		db:             db.Database,
-		memoTable:      memoTable,
-		callOrder:      callOrder,
-		durableObjects: durableObjects,
+		memoTable:      tkey.MemoTable(namespace),
+		callOrder:      tkey.CallOrder(namespace),
+		durableObjects: tkey.DurableObjectSpace(namespace),
 	}
 }
 
