@@ -17,6 +17,7 @@ import (
 // FoundationDB and served from memory.
 type ExecutionContainer struct {
 	db             fdb.Database
+	tkey           task.TaskKey
 	memoTable      subspace.Subspace
 	callOrder      subspace.Subspace
 	durableObjects subspace.Subspace
@@ -39,6 +40,7 @@ func OpenTaskContainer(
 ) *ExecutionContainer {
 	return &ExecutionContainer{
 		db:             db.Database,
+		tkey:           tkey,
 		memoTable:      tkey.MemoTable(namespace),
 		callOrder:      tkey.CallOrder(namespace),
 		durableObjects: tkey.DurableObjectSpace(namespace),
@@ -69,6 +71,9 @@ func (c *ExecutionContainer) Transact(ctx context.Context, fn func(ctx context.C
 	}
 
 	_, err = c.db.Transact(func(t fdb.Transaction) (any, error) {
+		if err := c.tkey.MustExist(t); err != nil {
+			return nil, err
+		}
 		return nil, fn(ctx, &executionTransaction{
 			Transaction: t,
 			executionReadTransaction: executionReadTransaction{

@@ -56,3 +56,33 @@ func TestTasksDirectory(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestTaskKeyPrecondition(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		tasks, err := CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		tkey, err := tasks.Create(db, NewId())
+		require.NoError(t, err)
+
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.MustExist(tx) })
+		require.NoError(t, err)
+
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.Clear(tx) })
+		require.NoError(t, err)
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			if err := tkey.MustExist(tx); err != nil {
+				return nil, err
+			}
+			tkey.Input().Set(tx, []byte("late"))
+			return nil, nil
+		})
+		require.ErrorIs(t, err, ErrNotFound)
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			kvs, err := tx.GetRange(tkey.keyspace(), fdb.RangeOptions{}).GetSliceWithError()
+			require.NoError(t, err)
+			require.Empty(t, kvs, "a guarded write must not land under a deleted task")
+			return nil, nil
+		})
+		require.NoError(t, err)
+	})
+}

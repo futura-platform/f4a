@@ -134,6 +134,9 @@ func (m *runMap) run(ctx context.Context, r run.Runnable, callbackUrl *url.URL) 
 // no prior run was recorded.
 func swapLastRunSpan(ctx context.Context, db fdb.Database, taskKey task.TaskKey, next trace.SpanContext) (trace.SpanContext, error) {
 	prev, err := dbutil.TransactContext(ctx, db.Transact, func(tx fdb.Transaction) (any, error) {
+		if err := taskKey.MustExist(tx); err != nil {
+			return nil, err
+		}
 		key := taskKey.LastRunSpan()
 		prev, err := key.Get(tx).Get()
 		if err != nil {

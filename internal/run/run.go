@@ -13,6 +13,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/futura-platform/f4a/internal/reliablelock"
 	"github.com/futura-platform/f4a/internal/reliablewatch"
+	"github.com/futura-platform/f4a/internal/task"
 	"github.com/futura-platform/futura/fopt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -65,6 +66,10 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 	parentCtx := ctx
 	lease, err := r.taskKey.RunnableLock().Acquire(ctx, r.db, reliablelock.DefaultLeaseOptions())
 	if err != nil {
+		if errors.Is(err, task.ErrNotFound) {
+			// deleted between pickup and the run: nothing to own
+			return leaseLost(err)
+		}
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	activeLease, err := lease.Activate(ctx)
@@ -76,10 +81,11 @@ func (r Runnable) Run(ctx context.Context, runnerId string, callbackUrl *url.URL
 
 	// bind ctx to the lease so that operations only happen while the lease is valid
 	ctx = activeLease
-	// a run whose lease ended, while the caller never cancelled it, no longer owns the task
+	// a run whose lease ended, while the caller never cancelled it, no longer owns the task.
+	// neither does one whose task was deleted under it.
 	defer func() {
 		leaseEnded := ctx.Err() != nil && parentCtx.Err() == nil
-		if leaseEnded {
+		if leaseEnded || errors.Is(err, task.ErrNotFound) {
 			err = leaseLost(err)
 		}
 	}()

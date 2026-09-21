@@ -132,11 +132,5 @@ func (r *RunnerSet) Stream(ctx context.Context) (*reliableset.Stream[task.Id], e
 }
 
 func (r *RunnerSet) Clear(tx fdb.Transaction) error {
-	err := r.set.Clear(tx)
-	if err != nil {
-		return err
-	}
-	r.utilizationAggregate.set(tx, UtilizationDimensionCPU, 0)
-	r.utilizationAggregate.set(tx, UtilizationDimensionMemory, 0)
-	return nil
+	return r.set.Clear(tx)
 }

@@ -2,6 +2,7 @@ package reliablelock
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -215,5 +216,35 @@ func TestActivateLease(t *testing.T) {
 				})
 			})
 		})
+	})
+}
+
+func TestLockPrecondition(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		lockDir, err := db.Root.CreateOrOpen(db, []string{"test_lock"}, nil)
+		require.NoError(t, err)
+		errGone := errors.New("owner is gone")
+		gone := false
+		lock := NewLock(lockDir).WithPrecondition(func(fdb.ReadTransaction) error {
+			if gone {
+				return errGone
+			}
+			return nil
+		})
+
+		lease, err := lock.Acquire(t.Context(), db.Database, DefaultLeaseOptions())
+		require.NoError(t, err)
+		require.NoError(t, lease.Release(db))
+
+		gone = true
+		_, err = lock.Acquire(t.Context(), db.Database, DefaultLeaseOptions())
+		require.ErrorIs(t, err, errGone)
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			kvs, err := tx.GetRange(lockDir, fdb.RangeOptions{}).GetSliceWithError()
+			require.NoError(t, err)
+			require.Empty(t, kvs, "a refused acquisition must write nothing")
+			return nil, nil
+		})
+		require.NoError(t, err)
 	})
 }

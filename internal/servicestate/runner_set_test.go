@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
@@ -144,5 +145,40 @@ func TestRunnerSet(t *testing.T) {
 			require.NoError(t, err)
 			require.Zero(t, items.Cardinality())
 		})
+	})
+}
+
+func TestRunnerSetClearLeavesNoKeys(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		runnerSet, err := createOrOpenRunnerSet(db, db, "test-runner")
+		require.NoError(t, err)
+		taskDir, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		taskKey, err := taskDir.Create(db, task.Id("test-task"))
+		require.NoError(t, err)
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			taskKey.ResourceRequest().Set(tx, testResourceRequest())
+			return nil, runnerSet.Add(tx, taskKey)
+		})
+		require.NoError(t, err)
+		// the aggregate's keys live under the set's directory
+		begin, end := runnerSet.utilizationAggregate.directory.FDBRangeKeys()
+		countAggregateKeys := func() int {
+			n, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+				kvs, err := tx.GetRange(fdb.KeyRange{Begin: begin, End: end}, fdb.RangeOptions{}).GetSliceWithError()
+				return len(kvs), err
+			})
+			require.NoError(t, err)
+			return n.(int)
+		}
+		require.Equal(t, 2, countAggregateKeys())
+
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, runnerSet.Clear(tx) })
+		require.NoError(t, err)
+
+		// the directory is gone, and nothing was written back under its old prefix
+		_, err = openRunnerSet(db, db, "test-runner")
+		require.ErrorIs(t, err, directory.ErrDirNotExists)
+		require.Zero(t, countAggregateKeys(), "clearing must not recreate the aggregate under a removed directory")
 	})
 }

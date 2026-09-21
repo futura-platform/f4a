@@ -29,6 +29,11 @@ func (l *Lock) TryAcquire(ctx context.Context, db fdb.Database, tr fdb.Transacto
 	var newLeaseExpiration time.Time
 	var existingHolderExpiration time.Time
 	_, err := dbutil.TransactContext(ctx, tr.Transact, func(t fdb.Transaction) (any, error) {
+		if l.precondition != nil {
+			if err := l.precondition(t); err != nil {
+				return nil, err
+			}
+		}
 		holderExpiration, ok, err := l.readExpirationKey(t)
 		if err != nil {
 			return nil, err

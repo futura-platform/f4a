@@ -751,3 +751,97 @@ func TestRun_LeaseLostDuringSettlement(t *testing.T) {
 		}
 	})
 }
+
+func TestRun_DeletedTask(t *testing.T) {
+	t.Run("deleted before the run starts owns nothing and writes nothing", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			require.NoError(t, err)
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			require.NoError(t, err)
+			setInput(t, db, tkey, []byte("input"))
+			runnable := NewRunnable(&testutil.MockExecutor{
+				Settle: func(_ execute.SettlementContainers, _ context.Context, _ []byte, _ *url.URL, _ ...ftype.FlowLoopOption) error {
+					t.Error("a deleted task must not be executed")
+					return nil
+				},
+			}, execute.ExecutorId("test"), db, tkey)
+
+			// deleted between pickup and the run, as a gateway delete racing a worker does
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.Clear(tx) })
+			require.NoError(t, err)
+
+			err = runnable.Run(t.Context(), t.Name(), testCallbackUrl(t))
+			require.ErrorIs(t, err, ErrLeaseLost)
+			requireNoKeysUnder(t, db, tkey)
+		})
+	})
+
+	t.Run("deleted under a running flow ends it as a lost lease and writes nothing", func(t *testing.T) {
+		testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+			tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+			require.NoError(t, err)
+			tkey, err := tasksDirectory.Create(db, task.NewId())
+			require.NoError(t, err)
+			setInput(t, db, tkey, []byte("input"))
+
+			deleted := make(chan struct{})
+			executor := execute.NewExecutor(
+				func(b futura.FlowBuilder, input string) (string, error) {
+					// the first step is recorded before the delete, the second one after
+					_, err := futura.Step(b, func(context.Context, [32]byte) (string, error) { return "one", nil }, [32]byte{1})
+					if err != nil {
+						return "", err
+					}
+					<-deleted
+					return futura.Step(b, func(context.Context, [32]byte) (string, error) { return "two", nil }, [32]byte{2})
+				},
+				rawStringMarshaller{},
+			)
+			runnable := NewRunnable(executor, execute.ExecutorId("test"), db, tkey)
+			done := make(chan error, 1)
+			go func() { done <- runnable.Run(t.Context(), t.Name(), nil) }()
+
+			require.Eventually(t, func() bool {
+				n, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+					kvs, err := tx.GetRange(tkey.CallOrder("user"), fdb.RangeOptions{}).GetSliceWithError()
+					return len(kvs), err
+				})
+				require.NoError(t, err)
+				return n.(int) > 0
+			}, 5*time.Second, 20*time.Millisecond, "the first step should be recorded")
+
+			_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.Clear(tx) })
+			require.NoError(t, err)
+			close(deleted)
+
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, ErrLeaseLost)
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for Run to return")
+			}
+			requireNoKeysUnder(t, db, tkey)
+		})
+	})
+}
+
+// requireNoKeysUnder asserts nothing at all is stored under the task: fields, settlement state or lock.
+func requireNoKeysUnder(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey) {
+	t.Helper()
+	_, err := db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+		tasks, err := db.Root.Open(tx, []string{"tasks"}, nil)
+		if err != nil {
+			return nil, err
+		}
+		kvs, err := tx.GetRange(tasks.Sub(string(tkey.Id())), fdb.RangeOptions{}).GetSliceWithError()
+		if err != nil {
+			return nil, err
+		}
+		for _, kv := range kvs {
+			t.Errorf("key left under deleted task: %s", fdb.Printable(kv.Key))
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
+}

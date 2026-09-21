@@ -12,7 +12,8 @@ import (
 )
 
 type Lock struct {
-	space subspace.Subspace
+	space        subspace.Subspace
+	precondition func(fdb.ReadTransaction) error
 }
 
 func (l *Lock) holderExpirationKey() fdb.KeyConvertible {
@@ -25,6 +26,11 @@ func (l *Lock) holderIdentityKey() fdb.KeyConvertible {
 
 func NewLock(space subspace.Subspace) *Lock {
 	return &Lock{space: space}
+}
+
+// WithPrecondition returns the lock with precondition checked before every acquisition.
+func (l *Lock) WithPrecondition(precondition func(fdb.ReadTransaction) error) *Lock {
+	return &Lock{space: l.space, precondition: precondition}
 }
 
 func DefaultLeaseOptions() LeaseOptions {

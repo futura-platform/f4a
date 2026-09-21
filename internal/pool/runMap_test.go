@@ -18,6 +18,7 @@ import (
 	"github.com/futura-platform/futura/ftype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func setInput(t *testing.T, db dbutil.DbRoot, tkey task.TaskKey, input []byte) {
@@ -389,5 +390,26 @@ func TestRunMap(t *testing.T) {
 			m.wait()
 			assert.Equal(t, int32(2), executionCount.Load())
 		})
+	})
+}
+
+func TestSwapLastRunSpanRefusesDeletedTask(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		tasksDirectory, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+		tkey, err := tasksDirectory.Create(db, task.NewId())
+		require.NoError(t, err)
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.Clear(tx) })
+		require.NoError(t, err)
+
+		_, err = swapLastRunSpan(t.Context(), db.Database, tkey, trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: trace.FlagsSampled,
+		}))
+		require.ErrorIs(t, err, task.ErrNotFound)
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			require.Nil(t, tx.Get(tkey.LastRunSpan().Key()).MustGet(), "the span chain must not be written under a deleted task")
+			return nil, nil
+		})
+		require.NoError(t, err)
 	})
 }

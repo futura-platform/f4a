@@ -43,14 +43,6 @@ func (u utilizationAggregate) add(tx fdb.Transaction, dimension UtilizationDimen
 	dbutil.AtomicIncrement(tx, u.directory.Pack(tuple.Tuple{string(dimension)}), value)
 }
 
-// set sets the value at the given key to the given value.
-// it DOES cause confliction.
-func (u utilizationAggregate) set(tx fdb.Transaction, dimension UtilizationDimension, value int64) {
-	var one [8]byte
-	binary.LittleEndian.PutUint64(one[:], uint64(value))
-	tx.Set(u.directory.Pack(tuple.Tuple{string(dimension)}), one[:])
-}
-
 func (u utilizationAggregate) get(tx fdb.ReadTransaction, dimension UtilizationDimension) (int64, error) {
 	bytes, err := tx.Get(u.directory.Pack(tuple.Tuple{string(dimension)})).Get()
 	if err != nil {

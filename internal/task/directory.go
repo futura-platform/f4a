@@ -92,3 +92,24 @@ func (k TaskKey) Clear(t fdb.Transaction) error {
 	t.ClearRange(k.keyspace())
 	return nil
 }
+
+// Exists reports whether the task is still there.
+func (k TaskKey) Exists(t fdb.ReadTransaction) (bool, error) {
+	created, err := t.Get(k.existenceKey()).Get()
+	if err != nil {
+		return false, err
+	}
+	return created != nil, nil
+}
+
+// MustExist fails a transaction that would write under a deleted task with ErrNotFound.
+func (k TaskKey) MustExist(t fdb.ReadTransaction) error {
+	exists, err := k.Exists(t)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
+}

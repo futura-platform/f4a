@@ -789,3 +789,29 @@ func TestExecutionContainerLoadsLegacyLayout(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestExecutionContainerRefusesWritesAfterDelete(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		id := task.NewId()
+		identity := moment.NewIdentity(t.Context(), moment.Callpath([]moment.Callsite{{File: "test.go", Line: 1}}), moment.Callsite{File: "fn.go", Line: 1})
+		container := createTaskAndContainer(t, db, id)
+		require.NoError(t, container.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
+			tx.AppendCallOrder(identity)
+			tx.SetMoment(identity, []byte("moment"))
+			return nil
+		}))
+
+		// the task is deleted under the running container, as a gateway delete does
+		tkey := createTaskKey(t, db, id)
+		_, err := db.Transact(func(tx fdb.Transaction) (any, error) { return nil, tkey.Clear(tx) })
+		require.NoError(t, err)
+
+		err = container.Transact(t.Context(), func(ctx context.Context, tx executiontype.Container) error {
+			tx.AppendCallOrder(identity)
+			tx.SetMoment(identity, []byte("late"))
+			return tx.StoreDurable("k", []byte("late"))
+		})
+		require.ErrorIs(t, err, task.ErrNotFound)
+		require.Empty(t, rawKeys(t, db, tkey, "user"), "no write may land under a deleted task")
+	})
+}
