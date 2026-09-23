@@ -3,7 +3,7 @@
 FROM celrenheit/foundationdb:7.3.46 AS fdb
 
 # Build stage
-FROM public.ecr.aws/docker/library/golang:1.26.0-bookworm AS builder
+FROM public.ecr.aws/docker/library/golang:1.27.1-bookworm AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential ca-certificates ccache \
