@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	taskv1 "github.com/futura-platform/f4a/internal/gen/task/v1"
 	"github.com/futura-platform/f4a/internal/pool"
 	"github.com/futura-platform/f4a/internal/servicestate"
 	"github.com/futura-platform/f4a/internal/task"
 	dbutil "github.com/futura-platform/f4a/internal/util/db"
 	testutil "github.com/futura-platform/f4a/internal/util/test"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -73,23 +75,34 @@ func TestReapAllWiring(t *testing.T) {
 		require.NoError(t, err)
 
 		const (
-			deadRunner    = "dead-runner"
-			aliveRunner   = "alive-runner"
-			unknownRunner = "unknown-runner"
+			deadRunner      = "dead-runner"
+			crashLoopRunner = "crash-loop-runner"
+			aliveRunner     = "alive-runner"
+			unknownRunner   = "unknown-runner"
 		)
-		for _, runnerId := range []string{deadRunner, aliveRunner, unknownRunner} {
+		for _, runnerId := range []string{deadRunner, crashLoopRunner, aliveRunner, unknownRunner} {
 			_, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
 			require.NoError(t, err)
 		}
 
-		alivePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-			Name:      aliveRunner,
-			Namespace: testNamespace,
-		}}
-		cached := fakePodLister{pods: map[string]*corev1.Pod{aliveRunner: alivePod}}
+		alivePod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: aliveRunner, Namespace: testNamespace},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "worker",
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			}}},
+		}
+		crashLoopPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: crashLoopRunner, Namespace: testNamespace},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "worker",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}}},
+		}
+		cached := fakePodLister{pods: map[string]*corev1.Pod{aliveRunner: alivePod, crashLoopRunner: crashLoopPod}}
 
 		lookupErr := errors.New("api server unavailable")
-		clientset := fake.NewSimpleClientset(alivePod)
+		clientset := fake.NewSimpleClientset(alivePod, crashLoopPod)
 		clientset.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			if action.(k8stesting.GetAction).GetName() == unknownRunner {
 				return true, nil, lookupErr
@@ -116,6 +129,7 @@ func TestReapAllWiring(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotContains(t, remaining, deadRunner, "provably dead runner must be reaped")
+		require.NotContains(t, remaining, crashLoopRunner, "runner whose container is in restart backoff must be reaped")
 		require.Contains(t, remaining, aliveRunner, "live runner must be untouched")
 		require.Contains(t, remaining, unknownRunner, "unknown-liveness runner must be kept for a later cycle")
 
@@ -124,9 +138,29 @@ func TestReapAllWiring(t *testing.T) {
 }
 
 func TestRunnerIsDead(t *testing.T) {
+	// no container statuses yet: the pod exists but has never run a process
 	runnerPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name:      testRunnerId,
 		Namespace: testNamespace,
+	}}
+	runningPod := runnerPod.DeepCopy()
+	runningPod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:  "worker",
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	}}
+	// a crashed worker between restarts: the pod object lives on while the
+	// kubelet backs off
+	crashLoopPod := runnerPod.DeepCopy()
+	crashLoopPod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:         "worker",
+		RestartCount: 3,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+			Reason: "CrashLoopBackOff",
+		}},
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 2,
+			Reason:   "Error",
+		}},
 	}}
 	lookupErr := errors.New("api server unavailable")
 
@@ -139,15 +173,48 @@ func TestRunnerIsDead(t *testing.T) {
 		wantErr  error
 	}{
 		{
-			name:   "cache sees pod: alive",
-			cached: fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: runnerPod}},
+			name:   "cache sees running pod: alive",
+			cached: fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: runningPod}},
 			// the live client must not matter; make it error to prove that
 			liveErr: lookupErr,
 		},
 		{
-			name:     "cache not found, live sees pod: alive",
+			name:    "cache sees pod without container statuses: alive",
+			cached:  fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: runnerPod}},
+			liveErr: lookupErr,
+		},
+		{
+			name:     "cache sees crash-looping pod, live confirms: dead",
+			cached:   fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: crashLoopPod}},
+			livePods: []runtime.Object{crashLoopPod},
+			wantDead: true,
+		},
+		{
+			name:     "cache sees crash-looping pod, live sees it running again: alive",
+			cached:   fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: crashLoopPod}},
+			livePods: []runtime.Object{runningPod},
+		},
+		{
+			name:    "cache sees crash-looping pod, live lookup fails: unknown",
+			cached:  fakePodLister{pods: map[string]*corev1.Pod{testRunnerId: crashLoopPod}},
+			liveErr: lookupErr,
+			wantErr: lookupErr,
+		},
+		{
+			name:     "cache not found, live sees running pod: alive",
+			cached:   fakePodLister{},
+			livePods: []runtime.Object{runningPod},
+		},
+		{
+			name:     "cache not found, live sees pod without container statuses: alive",
 			cached:   fakePodLister{},
 			livePods: []runtime.Object{runnerPod},
+		},
+		{
+			name:     "cache not found, live sees crash-looping pod: dead",
+			cached:   fakePodLister{},
+			livePods: []runtime.Object{crashLoopPod},
+			wantDead: true,
 		},
 		{
 			name:     "cache not found, live not found: dead",
@@ -166,9 +233,9 @@ func TestRunnerIsDead(t *testing.T) {
 			wantDead: true,
 		},
 		{
-			name:     "cache lookup fails, live sees pod: alive",
+			name:     "cache lookup fails, live sees running pod: alive",
 			cached:   fakePodLister{err: lookupErr},
-			livePods: []runtime.Object{runnerPod},
+			livePods: []runtime.Object{runningPod},
 		},
 		{
 			name:    "cache lookup fails, live lookup fails: unknown",
@@ -194,4 +261,93 @@ func TestRunnerIsDead(t *testing.T) {
 			require.Equal(t, tc.wantDead, dead)
 		})
 	}
+}
+
+// TestReapAllRequeuesCrashLoopingRunnerTasks is the incident shape: a worker
+// process dies, the pod object survives in restart backoff, and the tasks it
+// held must not wait out that backoff. They go back to pending for the
+// scheduler to place elsewhere.
+func TestReapAllRequeuesCrashLoopingRunnerTasks(t *testing.T) {
+	testutil.WithEphemeralDBRoot(t, func(db dbutil.DbRoot) {
+		placer, _, err := servicestate.CreateOrOpenTaskPlacer(db)
+		require.NoError(t, err)
+		activeRunners, err := pool.CreateOrOpenActiveRunners(db)
+		require.NoError(t, err)
+		taskDir, err := task.CreateOrOpenTasksDirectory(db)
+		require.NoError(t, err)
+
+		const runnerId = "crash-loop-runner"
+		taskSet, err := servicestate.CreateOrOpenTaskSetForRunner(db, db, runnerId)
+		require.NoError(t, err)
+		taskIds := []task.Id{"held-0", "held-1", "held-2"}
+		_, err = db.Transact(func(tx fdb.Transaction) (any, error) {
+			activeRunners.SetActive(tx, runnerId, true)
+			for _, id := range taskIds {
+				tkey, err := taskDir.Create(tx, id)
+				if err != nil {
+					return nil, err
+				}
+				tkey.LifecycleStatus().Set(tx, task.LifecycleStatusRunning)
+				assigned := runnerId
+				tkey.RunnerId().Set(tx, &assigned)
+				tkey.ResourceRequest().Set(tx, taskv1.TaskResourceRequest_builder{
+					CpuMillis:   proto.Uint32(500),
+					MemoryBytes: proto.Uint64(1024),
+				}.Build())
+				if err := taskSet.Add(tx, tkey); err != nil {
+					return nil, err
+				}
+			}
+			return nil, nil
+		})
+		require.NoError(t, err)
+
+		crashLoopPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: runnerId, Namespace: testNamespace},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "worker",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}}},
+		}
+		_, err = reapAll(
+			t.Context(),
+			db,
+			placer,
+			fakePodLister{pods: map[string]*corev1.Pod{runnerId: crashLoopPod}},
+			livePodsClient([]runtime.Object{crashLoopPod}, nil),
+			activeRunners,
+			taskDir,
+		)
+		require.NoError(t, err)
+
+		pending, _, err := placer.PendingTasks(t.Context())
+		require.NoError(t, err)
+		for _, id := range taskIds {
+			require.True(t, pending.Contains(id), "task %s must be back in the pending set", id)
+		}
+		_, err = db.ReadTransact(func(tx fdb.ReadTransaction) (any, error) {
+			for _, id := range taskIds {
+				tkey, err := taskDir.Open(tx, id)
+				if err != nil {
+					return nil, err
+				}
+				state, err := task.ReadAssignmentState(tx, tkey)
+				if err != nil {
+					return nil, err
+				}
+				status, err := state.LifecycleStatusFuture.Get()
+				if err != nil {
+					return nil, err
+				}
+				require.Equal(t, task.LifecycleStatusPending, status, "task %s", id)
+				assigned, err := state.RunnerIDFuture.Get()
+				if err != nil {
+					return nil, err
+				}
+				require.Nil(t, assigned, "task %s must no longer name the dead runner", id)
+			}
+			return nil, nil
+		})
+		require.NoError(t, err)
+	})
 }

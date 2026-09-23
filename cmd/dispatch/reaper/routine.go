@@ -15,6 +15,7 @@ import (
 	otelutil "github.com/futura-platform/f4a/internal/util/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+	k8scorev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -143,11 +144,7 @@ func reapAll(
 	return failedLookups, nil
 }
 
-// runnerIsDead reports whether the runner's pod is provably gone.
-// A pod found by either lookup means alive. Only a not-found answer from the
-// api server (the consistent source) proves death; the cache alone can lag.
-// Any other outcome is an error: the runner's liveness is unknown, and the
-// caller must not conflate that with "alive".
+// runnerIsDead reports whether the runner's process is provably not running
 func runnerIsDead(
 	ctx context.Context,
 	cachedPods corev1.PodNamespaceLister,
@@ -155,8 +152,12 @@ func runnerIsDead(
 	runnerId string,
 ) (bool, error) {
 	// fast, eventually consistent path
-	if _, err := cachedPods.Get(runnerId); err == nil {
-		return false, nil
+	if pod, err := cachedPods.Get(runnerId); err == nil {
+		if podIsRunning(pod) {
+			return false, nil
+		}
+		// a not-running container may be a stale cache entry; let the api
+		// server confirm before draining
 	} else if !apierrors.IsNotFound(err) {
 		// the cache is only an optimization; fall through to the
 		// authoritative lookup instead of skipping the runner
@@ -164,14 +165,30 @@ func runnerIsDead(
 	}
 
 	// slow, consistent path
-	_, err := livePods.Get(ctx, runnerId, metav1.GetOptions{})
+	pod, err := livePods.Get(ctx, runnerId, metav1.GetOptions{})
 	if err == nil {
-		return false, nil
+		return !podIsRunning(pod), nil
 	}
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
 	return false, fmt.Errorf("failed to look up runner pod %q: %w", runnerId, err)
+}
+
+// podIsRunning reports whether any container in the pod is currently running.
+// A pod that has not reported container statuses yet (still scheduling or
+// pulling) counts as running: it has never held a process that could have
+// died, and its task set is empty until it marks itself active.
+func podIsRunning(pod *k8scorev1.Pod) bool {
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return true
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Running != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func reapForRunner(
